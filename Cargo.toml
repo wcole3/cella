@@ -1,0 +1,7 @@
+[package]
+name = "cella"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cella_lib = { path = "./cella_lib" }
