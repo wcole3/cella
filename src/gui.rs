@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use cella_lib::*;
-use egui::{Color32, Context, Key};
+use egui::{Color32, Context, Key, Vec2};
 use rfd::FileDialog;
 use crate::demos::{build_1d_rule30, build_1d_code_n, build_2d_life};
 
@@ -559,7 +559,7 @@ impl eframe::App for CellaApp {
                         egui::TextureOptions::NEAREST,
                     );
                     let size = tex.size_vec2();
-                    let response = ui.add(egui::Image::new(&tex).fit_to_exact_size(size).sense(egui::Sense::click()));
+                    let response = ui.add(egui::Image::new(&tex).fit_to_exact_size(size).sense(egui::Sense::click_and_drag()));
 
                     // Zoom with MouseWheel when hovered
                     if response.hovered() {
@@ -567,17 +567,18 @@ impl eframe::App for CellaApp {
                             if i.raw_scroll_delta.y > 0.0 { self.scale = (self.scale + 1).min(32); }
                             else if i.raw_scroll_delta.y < 0.0 { self.scale = self.scale.saturating_sub(1).max(1); }
                         });
+                    }
+
+                    if response.dragged() {
                         // Right mouse drag to pan the scroll area (so left is free for painting)
                         let (right_down, delta) = ui.input(|i| (i.pointer.secondary_down(), i.pointer.delta()));
                         if right_down {
-                            // print delta
-                            println!("delta: {:?}", delta);
-                            if delta.x != 0.0 || delta.y != 0.0 { ui.scroll_with_delta(-delta); }
+                            if delta.x != 0.0 || delta.y != 0.0 { ui.scroll_with_delta(delta); }
                         }
                     }
 
                     // Painting mode: click/drag to set cells when paused
-                    if !self.playing && response.contains_pointer()  && matches!(self.draw_mode, DrawMode::Paint) {
+                    if !self.playing && response.dragged() && matches!(self.draw_mode, DrawMode::Paint) {
                         let is_down = ui.input(|i| i.pointer.primary_down());
                         if is_down {
                             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
