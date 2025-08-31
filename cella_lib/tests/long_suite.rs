@@ -10,6 +10,10 @@
 // - Optional benchmark-friendly order: add --test-threads=1 so the summary test
 //   runs last (named zzz_benchmark_summary). Example:
 //     cargo test -p cella_lib -- --ignored --test-threads=1 --show-output
+// - To update benchmark baselines (tests/benchmarks_last.json), set:
+//     CELLA_UPDATE_BENCH=1 cargo test -p cella_lib -- --ignored --test-threads=1
+//   On Windows PowerShell:
+//     $env:CELLA_UPDATE_BENCH=1; cargo test -p cella_lib -- --ignored --test-threads=1; Remove-Item Env:CELLA_UPDATE_BENCH
 //
 // The snapshots are deterministic hashes of the final grid state after a large
 // number of steps. If engine behavior changes (intentionally or not), the hash
@@ -332,10 +336,15 @@ fn zzz_benchmark_summary() {
         }
     }
     println!("[bench] {:>28}: {} ms (sum)", "TOTAL", total);
-    if let Err(e) = save_current_benchmarks(&current) {
-        eprintln!("[bench] Failed to save benchmarks: {}", e);
+    let update = std::env::var("CELLA_UPDATE_BENCH").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    if update {
+        if let Err(e) = save_current_benchmarks(&current) {
+            eprintln!("[bench] Failed to save benchmarks: {}", e);
+        } else {
+            println!("[bench] Saved current timings to {}", benchmarks_file().display());
+        }
     } else {
-        println!("[bench] Saved current timings to {}", benchmarks_file().display());
+        println!("[bench] Skipping save of benchmark baselines (set CELLA_UPDATE_BENCH=1 to update {}).", benchmarks_file().display());
     }
 }
 
