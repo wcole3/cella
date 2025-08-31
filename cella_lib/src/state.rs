@@ -1,11 +1,35 @@
 //! Grid state snapshots and (de)serialization helpers.
 use serde::{Deserialize, Serialize};
-use crate::types::{CellState};
+use crate::types::CellState;
 use crate::rules::{Rule1D, Rule2D};
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
 
 /// Serializable snapshot of either a 1D or 2D grid.
+///
+/// Use this to save and restore simulations across runs.
+///
+/// Example
+/// ```rust
+/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState};
+/// let alive = CellType("Alive".into());
+/// let inert = CellType::inert();
+/// let rule = Rule2D { subrules: vec![
+///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule { current_type: inert.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+/// ]};
+/// let (w,h) = (4usize, 4usize);
+/// let mut init = vec![CellType::inert(); w*h];
+/// init[1*w + 1] = alive.clone();
+/// init[1*w + 2] = alive.clone();
+/// init[1*w + 3.min(w-1)] = alive.clone();
+/// let mut g = Grid2D::new(w, h, 3, init, rule);
+/// g.step();
+/// let st = GridState::from_grid2d(&g);
+/// let json = st.to_json();
+/// let st2 = GridState::from_json(&json).unwrap();
+/// assert!(matches!(st2, GridState::D2{..}));
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum GridState {
     D1 { width: usize, history_limit: usize, cells: Vec<CellState>, step: u64, rule: Rule1D },
@@ -13,7 +37,9 @@ pub enum GridState {
 }
 
 impl GridState {
+    /// Snapshot a 1D grid.
     pub fn from_grid1d(g: &Grid1D) -> Self { Self::D1 { width: g.width, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone() } }
+    /// Snapshot a 2D grid.
     pub fn from_grid2d(g: &Grid2D) -> Self { Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone() } }
 
     /// Serialize to pretty JSON.
@@ -46,4 +72,6 @@ impl Grid2D {
 }
 
 /// Back-compat helper kept for examples.
+///
+/// Prefer `GridState::from_grid2d(&g).to_json_pretty()`.
 pub fn grid2d_to_json(g: &Grid2D) -> String { GridState::from_grid2d(g).to_json_pretty() }

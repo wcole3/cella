@@ -10,6 +10,29 @@ use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
 
 /// Top-level configuration for either a 1D or 2D automaton.
+///
+/// You can serialize/deserialize this enum to exchange scenarios.
+///
+/// Example (build from JSON string)
+/// ```rust
+/// use cella_lib::config::{CellaConfig, Config2D};
+/// use cella_lib::{Rule2D, Rule2DSubrule, Neighborhood2D};
+/// let json = serde_json::json!({
+///   "dim":"2d",
+///   "width":3,
+///   "height":3,
+///   "history_limit":2,
+///   "initial":["Inert","Inert","Inert","Inert","Alive","Inert","Inert","Inert","Inert"],
+///   "rule":{
+///     "subrules":[
+///       {"current_type":"Alive","criteria_type":"Alive","threshold":2,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"},
+///       {"current_type":"Inert","criteria_type":"Alive","threshold":3,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"}
+///     ]
+///   }
+/// });
+/// let cfg: CellaConfig = serde_json::from_value(json).unwrap();
+/// assert!(cfg.build_grid2d().is_some());
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "dim")]
 pub enum CellaConfig {
@@ -22,26 +45,38 @@ pub enum CellaConfig {
 /// 1D configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config1D {
+    /// Grid width.
     pub width: usize,
+    /// Per-cell history cap.
     pub history_limit: usize,
     /// Initial cell types by name, length = width.
     pub initial: Vec<String>,
+    /// Rule definition.
     pub rule: Rule1D,
 }
 
 /// 2D configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config2D {
+    /// Grid width.
     pub width: usize,
+    /// Grid height.
     pub height: usize,
+    /// Per-cell history cap.
     pub history_limit: usize,
     /// Initial cell types by name, length = width*height.
     pub initial: Vec<String>,
+    /// Rule definition.
     pub rule: Rule2D,
 }
 
 impl CellaConfig {
     /// Load configuration from a JSON file path.
+    ///
+    /// ```no_run
+    /// use cella_lib::config::CellaConfig;
+    /// let cfg = CellaConfig::from_file("configs/life.json").unwrap();
+    /// ```
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let data = fs::read_to_string(path)?;
         let cfg: CellaConfig = serde_json::from_str(&data)?;
@@ -49,6 +84,13 @@ impl CellaConfig {
     }
 
     /// Save configuration to a JSON file path (pretty printed).
+    ///
+    /// ```no_run
+    /// use cella_lib::config::{CellaConfig, Config2D};
+    /// // write some cfg
+    /// # let cfg: CellaConfig = serde_json::from_str("{\"dim\":\"2d\",\"width\":1,\"height\":1,\"history_limit\":1,\"initial\":[\"Inert\"],\"rule\":{\"subrules\":[]}}").unwrap();
+    /// cfg.to_file_pretty("out.json").unwrap();
+    /// ```
     pub fn to_file_pretty<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
         let s = serde_json::to_string_pretty(self)?;
         fs::write(path, s)?;
@@ -56,6 +98,8 @@ impl CellaConfig {
     }
 
     /// Build a Grid1D from D1 config.
+    ///
+    /// Returns `None` if `initial.len() != width`.
     pub fn build_grid1d(&self) -> Option<Grid1D> {
         match self {
             CellaConfig::D1(c) => {
@@ -68,6 +112,8 @@ impl CellaConfig {
     }
 
     /// Build a Grid2D from D2 config.
+    ///
+    /// Returns `None` if `initial.len() != width*height`.
     pub fn build_grid2d(&self) -> Option<Grid2D> {
         match self {
             CellaConfig::D2(c) => {
