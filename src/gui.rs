@@ -367,6 +367,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.update_selected_draw_type_default();
     }
 
     fn load_demo_1d_rule30(&mut self) {
@@ -378,6 +379,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.update_selected_draw_type_default();
     }
 
     fn load_demo_1d_n2(&mut self) {
@@ -390,6 +392,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.update_selected_draw_type_default()
     }
 
     fn load_demo_1d_custom_from_inputs(&mut self) {
@@ -404,6 +407,7 @@ impl CellaApp {
             self.undo_stack.clear();
             self.current_paint_batch = None;
             self.colors.clear();
+            self.update_selected_draw_type_default();
         }
     }
 
@@ -416,6 +420,7 @@ impl CellaApp {
                             self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None;
                             if let Some(gr) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(gr)); }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
+                            self.update_selected_draw_type_default();
                         }
                     }
                     cella_lib::config::CellaConfig::D2(_) => {
@@ -423,6 +428,7 @@ impl CellaApp {
                             self.dim = Some(Dim::D2); self.d2 = Some(g); self.d1 = None;
                             if let Some(gr) = &self.d2 { self.initial_state = Some(GridState::from_grid2d(gr)); }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
+                            self.update_selected_draw_type_default();
                         }
                     }
                 },
@@ -480,6 +486,23 @@ impl CellaApp {
                 }
             }
         }
+        // Update default draw type after resetting
+        self.update_selected_draw_type_default();
+    }
+
+    fn update_selected_draw_type_default(&mut self) {
+        // Pick first non-INACTIVE type from current grid, else Inactive
+        let mut pick: Option<CellType> = None;
+        match self.dim {
+            Some(Dim::D1) => if let Some(g) = &self.d1 {
+                for c in &g.cells { if c.current.0 != INACTIVE { pick = Some(c.current.clone()); break; } }
+            },
+            Some(Dim::D2) => if let Some(g) = &self.d2 {
+                for c in &g.cells { if c.current.0 != INACTIVE { pick = Some(c.current.clone()); break; } }
+            },
+            None => {}
+        }
+        self.selected_draw_type = Some(pick.unwrap_or_else(CellType::inactive));
     }
 }
 

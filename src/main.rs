@@ -1,6 +1,5 @@
 mod demos;
 mod gui;
-use crate::demos::*;
 use std::io::{self, Write};
 
 fn menu() {
