@@ -7,14 +7,23 @@
 //     CELLA_UPDATE_SNAPSHOTS=1 cargo test -p cella_lib -- --ignored
 //   On Windows PowerShell:
 //     $env:CELLA_UPDATE_SNAPSHOTS=1; cargo test -p cella_lib -- --ignored; Remove-Item Env:CELLA_UPDATE_SNAPSHOTS
+// - Optional benchmark-friendly order: add --test-threads=1 so the summary test
+//   runs last (named zzz_benchmark_summary). Example:
+//     cargo test -p cella_lib -- --ignored --test-threads=1 --show-output
 //
 // The snapshots are deterministic hashes of the final grid state after a large
 // number of steps. If engine behavior changes (intentionally or not), the hash
 // will differ, prompting a snapshot update.
+//
+// Benchmarks: Each test records elapsed wall time. A final ignored test
+// `zzz_benchmark_summary` prints a summary of all recorded times. You can also
+// set CELLA_BENCH=1 to print per-test timings immediately.
 
 use cella_lib::*;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
@@ -87,6 +96,19 @@ fn assert_snapshot(name: &str, value: u64) {
     }
 }
 
+// -------- Benchmark storage --------
+static BENCH_DATA: OnceLock<Mutex<Vec<(String, u128)>>> = OnceLock::new();
+fn bench_store() -> &'static Mutex<Vec<(String, u128)>> {
+    BENCH_DATA.get_or_init(|| Mutex::new(Vec::new()))
+}
+fn record_bench(name: &str, ms: u128) {
+    let mut v = bench_store().lock().unwrap();
+    v.push((name.to_string(), ms));
+    if std::env::var("CELLA_BENCH").ok().as_deref() == Some("1") {
+        println!("[bench] {:>28}: {} ms", name, ms);
+    }
+}
+
 #[test]
 #[ignore]
 fn stress_2d_life_like_moore() {
@@ -102,7 +124,10 @@ fn stress_2d_life_like_moore() {
     let mut set = |x: usize, y: usize| init[y*w + x] = alive.clone();
     set(1,0); set(2,1); set(0,2); set(1,2); set(2,2);
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
     for _ in 0..300 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_life_like_moore", elapsed);
     let hash = hash_grid2d_state(&g);
     assert_snapshot("2d_life_like_moore", hash);
 }
@@ -121,7 +146,10 @@ fn stress_2d_von_neumann_threshold() {
     // random-ish seed (deterministic pattern)
     for y in 0..h { for x in 0..w { if (x ^ y) % 7 == 0 { init[y*w + x] = b.clone(); } } }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
     for _ in 0..200 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_vonneumann_threshold", elapsed);
     let hash = hash_grid2d_state(&g);
     assert_snapshot("2d_vonneumann_threshold", hash);
 }
@@ -138,7 +166,10 @@ fn stress_2d_langdon_diagonals() {
     let mut init = vec![a.clone(); w*h];
     for i in 0..w.min(h) { init[i*w + i] = b.clone(); }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
     for _ in 0..180 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_langdon_diagonals", elapsed);
     let hash = hash_grid2d_state(&g);
     assert_snapshot("2d_langdon_diagonals", hash);
 }
@@ -155,7 +186,10 @@ fn stress_1d_rule30_center_seed() {
     let mut init = vec![CellType::inactive(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    let t0 = Instant::now();
     for _ in 0..500 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("1d_rule30_center", elapsed);
     let hash = hash_grid1d_state(&g);
     assert_snapshot("1d_rule30_center", hash);
 }
@@ -173,7 +207,10 @@ fn stress_1d_n2_alternating_code() {
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    let t0 = Instant::now();
     for _ in 0..400 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("1d_n2_alt", elapsed);
     let hash = hash_grid1d_state(&g);
     assert_snapshot("1d_n2_alt", hash);
 }
@@ -192,7 +229,104 @@ fn stress_1d_n3_custom_code() {
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    let t0 = Instant::now();
     for _ in 0..350 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("1d_n3_custom", elapsed);
     let hash = hash_grid1d_state(&g);
     assert_snapshot("1d_n3_custom", hash);
+}
+
+// -------- Larger stress tests to exercise multithreading --------
+
+#[test]
+#[ignore]
+fn stress_2d_large_moore_256() {
+    let alive = CellType("Alive".into());
+    let inactive = CellType::inactive();
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+    ]};
+    let (w,h,hist) = (256usize, 256usize, 4usize);
+    let mut init = vec![inactive.clone(); w*h];
+    // Seed a few glider-like patterns along the diagonal
+    for k in (0..w.min(h)).step_by(32) {
+        let set = |x: usize, y: usize, v: &mut Vec<CellType>| v[y*w + x] = alive.clone();
+        if k+2 < w && k+2 < h {
+            set(k+1, k+0, &mut init);
+            set(k+2, k+1, &mut init);
+            set(k+0, k+2, &mut init);
+            set(k+1, k+2, &mut init);
+            set(k+2, k+2, &mut init);
+        }
+    }
+    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
+    for _ in 0..200 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_large_moore_256", elapsed);
+    let hash = hash_grid2d_state(&g);
+    assert_snapshot("2d_large_moore_256", hash);
+}
+
+#[test]
+#[ignore]
+fn stress_2d_large_vn_256() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), threshold: 2, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
+        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), threshold: 1, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
+    ]};
+    let (w,h,hist) = (256usize, 256usize, 3usize);
+    let mut init = vec![a.clone(); w*h];
+    for y in 0..h { for x in 0..w { if (x*3 + y*5) % 11 == 0 { init[y*w + x] = b.clone(); } } }
+    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
+    for _ in 0..160 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_large_vn_256", elapsed);
+    let hash = hash_grid2d_state(&g);
+    assert_snapshot("2d_large_vn_256", hash);
+}
+
+#[test]
+#[ignore]
+fn stress_1d_large_rule30_2049() {
+    let x = CellType("X".into());
+    let inactive = CellType::inactive();
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+    let w = 2049usize; let hist = 4usize;
+    let mut init = vec![inactive.clone(); w];
+    init[w/2] = x.clone();
+    let mut g = Grid1D::new(w, hist, init, rule);
+    let t0 = Instant::now();
+    for _ in 0..1200 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("1d_large_rule30_2049", elapsed);
+    let hash = hash_grid1d_state(&g);
+    assert_snapshot("1d_large_rule30_2049", hash);
+}
+
+// Final summary printer (likely last if run with --test-threads=1)
+#[test]
+#[ignore]
+fn zzz_benchmark_summary() {
+    let data = bench_store().lock().unwrap();
+    if data.is_empty() {
+        println!("[bench] No benchmarks recorded. Did you run with --ignored?");
+        return;
+    }
+    println!("\n[bench] Summary ({} entries):", data.len());
+    let mut total: u128 = 0;
+    let mut entries = data.clone();
+    entries.sort_by(|a,b| a.0.cmp(&b.0));
+    for (name, ms) in entries {
+        println!("[bench] {:>28}: {} ms", name, ms);
+        total += ms;
+    }
+    println!("[bench] {:>28}: {} ms (sum)", "TOTAL", total);
 }
