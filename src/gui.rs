@@ -530,6 +530,12 @@ impl eframe::App for CellaApp {
             self.ui_colors(ui);
         });
 
+        egui::TopBottomPanel::bottom("bottom_status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("Step: {}", self.current_step()));
+            });
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // Hotkeys: Ctrl+Z undo last edit when paused
             if !self.playing {
@@ -545,7 +551,7 @@ impl eframe::App for CellaApp {
                     }
                 });
             }
-            egui::ScrollArea::both().show(ui, |ui| {
+            egui::ScrollArea::both().drag_to_scroll(false).show(ui, |ui| {
                 if let Some(img) = self.render_image(ctx) {
                     let tex = ui.ctx().load_texture(
                         "grid_tex",
@@ -561,10 +567,17 @@ impl eframe::App for CellaApp {
                             if i.raw_scroll_delta.y > 0.0 { self.scale = (self.scale + 1).min(32); }
                             else if i.raw_scroll_delta.y < 0.0 { self.scale = self.scale.saturating_sub(1).max(1); }
                         });
+                        // Right mouse drag to pan the scroll area (so left is free for painting)
+                        let (right_down, delta) = ui.input(|i| (i.pointer.secondary_down(), i.pointer.delta()));
+                        if right_down {
+                            // print delta
+                            println!("delta: {:?}", delta);
+                            if delta.x != 0.0 || delta.y != 0.0 { ui.scroll_with_delta(-delta); }
+                        }
                     }
 
                     // Painting mode: click/drag to set cells when paused
-                    if response.hovered() && !self.playing && matches!(self.draw_mode, DrawMode::Paint) {
+                    if !self.playing && response.contains_pointer()  && matches!(self.draw_mode, DrawMode::Paint) {
                         let is_down = ui.input(|i| i.pointer.primary_down());
                         if is_down {
                             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
