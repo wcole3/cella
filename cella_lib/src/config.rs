@@ -1,0 +1,81 @@
+//! Simple JSON configuration format to build grids without writing Rust code.
+//! This format focuses on readability: you specify dimensions, history limit,
+//! an initial array of type names, and the rule definition.
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use crate::types::CellType;
+use crate::rules::{Rule1D, Rule2D};
+use crate::grid1d::Grid1D;
+use crate::grid2d::Grid2D;
+
+/// Top-level configuration for either a 1D or 2D automaton.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "dim")]
+pub enum CellaConfig {
+    #[serde(rename = "1d")]
+    D1(Config1D),
+    #[serde(rename = "2d")]
+    D2(Config2D),
+}
+
+/// 1D configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Config1D {
+    pub width: usize,
+    pub history_limit: usize,
+    /// Initial cell types by name, length = width.
+    pub initial: Vec<String>,
+    pub rule: Rule1D,
+}
+
+/// 2D configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Config2D {
+    pub width: usize,
+    pub height: usize,
+    pub history_limit: usize,
+    /// Initial cell types by name, length = width*height.
+    pub initial: Vec<String>,
+    pub rule: Rule2D,
+}
+
+impl CellaConfig {
+    /// Load configuration from a JSON file path.
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let data = fs::read_to_string(path)?;
+        let cfg: CellaConfig = serde_json::from_str(&data)?;
+        Ok(cfg)
+    }
+
+    /// Save configuration to a JSON file path (pretty printed).
+    pub fn to_file_pretty<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+        let s = serde_json::to_string_pretty(self)?;
+        fs::write(path, s)?;
+        Ok(())
+    }
+
+    /// Build a Grid1D from D1 config.
+    pub fn build_grid1d(&self) -> Option<Grid1D> {
+        match self {
+            CellaConfig::D1(c) => {
+                if c.initial.len() != c.width { return None; }
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
+                Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Build a Grid2D from D2 config.
+    pub fn build_grid2d(&self) -> Option<Grid2D> {
+        match self {
+            CellaConfig::D2(c) => {
+                if c.initial.len() != c.width * c.height { return None; }
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
+                Some(Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone()))
+            }
+            _ => None,
+        }
+    }
+}

@@ -1,0 +1,24 @@
+{
+  "dim": "2d",
+  "width": 10,
+  "height": 10,
+  "history_limit": 5,
+  "initial": [
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Alive","Alive","Alive","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert",
+    "Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert","Inert"
+  ],
+  "rule": {
+    "subrules": [
+      {"current_type":"Alive","criteria_type":"Alive","threshold":2,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"},
+      {"current_type":"Inert","criteria_type":"Alive","threshold":3,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"}
+    ]
+  }
+}
