@@ -1,0 +1,526 @@
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+use cella_lib::*;
+use egui::{Color32, Context};
+use rfd::FileDialog;
+
+/// GUI frontend for the Cella demos and configurations.
+///
+/// Features:
+/// - Load a configuration (JSON) or choose from built-in demos.
+/// - Visualize the grid (1D or 2D) with per-type color mapping.
+/// - Controls: Play/Pause, fixed refresh rate, single step, run to +N steps.
+/// - Export animated GIF of N steps at chosen FPS.
+/// - Save final state (GridState JSON) to resume later.
+/// - Closing the window returns to the CLI menu.
+///
+/// Note: Grid stepping uses the library's engine which may run multi-threaded
+/// based on the `cella.properties` threads setting at the repo root.
+pub fn run_gui() -> eframe::Result<()> {
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "Cella GUI",
+        options,
+        Box::new(|cc| Box::new(CellaApp::new(cc))),
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dim { D1, D2 }
+
+struct CellaApp {
+    // Simulation state (either 1D or 2D)
+    d1: Option<Grid1D>,
+    d2: Option<Grid2D>,
+    dim: Option<Dim>,
+
+    // UI Controls
+    playing: bool,
+    refresh_ms: u64,
+    last_tick: Instant,
+    run_to_steps: u64,
+    run_to_target: Option<u64>,
+
+    // Rendering
+    scale: usize, // pixel size per cell
+    colors: HashMap<String, Color32>,
+    palette: Vec<Color32>,
+
+    // Export
+    export_steps: u32,
+    export_fps: u32,
+}
+
+impl CellaApp {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        let mut app = Self {
+            d1: None,
+            d2: None,
+            dim: None,
+            playing: false,
+            refresh_ms: 100,
+            last_tick: Instant::now(),
+            run_to_steps: 100,
+            run_to_target: None,
+            scale: 8,
+            colors: HashMap::new(),
+            palette: default_palette(),
+            export_steps: 300,
+            export_fps: 12,
+        };
+        // Start with a default 2D Life-like demo
+        app.load_demo_life();
+        app
+    }
+
+    fn inactive_color(&self) -> Color32 { Color32::from_rgb(30, 30, 35) }
+
+    fn set_color_for(&mut self, ty: &CellType, color: Color32) {
+        self.colors.insert(ty.0.clone(), color);
+    }
+
+    fn color_of(&self, ty: &CellType) -> Color32 {
+        if ty.0 == INACTIVE { return self.inactive_color(); }
+        if let Some(&c) = self.colors.get(&ty.0) { return c; }
+        // fallback: hash name into palette index deterministically (no mutation)
+        let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
+        let prime: u64 = 0x00000100000001B3; // FNV prime
+        for &b in ty.0.as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
+        let idx = (h as usize) % self.palette.len().max(1);
+        self.palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
+    }
+
+    fn step_once(&mut self) {
+        match self.dim {
+            Some(Dim::D1) => if let Some(g) = &mut self.d1 { g.step(); },
+            Some(Dim::D2) => if let Some(g) = &mut self.d2 { g.step(); },
+            None => {}
+        }
+    }
+
+    fn current_step(&self) -> u64 {
+        match self.dim {
+            Some(Dim::D1) => self.d1.as_ref().map(|g| g.step).unwrap_or(0),
+            Some(Dim::D2) => self.d2.as_ref().map(|g| g.step).unwrap_or(0),
+            None => 0
+        }
+    }
+
+    fn collect_types(&mut self) -> Vec<CellType> {
+        let mut set: HashSet<String> = HashSet::new();
+        let mut result: Vec<CellType> = Vec::new();
+        match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    for c in &g.cells { if set.insert(c.current.0.clone()) { result.push(c.current.clone()); } }
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    for c in &g.cells { if set.insert(c.current.0.clone()) { result.push(c.current.clone()); } }
+                }
+            }
+            None => {}
+        }
+        result
+    }
+
+    fn render_image(&mut self, _ctx: &Context) -> Option<egui::ColorImage> {
+        // populate color map for current types to avoid mutable borrow during render
+        let _ = self.collect_types();
+        match self.dim {
+            Some(Dim::D1) => {
+                let g = self.d1.as_ref()?;
+                let w = g.width.max(1);
+                let h = 1usize;
+                let mut img = egui::ColorImage::new([w * self.scale, h * self.scale], self.inactive_color());
+                for x in 0..w {
+                    let col = self.color_of(&g.cells[x].current);
+                    // fill block
+                    for dy in 0..self.scale {
+                        for dx in 0..self.scale {
+                            let px = x * self.scale + dx;
+                            let py = 0 * self.scale + dy;
+                            img[(px, py)] = col;
+                        }
+                    }
+                }
+                Some(img)
+            }
+            Some(Dim::D2) => {
+                let g = self.d2.as_ref()?;
+                let w = g.width.max(1);
+                let h = g.height.max(1);
+                let mut img = egui::ColorImage::new([w * self.scale, h * self.scale], self.inactive_color());
+                for y in 0..h {
+                    for x in 0..w {
+                        let idx = y * w + x;
+                        let col = self.color_of(&g.cells[idx].current);
+                        for dy in 0..self.scale {
+                            for dx in 0..self.scale {
+                                let px = x * self.scale + dx;
+                                let py = y * self.scale + dy;
+                                img[(px, py)] = col;
+                            }
+                        }
+                    }
+                }
+                Some(img)
+            }
+            None => None,
+        }
+    }
+
+    fn ui_top_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.horizontal(|ui| {
+            if ui.button(if self.playing { "Pause" } else { "Play" }).clicked() {
+                self.playing = !self.playing;
+                self.last_tick = Instant::now();
+            }
+            if ui.button("Step").clicked() { self.step_once(); }
+            ui.add(egui::DragValue::new(&mut self.refresh_ms).clamp_range(10..=2000).suffix(" ms"));
+            ui.label("Refresh");
+            ui.separator();
+            ui.add(egui::DragValue::new(&mut self.run_to_steps).clamp_range(1..=1_000_000).suffix(" steps"));
+            if ui.button("Run to +N").clicked() {
+                self.run_to_target = Some(self.current_step().saturating_add(self.run_to_steps as u64));
+                self.playing = true; // ensure stepping
+            }
+            ui.separator();
+            ui.add(egui::DragValue::new(&mut self.scale).clamp_range(1..=32).suffix(" px"));
+            ui.label("Scale");
+            ui.separator();
+            if ui.button("Export GIF...").clicked() { self.export_gif_dialog(); }
+            if ui.button("Save Final State").clicked() { self.save_final_state(); }
+            ui.separator();
+            if ui.button("Return to Menu").clicked() { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+        });
+    }
+
+    fn ui_dataset_controls(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Load/Select Scenario", |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Load Config JSON...").clicked() { self.load_config_dialog(); }
+                if ui.button("Demo: Life (2D)").clicked() { self.load_demo_life(); }
+                if ui.button("Demo: 1D Rule 30").clicked() { self.load_demo_1d_rule30(); }
+                if ui.button("Demo: 1D n=2").clicked() { self.load_demo_1d_n2(); }
+                if ui.button("Demo: 1D Custom...").clicked() { self.load_demo_1d_custom_dialog(); }
+            });
+        });
+    }
+
+    fn ui_colors(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Colors", |ui| {
+            let tys = self.collect_types();
+            for ty in tys {
+                let mut col = self.color_of(&ty);
+                let label = format!("{}", ty.0);
+                if ui.color_edit_button_srgba(&mut col).changed() {
+                    self.set_color_for(&ty, col);
+                }
+                ui.label(label);
+            }
+        });
+    }
+
+    fn tick_play(&mut self) {
+        // Fixed refresh: step at most once per refresh interval under play.
+        let now = Instant::now();
+        let interval = Duration::from_millis(self.refresh_ms);
+        if self.playing && now.duration_since(self.last_tick) >= interval {
+            self.last_tick = now;
+            self.step_once();
+        }
+        if let Some(target) = self.run_to_target {
+            while self.current_step() < target {
+                // cap multiple steps per frame to avoid UI lockup
+                for _ in 0..100 {
+                    if self.current_step() >= target { break; }
+                    self.step_once();
+                }
+                break; // let UI render
+            }
+            if self.current_step() >= target {
+                self.run_to_target = None;
+                self.playing = false;
+            }
+        }
+    }
+
+    fn load_demo_life(&mut self) {
+        let alive = CellType("Alive".into());
+        let inactive = CellType::inactive();
+        let rule = Rule2D { subrules: vec![
+            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        ]};
+        let (w,h,hist) = (50usize, 30usize, 5usize);
+        let mut init = vec![CellType::inactive(); w*h];
+        // seed blinker
+        let idx = |x: usize, y: usize| y*w+x;
+        init[idx(10,10)] = alive.clone();
+        init[idx(11,10)] = alive.clone();
+        init[idx(12,10)] = alive.clone();
+        self.d1 = None; self.dim = Some(Dim::D2);
+        self.d2 = Some(Grid2D::new(w,h,hist,init,rule));
+        self.colors.clear();
+    }
+
+    fn load_demo_1d_rule30(&mut self) {
+        let x = CellType("X".into());
+        let inactive = CellType::inactive();
+        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+        let width = 201usize; let hist = 5usize;
+        let mut init = vec![inactive.clone(); width];
+        init[width/2] = x.clone();
+        self.d2 = None; self.dim = Some(Dim::D1);
+        self.d1 = Some(Grid1D::new(width, hist, init, rule));
+        self.colors.clear();
+    }
+
+    fn load_demo_1d_n2(&mut self) {
+        let x = CellType("X".into());
+        let inactive = CellType::inactive();
+        let code: u128 = 0xAAAAAAAA;
+        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+        let width = 201usize; let hist = 5usize;
+        let mut init = vec![inactive.clone(); width];
+        init[width/2] = x.clone();
+        self.d2 = None; self.dim = Some(Dim::D1);
+        self.d1 = Some(Grid1D::new(width, hist, init, rule));
+        self.colors.clear();
+    }
+
+    fn load_demo_1d_custom_dialog(&mut self) {
+        // Console-based prompt (temporary) for code and n
+        println!("Enter Wolfram code (u128): ");
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_line(&mut buf);
+        let wolfram_code: u128 = buf.trim().parse().unwrap_or(30);
+        println!("Enter neighborhood radius n (>=1): ");
+        let mut buf2 = String::new();
+        let _ = std::io::stdin().read_line(&mut buf2);
+        let n: u8 = buf2.trim().parse().unwrap_or(1);
+        let x = CellType("X".into());
+        let inactive = CellType::inactive();
+        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
+        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
+        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+        if rule.validate().is_err() { return; }
+        let width = 201usize; let hist = 5usize;
+        let mut init = vec![inactive.clone(); width];
+        init[width/2] = x.clone();
+        self.d2 = None; self.dim = Some(Dim::D1);
+        self.d1 = Some(Grid1D::new(width, hist, init, rule));
+        self.colors.clear();
+    }
+
+    fn load_config_dialog(&mut self) {
+        if let Some(path) = FileDialog::new().add_filter("json", &["json"]).pick_file() {
+            match cella_lib::config::CellaConfig::from_file(&path) {
+                Ok(cfg) => match cfg {
+                    cella_lib::config::CellaConfig::D1(_) => {
+                        if let Some(g) = cfg.build_grid1d() {
+                            self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None; self.colors.clear();
+                        }
+                    }
+                    cella_lib::config::CellaConfig::D2(_) => {
+                        if let Some(g) = cfg.build_grid2d() {
+                            self.dim = Some(Dim::D2); self.d2 = Some(g); self.d1 = None; self.colors.clear();
+                        }
+                    }
+                },
+                Err(e) => { eprintln!("Failed to load config: {}", e); }
+            }
+        }
+    }
+
+    fn save_final_state(&mut self) {
+        let state = match self.dim {
+            Some(Dim::D1) => self.d1.as_ref().map(GridState::from_grid1d),
+            Some(Dim::D2) => self.d2.as_ref().map(GridState::from_grid2d),
+            None => None,
+        };
+        if let Some(st) = state {
+            if let Some(path) = FileDialog::new().set_file_name("snapshot.json").save_file() {
+                let json = serde_json::to_string_pretty(&st).unwrap();
+                let _ = std::fs::write(path, json);
+            }
+        }
+    }
+
+    fn export_gif_dialog(&mut self) {
+        if let Some(path) = FileDialog::new().set_file_name("cella.gif").save_file() {
+            let steps = self.export_steps.max(1);
+            let fps = self.export_fps.max(1);
+            match self.dim {
+                Some(Dim::D1) => if let Some(g) = &self.d1 { let mut clone = g.clone(); let _ = export_gif_1d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color()); },
+                Some(Dim::D2) => if let Some(g) = &self.d2 { let mut clone = g.clone(); let _ = export_gif_2d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color()); },
+                None => {}
+            }
+        }
+    }
+}
+
+impl eframe::App for CellaApp {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("top_controls").show(ctx, |ui| {
+            self.ui_top_controls(ui, ctx);
+        });
+        egui::SidePanel::left("left_controls").default_width(260.0).show(ctx, |ui| {
+            self.ui_dataset_controls(ui);
+            ui.separator();
+            ui.label("Export settings:");
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut self.export_steps).clamp_range(1..=10_000));
+                ui.label("steps");
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut self.export_fps).clamp_range(1..=60));
+                ui.label("fps");
+            });
+            ui.separator();
+            self.ui_colors(ui);
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(img) = self.render_image(ctx) {
+                let tex = ui.ctx().load_texture(
+                    "grid_tex",
+                    egui::ImageData::Color(img.into()),
+                    egui::TextureOptions::NEAREST,
+                );
+                let size = tex.size_vec2();
+                ui.add(egui::Image::new(&tex).fit_to_exact_size(size));
+            } else {
+                ui.label("No grid loaded.");
+            }
+        });
+
+        self.tick_play();
+        ctx.request_repaint_after(Duration::from_millis(10));
+    }
+
+}
+
+fn default_palette() -> Vec<Color32> {
+    // Calm, high-contrast but not harsh palette
+    vec![
+        Color32::from_rgb(0x56,0xB4,0xE9), // sky
+        Color32::from_rgb(0xE6,0x9F,0x00), // orange
+        Color32::from_rgb(0x00,0xA9,0xCF), // teal
+        Color32::from_rgb(0xF0,0xE4,0x42), // yellow
+        Color32::from_rgb(0x66,0xA6,0x69), // green
+        Color32::from_rgb(0xDF,0x70,0x93), // rose
+        Color32::from_rgb(0x80,0x80,0x80), // gray
+        Color32::from_rgb(0xAA,0xCC,0xEE), // light blue
+    ]
+}
+
+fn export_gif_2d(
+    grid: &mut Grid2D,
+    path: std::path::PathBuf,
+    steps: usize,
+    fps: u32,
+    scale: u16,
+    colors: &HashMap<String, Color32>,
+    palette: &Vec<Color32>,
+    inactive: Color32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gif::{Encoder, Frame};
+    let w = (grid.width as u16).saturating_mul(scale);
+    let h = (grid.height as u16).saturating_mul(scale);
+    // Build a fixed 256-color palette: index 0 = inactive, others from provided palette
+    let mut color_table: Vec<u8> = Vec::with_capacity(256 * 3);
+    let mut push_rgb = |c: Color32| { color_table.push(c.r()); color_table.push(c.g()); color_table.push(c.b()); };
+    push_rgb(inactive);
+    for i in 0..255 { let c = palette.get(i % palette.len()).copied().unwrap_or(Color32::LIGHT_BLUE); push_rgb(c); }
+
+    let mut file = std::fs::File::create(path)?;
+    let mut encoder = Encoder::new(&mut file, w, h, &color_table)?;
+    let delay_cs = (100.0 / (fps.max(1) as f32)).round() as u16;
+
+    for _ in 0..steps {
+        let mut buf = vec![0u8; (w as usize) * (h as usize)];
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                let idx = y * grid.width + x;
+                let ty = &grid.cells[idx].current;
+                let index = if ty.0 == INACTIVE { 0u8 } else {
+                    let mut hsh: u64 = 0xcbf29ce484222325; let prime: u64 = 0x00000100000001B3;
+                    for &b in ty.0.as_bytes() { hsh ^= b as u64; hsh = hsh.wrapping_mul(prime); }
+                    (1 + ((hsh as usize) % 255)) as u8
+                };
+                for dy in 0..scale as usize {
+                    for dx in 0..scale as usize {
+                        let px = (x as usize) * (scale as usize) + dx;
+                        let py = (y as usize) * (scale as usize) + dy;
+                        buf[py * (w as usize) + px] = index;
+                    }
+                }
+            }
+        }
+        let mut frame = Frame::default();
+        frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
+        encoder.write_frame(&frame)?;
+        grid.step();
+    }
+
+    Ok(())
+}
+
+fn export_gif_1d(
+    grid: &mut Grid1D,
+    path: std::path::PathBuf,
+    steps: usize,
+    fps: u32,
+    scale: u16,
+    colors: &HashMap<String, Color32>,
+    palette: &Vec<Color32>,
+    inactive: Color32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use gif::{Encoder, Frame};
+    let w = (grid.width as u16).saturating_mul(scale);
+    let h = (1u16).saturating_mul(scale);
+
+    // Build a fixed 256-color palette: index 0 = inactive, others from provided palette
+    let mut color_table: Vec<u8> = Vec::with_capacity(256 * 3);
+    let mut push_rgb = |c: Color32| { color_table.push(c.r()); color_table.push(c.g()); color_table.push(c.b()); };
+    push_rgb(inactive);
+    for i in 0..255 { let c = palette.get(i % palette.len()).copied().unwrap_or(Color32::LIGHT_BLUE); push_rgb(c); }
+
+    let mut file = std::fs::File::create(path)?;
+    let mut encoder = Encoder::new(&mut file, w, h, &color_table)?;
+
+    let delay_cs = (100.0 / (fps.max(1) as f32)).round() as u16;
+
+    for _ in 0..steps {
+        let mut buf = vec![0u8; (w as usize) * (h as usize)];
+        for x in 0..grid.width {
+            let ty = &grid.cells[x].current;
+            let index = if ty.0 == INACTIVE { 0u8 } else {
+                let mut hsh: u64 = 0xcbf29ce484222325; let prime: u64 = 0x00000100000001B3;
+                for &b in ty.0.as_bytes() { hsh ^= b as u64; hsh = hsh.wrapping_mul(prime); }
+                (1 + ((hsh as usize) % 255)) as u8
+            };
+            for dy in 0..scale as usize {
+                for dx in 0..scale as usize {
+                    let px = (x as usize) * (scale as usize) + dx;
+                    let py = 0usize * (scale as usize) + dy;
+                    buf[py * (w as usize) + px] = index;
+                }
+            }
+        }
+        let mut frame = Frame::default();
+        frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
+        encoder.write_frame(&frame)?;
+        grid.step();
+    }
+
+    Ok(())
+}

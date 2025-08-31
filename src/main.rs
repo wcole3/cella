@@ -1,4 +1,5 @@
 mod demos;
+mod gui;
 use crate::demos::*;
 use std::io::{self, Write};
 
@@ -11,6 +12,7 @@ fn menu() {
         println!("4) 1D Custom (Wolfram code + n)");
         println!("5) Load from configuration file (JSON)");
         println!("6) Langton's ant (placeholder)");
+        println!("7) GUI Frontend");
         println!("0) Exit");
         print!("Select an option: ");
         let _ = io::stdout().flush();
@@ -22,6 +24,11 @@ fn menu() {
             "4" => demos::demo_1d_custom(),
             "5" => demos::demo_from_config(),
             "6" => println!("Langton's ant not yet implemented in this engine (requires moving agent)."),
+            "7" => {
+                if let Err(e) = gui::run_gui() {
+                    eprintln!("GUI error: {}", e);
+                }
+            }
             "0" => { println!("Bye!"); break; }
             _ => println!("Unknown option."),
         }
