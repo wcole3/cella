@@ -1,4 +1,13 @@
 //! Rule definitions for 1D and 2D cellular automata.
+//!
+//! Important: Cells default to the Inactive type if no subrule matches.
+//! If you want Inactive cells to become another type (e.g., X/Alive),
+//! you must add an explicit subrule whose current_type is `Inactive`.
+//! For example, for 1D Rule 30 you typically need two subrules:
+//! - current=X, criteria=X, wolfram_code=30 => output=X (propagate active cells)
+//! - current=Inactive, criteria=X, wolfram_code=30 => output=X (allow births from Inactive)
+//! Without the second subrule, a single X seed cannot spread because
+//! Inactive cells would never transition to X.
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use crate::types::CellType;

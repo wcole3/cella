@@ -147,8 +147,10 @@ fn stress_2d_langdon_diagonals() {
 #[ignore]
 fn stress_1d_rule30_center_seed() {
     let x = CellType("X".into());
-    let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
-    let rule = Rule1D { subrules: vec![sub] };
+    let inactive = CellType::inactive();
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
     let w = 257usize; let hist = 4usize;
     let mut init = vec![CellType::inactive(); w];
     init[w/2] = x.clone();
