@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use cella_lib::*;
 use egui::{Color32, Context};
 use rfd::FileDialog;
+use crate::demos::{build_1d_rule30, build_1d_code_n, build_2d_life};
 
 /// GUI frontend for the Cella demos and configurations.
 ///
@@ -50,6 +51,10 @@ struct CellaApp {
     // Export
     export_steps: u32,
     export_fps: u32,
+
+    // Custom 1D builder inputs
+    custom_code_input: String,
+    custom_n: u8,
 }
 
 impl CellaApp {
@@ -68,6 +73,8 @@ impl CellaApp {
             palette: default_palette(),
             export_steps: 300,
             export_fps: 12,
+            custom_code_input: "30".into(),
+            custom_n: 1,
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -194,7 +201,12 @@ impl CellaApp {
             if ui.button("Export GIF...").clicked() { self.export_gif_dialog(); }
             if ui.button("Save Final State").clicked() { self.save_final_state(); }
             ui.separator();
-            if ui.button("Return to Menu").clicked() { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+            if ui.button("Return to Menu").clicked() {
+                // Clear current simulation and show the menu (dataset controls)
+                self.playing = false;
+                self.run_to_target = None;
+                self.d1 = None; self.d2 = None; self.dim = None;
+            }
         });
     }
 
@@ -205,7 +217,15 @@ impl CellaApp {
                 if ui.button("Demo: Life (2D)").clicked() { self.load_demo_life(); }
                 if ui.button("Demo: 1D Rule 30").clicked() { self.load_demo_1d_rule30(); }
                 if ui.button("Demo: 1D n=2").clicked() { self.load_demo_1d_n2(); }
-                if ui.button("Demo: 1D Custom...").clicked() { self.load_demo_1d_custom_dialog(); }
+            });
+            ui.separator();
+            ui.label("Custom 1D (Wolfram code + n):");
+            ui.horizontal(|ui| {
+                ui.label("code:");
+                ui.text_edit_singleline(&mut self.custom_code_input);
+                ui.label("n:");
+                ui.add(egui::DragValue::new(&mut self.custom_n).clamp_range(1..=8));
+                if ui.button("Build").clicked() { self.load_demo_1d_custom_from_inputs(); }
             });
         });
     }
@@ -249,75 +269,36 @@ impl CellaApp {
     }
 
     fn load_demo_life(&mut self) {
-        let alive = CellType("Alive".into());
-        let inactive = CellType::inactive();
-        let rule = Rule2D { subrules: vec![
-            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-        ]};
         let (w,h,hist) = (50usize, 30usize, 5usize);
-        let mut init = vec![CellType::inactive(); w*h];
-        // seed blinker
-        let idx = |x: usize, y: usize| y*w+x;
-        init[idx(10,10)] = alive.clone();
-        init[idx(11,10)] = alive.clone();
-        init[idx(12,10)] = alive.clone();
         self.d1 = None; self.dim = Some(Dim::D2);
-        self.d2 = Some(Grid2D::new(w,h,hist,init,rule));
+        self.d2 = Some(build_2d_life(w,h,hist));
         self.colors.clear();
     }
 
     fn load_demo_1d_rule30(&mut self) {
-        let x = CellType("X".into());
-        let inactive = CellType::inactive();
-        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
-        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
-        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
         let width = 201usize; let hist = 5usize;
-        let mut init = vec![inactive.clone(); width];
-        init[width/2] = x.clone();
         self.d2 = None; self.dim = Some(Dim::D1);
-        self.d1 = Some(Grid1D::new(width, hist, init, rule));
+        self.d1 = Some(build_1d_rule30(width, hist));
         self.colors.clear();
     }
 
     fn load_demo_1d_n2(&mut self) {
-        let x = CellType("X".into());
-        let inactive = CellType::inactive();
         let code: u128 = 0xAAAAAAAA;
-        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
-        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
-        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
         let width = 201usize; let hist = 5usize;
-        let mut init = vec![inactive.clone(); width];
-        init[width/2] = x.clone();
         self.d2 = None; self.dim = Some(Dim::D1);
-        self.d1 = Some(Grid1D::new(width, hist, init, rule));
+        self.d1 = Some(build_1d_code_n(code, 2, width, hist).expect("n2 builder should validate"));
         self.colors.clear();
     }
 
-    fn load_demo_1d_custom_dialog(&mut self) {
-        // Console-based prompt (temporary) for code and n
-        println!("Enter Wolfram code (u128): ");
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_line(&mut buf);
-        let wolfram_code: u128 = buf.trim().parse().unwrap_or(30);
-        println!("Enter neighborhood radius n (>=1): ");
-        let mut buf2 = String::new();
-        let _ = std::io::stdin().read_line(&mut buf2);
-        let n: u8 = buf2.trim().parse().unwrap_or(1);
-        let x = CellType("X".into());
-        let inactive = CellType::inactive();
-        let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
-        let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
-        let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
-        if rule.validate().is_err() { return; }
+    fn load_demo_1d_custom_from_inputs(&mut self) {
+        let wolfram_code: u128 = self.custom_code_input.trim().parse().unwrap_or(30);
+        let n: u8 = if self.custom_n == 0 { 1 } else { self.custom_n };
         let width = 201usize; let hist = 5usize;
-        let mut init = vec![inactive.clone(); width];
-        init[width/2] = x.clone();
-        self.d2 = None; self.dim = Some(Dim::D1);
-        self.d1 = Some(Grid1D::new(width, hist, init, rule));
-        self.colors.clear();
+        if let Ok(grid) = build_1d_code_n(wolfram_code, n, width, hist) {
+            self.d2 = None; self.dim = Some(Dim::D1);
+            self.d1 = Some(grid);
+            self.colors.clear();
+        }
     }
 
     fn load_config_dialog(&mut self) {
