@@ -60,6 +60,8 @@ struct CellaApp {
     // 1D history rendering
     history_1d: Vec<Vec<CellType>>, // past lines from oldest->newest (excluding current)
     history_limit_1d: usize,
+    // Minimum number of rows to allocate in the 1D viewport to avoid scrollbars overlapping content
+    min_view_rows_1d: usize,
 
     // Drawing mode
     draw_mode: DrawMode,
@@ -97,6 +99,7 @@ impl CellaApp {
             grid_line_color: Color32::from_rgb(60, 60, 70),
             history_1d: Vec::new(),
             history_limit_1d: 100,
+            min_view_rows_1d: 3,
             draw_mode: DrawMode::Cycle,
             selected_draw_type: Some(CellType::inactive()),
             undo_stack: Vec::new(),
@@ -178,8 +181,8 @@ impl CellaApp {
                 let g = self.d1.as_ref()?;
                 let w = g.width.max(1);
                 let total_rows = self.history_1d.len() + 1; // history + current
-                let h = total_rows.max(1);
-                let mut img = egui::ColorImage::new([w * self.scale, h * self.scale], self.inactive_color());
+                let visible_rows = total_rows.max(self.min_view_rows_1d.max(1));
+                let mut img = egui::ColorImage::new([w * self.scale, visible_rows * self.scale], self.inactive_color());
                 // draw history rows
                 for (row_i, row) in self.history_1d.iter().enumerate() {
                     let ww = w.min(row.len());
@@ -194,14 +197,14 @@ impl CellaApp {
                         }
                     }
                 }
-                // draw current last row
-                let last_y = h - 1;
+                // draw current row at y = history_len (leaving padding at bottom)
+                let current_y = self.history_1d.len();
                 for x in 0..w {
                     let col = self.color_of(&g.cells[x].current);
                     for dy in 0..self.scale {
                         for dx in 0..self.scale {
                             let px = x * self.scale + dx;
-                            let py = last_y * self.scale + dy;
+                            let py = current_y * self.scale + dy;
                             img[(px, py)] = col;
                         }
                     }
@@ -209,7 +212,7 @@ impl CellaApp {
                 // overlay grid lines
                 if self.show_grid_lines {
                     let width_px = w * self.scale;
-                    let height_px = h * self.scale;
+                    let height_px = visible_rows * self.scale;
                     let gc = self.grid_line_color;
                     for x in (0..width_px).step_by(self.scale) {
                         for y in 0..height_px { img[(x, y)] = gc; }
