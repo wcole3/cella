@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use crate::types::{CellState, CellType};
 use crate::rules::Rule1D;
+use crate::threads::thread_count;
 
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -52,24 +53,74 @@ impl Grid1D {
     ///
     /// Evaluates subrules in order; if none trigger, the cell becomes
     /// [`CellType::inactive`]. History and ages are updated accordingly.
+    /// May run in parallel depending on the `threads` setting in
+    /// `cella.properties` at the repository root.
     pub fn step(&mut self) {
         let mut next = self.cells.clone();
-        for i in 0..self.width {
-            let current_type = self.cells[i].current.clone();
-            let mut decided: Option<CellType> = None;
-            'sub: for s in &self.rule.subrules {
-                if &current_type != &s.current_type { continue; }
-                let n = s.n as isize;
-                let len = 2 * n + 1;
-                let mut window: Vec<CellType> = Vec::with_capacity(len as usize);
-                for d in -n..=n { window.push(self.get_type_or_inactive(i as isize + d)); }
-                if let Some(out) = s.applies_and_output(&current_type, &window) {
-                    decided = Some(out);
-                    break 'sub;
+        let threads = thread_count();
+        // Serial fallback for small grids or single-thread config
+        if threads <= 1 || self.width < 256 {
+            for i in 0..self.width {
+                let current_type = self.cells[i].current.clone();
+                let mut decided: Option<CellType> = None;
+                'sub: for s in &self.rule.subrules {
+                    if &current_type != &s.current_type { continue; }
+                    let n = s.n as isize;
+                    let len = 2 * n + 1;
+                    let mut window: Vec<CellType> = Vec::with_capacity(len as usize);
+                    for d in -n..=n { window.push(self.get_type_or_inactive(i as isize + d)); }
+                    if let Some(out) = s.applies_and_output(&current_type, &window) {
+                        decided = Some(out);
+                        break 'sub;
+                    }
                 }
+                let new_type = decided.unwrap_or_else(CellType::inactive);
+                next[i].transition(&new_type);
             }
-            let new_type = decided.unwrap_or_else(CellType::inactive);
-            next[i].transition(&new_type);
+            self.cells = next;
+            self.step = self.step.saturating_add(1);
+            return;
+        }
+        // Parallel path: snapshot immutable inputs, compute outputs per index
+        let snapshot = self.cells.clone();
+        let rule = self.rule.clone();
+        let width = self.width;
+        let chunk = (width + threads - 1) / threads;
+        let mut handles = Vec::new();
+        for t in 0..threads {
+            let start = t * chunk;
+            if start >= width { break; }
+            let end = ((t + 1) * chunk).min(width);
+            let snapshot_t = snapshot.clone();
+            let rule_t = rule.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut out: Vec<(usize, CellType)> = Vec::with_capacity(end - start);
+                for i in start..end {
+                    let current_type = snapshot_t[i].current.clone();
+                    let mut decided: Option<CellType> = None;
+                    'sub: for s in &rule_t.subrules {
+                        if &current_type != &s.current_type { continue; }
+                        let n = s.n as isize;
+                        let len = 2 * n + 1;
+                        let mut window: Vec<CellType> = Vec::with_capacity(len as usize);
+                        for d in -n..=n {
+                            let idx = i as isize + d;
+                            if idx < 0 || (idx as usize) >= width { window.push(CellType::inactive()); }
+                            else { window.push(snapshot_t[idx as usize].current.clone()); }
+                        }
+                        if let Some(o) = s.applies_and_output(&current_type, &window) {
+                            decided = Some(o);
+                            break 'sub;
+                        }
+                    }
+                    let new_type = decided.unwrap_or_else(CellType::inactive);
+                    out.push((i, new_type));
+                }
+                out
+            }));
+        }
+        for h in handles {
+            for (i, ty) in h.join().expect("thread join") { next[i].transition(&ty); }
         }
         self.cells = next;
         self.step = self.step.saturating_add(1);

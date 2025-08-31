@@ -1,8 +1,18 @@
 //! cella: a minimal cellular automata library supporting 1D and 2D grids.
 //!
-//! This crate exposes composable rules and serializable grid state. See modules
-//! for details. Quick start:
+//! This crate exposes composable rules and serializable grid state. Stepping
+//! is double-buffered and can run in parallel depending on a simple property
+//! file in your repository root:
 //!
+//!   cella.properties
+//!     threads=4
+//!
+//! The number after `threads=` controls how many worker threads are used to
+//! compute each step. If the file or key is missing, the engine defaults to
+//! `std::thread::available_parallelism()` (or 1 on error). See [`threads`] for
+//! details.
+//!
+//! Quick start:
 //! - Define rules (1D Wolfram-style or 2D threshold neighborhoods)
 //! - Create a Grid1D or Grid2D with initial CellType values
 //! - Call step() repeatedly; serialize via GridState.
@@ -13,6 +23,7 @@ pub mod grid1d;
 pub mod grid2d;
 pub mod state;
 pub mod config;
+pub mod threads;
 
 // Re-exports for ergonomic public API
 pub use types::{INACTIVE, CellType, CellState};
