@@ -13,13 +13,13 @@ use crate::grid2d::Grid2D;
 /// ```rust
 /// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState};
 /// let alive = CellType("Alive".into());
-/// let inert = CellType::inert();
+/// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-///   Rule2DSubrule { current_type: inert.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule { current_type: inactive.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
 /// ]};
 /// let (w,h) = (4usize, 4usize);
-/// let mut init = vec![CellType::inert(); w*h];
+/// let mut init = vec![CellType::inactive(); w*h];
 /// init[1*w + 1] = alive.clone();
 /// init[1*w + 2] = alive.clone();
 /// init[1*w + 3.min(w-1)] = alive.clone();

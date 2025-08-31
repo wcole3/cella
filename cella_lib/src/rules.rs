@@ -91,7 +91,7 @@ impl Rule1DSubrule {
     /// let x = CellType("X".into());
     /// let y = CellType("Y".into());
     /// let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: y.clone() };
-    /// let window = vec![CellType::inert(), x.clone(), CellType::inert()];
+    /// let window = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     /// let out = sub.applies_and_output(&x, &window);
     /// assert_eq!(out, Some(y));
     /// ```

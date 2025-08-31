@@ -36,14 +36,14 @@ fn ask_steps(default_steps: usize) -> usize {
 
 fn demo_life() {
     let alive = CellType("Alive".into());
-    let inert = CellType::inert();
+    let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-        Rule2DSubrule { current_type: inert.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
     ]};
 
     let width = 20usize; let height = 10usize; let hist = 5usize;
-    let mut init = vec![CellType::inert(); width*height];
+    let mut init = vec![CellType::inactive(); width*height];
     // Seed a blinker pattern
     let set_alive = |x: usize, y: usize, v: &mut Vec<CellType>| { v[y*width + x] = alive.clone(); };
     set_alive(5, 5, &mut init);
@@ -65,11 +65,11 @@ fn demo_life() {
 
 fn demo_1d_rule30() {
     let x = CellType("X".into());
-    let inert = CellType::inert();
+    let inactive = CellType::inactive();
     let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
     let rule = Rule1D { subrules: vec![sub] };
     let width = 41usize; let hist = 5usize;
-    let mut init = vec![inert.clone(); width];
+    let mut init = vec![inactive.clone(); width];
     init[width/2] = x.clone();
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
@@ -88,7 +88,7 @@ fn demo_1d_n2() {
     let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
     let rule = Rule1D { subrules: vec![sub] };
     let width = 41usize; let hist = 5usize;
-    let mut init = vec![CellType::inert(); width];
+    let mut init = vec![CellType::inactive(); width];
     init[width/2] = x.clone();
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
@@ -107,7 +107,7 @@ fn demo_from_config() {
             match cfg {
                 CellaConfig::D1(_) => {
                     if let Some(mut g) = cfg.build_grid1d() {
-                        let active = g.cells.iter().find(|c| c.current != CellType::inert()).map(|c| c.current.clone()).unwrap_or(CellType("X".into()));
+                        let active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("X".into()));
                         let steps = ask_steps(10);
                         print_grid_1d(&g, &active);
                         for _ in 0..steps { g.step(); print_grid_1d(&g, &active); }
@@ -115,7 +115,7 @@ fn demo_from_config() {
                 }
                 CellaConfig::D2(_) => {
                     if let Some(mut g) = cfg.build_grid2d() {
-                        let active = g.cells.iter().find(|c| c.current != CellType::inert()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
+                        let active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
                         let steps = ask_steps(10);
                         print_grid_2d(&g, &active);
                         for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g, &active); }

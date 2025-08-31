@@ -22,11 +22,11 @@ use crate::grid2d::Grid2D;
 ///   "width":3,
 ///   "height":3,
 ///   "history_limit":2,
-///   "initial":["Inert","Inert","Inert","Inert","Alive","Inert","Inert","Inert","Inert"],
+///   "initial":["Inactive","Inactive","Inactive","Inactive","Alive","Inactive","Inactive","Inactive","Inactive"],
 ///   "rule":{
 ///     "subrules":[
 ///       {"current_type":"Alive","criteria_type":"Alive","threshold":2,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"},
-///       {"current_type":"Inert","criteria_type":"Alive","threshold":3,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"}
+///       {"current_type":"Inactive","criteria_type":"Alive","threshold":3,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"}
 ///     ]
 ///   }
 /// });
@@ -88,7 +88,7 @@ impl CellaConfig {
     /// ```no_run
     /// use cella_lib::config::{CellaConfig, Config2D};
     /// // write some cfg
-    /// # let cfg: CellaConfig = serde_json::from_str("{\"dim\":\"2d\",\"width\":1,\"height\":1,\"history_limit\":1,\"initial\":[\"Inert\"],\"rule\":{\"subrules\":[]}}").unwrap();
+    /// # let cfg: CellaConfig = serde_json::from_str("{\"dim\":\"2d\",\"width\":1,\"height\":1,\"history_limit\":1,\"initial\":[\"Inactive\"],\"rule\":{\"subrules\":[]}}").unwrap();
     /// cfg.to_file_pretty("out.json").unwrap();
     /// ```
     pub fn to_file_pretty<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {

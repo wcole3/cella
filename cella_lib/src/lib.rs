@@ -15,7 +15,7 @@ pub mod state;
 pub mod config;
 
 // Re-exports for ergonomic public API
-pub use types::{INERT, CellType, CellState};
+pub use types::{INACTIVE, CellType, CellState};
 pub use rules::{Neighborhood2D, RuleError, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule};
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
@@ -65,7 +65,7 @@ mod tests {
         let y = CellType("Y".into());
         let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128 << 2, n: 1, randomness: None, output_type: y.clone() };
         let rule = Rule1D { subrules: vec![sub] };
-        let init = vec![CellType::inert(), x.clone(), CellType::inert()];
+        let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
         let mut g = Grid1D::new(3, 3, init, rule);
         g.step();
         assert_eq!(g.cells[1].current, y);
@@ -105,13 +105,13 @@ mod tests {
     fn config_roundtrip_build() {
         use crate::config::{CellaConfig, Config2D};
         let alive = CellType("Alive".into());
-        let inert = CellType::inert();
+        let inactive = CellType::inactive();
         let rule = Rule2D { subrules: vec![
             Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-            Rule2DSubrule { current_type: inert.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
         ]};
         let w=4; let h=4; let hist=3;
-        let mut initial = vec![inert.0.clone(); w*h];
+        let mut initial = vec![inactive.0.clone(); w*h];
         initial[1*w + 1] = alive.0.clone();
         initial[1*w + 2] = alive.0.clone();
         initial[1*w + 3.min(w-1)] = alive.0.clone();
@@ -137,7 +137,7 @@ mod more_tests {
         let code: u128 = 1u128 << 4;
         let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: y.clone() };
         let rule = Rule1D { subrules: vec![sub] };
-        let init = vec![CellType::inert(), CellType::inert(), x.clone(), CellType::inert(), CellType::inert()];
+        let init = vec![CellType::inactive(), CellType::inactive(), x.clone(), CellType::inactive(), CellType::inactive()];
         let mut g = Grid1D::new(5, 3, init, rule);
         g.step();
         assert_eq!(g.cells[2].current, y);

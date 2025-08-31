@@ -12,13 +12,13 @@ use crate::rules::Rule2D;
 /// ```rust
 /// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType};
 /// let alive = CellType("Alive".into());
-/// let inert = CellType::inert();
+/// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-///   Rule2DSubrule { current_type: inert.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule { current_type: inactive.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
 /// ]};
 /// let (w,h) = (6usize, 5usize);
-/// let mut init = vec![CellType::inert(); w*h];
+/// let mut init = vec![CellType::inactive(); w*h];
 /// init[2*w + 2] = alive.clone();
 /// init[2*w + 3] = alive.clone();
 /// init[2*w + 4] = alive.clone();
@@ -59,14 +59,14 @@ impl Grid2D {
         Some(yu * self.width + xu)
     }
 
-    fn get_type_or_inert(&self, x: isize, y: isize) -> CellType {
-        match self.idx(x, y) { Some(i) => self.cells[i].current.clone(), None => CellType::inert() }
+    fn get_type_or_inactive(&self, x: isize, y: isize) -> CellType {
+        match self.idx(x, y) { Some(i) => self.cells[i].current.clone(), None => CellType::inactive() }
     }
 
     /// Advance the automaton by one step using double-buffering.
     ///
     /// Evaluates subrules in order; if none trigger, the cell becomes
-    /// [`CellType::inert`]. History and ages are updated accordingly.
+    /// [`CellType::inactive`]. History and ages are updated accordingly.
     pub fn step(&mut self) {
         let mut next = self.cells.clone();
         for y in 0..self.height {
@@ -77,11 +77,11 @@ impl Grid2D {
                 'sub: for s in &self.rule.subrules {
                     if &current_type != &s.current_type { continue; }
                     let out = s.applies_and_output(&current_type, |dx, dy| {
-                        self.get_type_or_inert(x as isize + dx as isize, y as isize + dy as isize)
+                        self.get_type_or_inactive(x as isize + dx as isize, y as isize + dy as isize)
                     });
                     if let Some(o) = out { decided = Some(o); break 'sub; }
                 }
-                let new_type = decided.unwrap_or_else(CellType::inert);
+                let new_type = decided.unwrap_or_else(CellType::inactive);
                 next[i].transition(&new_type);
             }
         }

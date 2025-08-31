@@ -13,7 +13,7 @@ use crate::rules::Rule1D;
 /// let x = CellType("X".into());
 /// let rule = Rule1D { subrules: vec![Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() }]};
 /// let width = 5usize;
-/// let mut init = vec![CellType::inert(); width];
+/// let mut init = vec![CellType::inactive(); width];
 /// init[width/2] = x.clone();
 /// let mut g = Grid1D::new(width, 3, init, rule);
 /// g.step();
@@ -43,15 +43,15 @@ impl Grid1D {
         Self { width, history_limit, cells, step: 0, rule }
     }
 
-    fn get_type_or_inert(&self, idx: isize) -> CellType {
-        if idx < 0 || idx as usize >= self.width { return CellType::inert(); }
+    fn get_type_or_inactive(&self, idx: isize) -> CellType {
+        if idx < 0 || idx as usize >= self.width { return CellType::inactive(); }
         self.cells[idx as usize].current.clone()
     }
 
     /// Advance the automaton by one step using double-buffering.
     ///
     /// Evaluates subrules in order; if none trigger, the cell becomes
-    /// [`CellType::inert`]. History and ages are updated accordingly.
+    /// [`CellType::inactive`]. History and ages are updated accordingly.
     pub fn step(&mut self) {
         let mut next = self.cells.clone();
         for i in 0..self.width {
@@ -62,13 +62,13 @@ impl Grid1D {
                 let n = s.n as isize;
                 let len = 2 * n + 1;
                 let mut window: Vec<CellType> = Vec::with_capacity(len as usize);
-                for d in -n..=n { window.push(self.get_type_or_inert(i as isize + d)); }
+                for d in -n..=n { window.push(self.get_type_or_inactive(i as isize + d)); }
                 if let Some(out) = s.applies_and_output(&current_type, &window) {
                     decided = Some(out);
                     break 'sub;
                 }
             }
-            let new_type = decided.unwrap_or_else(CellType::inert);
+            let new_type = decided.unwrap_or_else(CellType::inactive);
             next[i].transition(&new_type);
         }
         self.cells = next;

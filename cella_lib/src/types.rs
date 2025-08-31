@@ -2,38 +2,38 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Name used for the implicit inert/background cell type.
-pub const INERT: &str = "Inert";
+/// Name used for the implicit inactive/background cell type.
+pub const INACTIVE: &str = "Inactive";
 
 /// A semantic label for a cell's type/state.
 ///
 /// Cell types are arbitrary strings and can be used to distinguish
 /// living/dead, species, phases, etc. A special built-in type is
-/// [`INERT`], representing the background/border.
+/// [`INACTIVE`], representing the background/border.
 ///
 /// Examples
 /// ```rust
 /// use cella_lib::CellType;
 /// let alive = CellType("Alive".into());
-/// let inert = CellType::inert();
-/// assert_ne!(alive, inert);
+/// let inactive = CellType::inactive();
+/// assert_ne!(alive, inactive);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CellType(pub String);
 
 impl CellType {
-    /// Convenience constructor for the inert/background type.
+    /// Convenience constructor for the inactive/background type.
     ///
     /// ```rust
-    /// use cella_lib::{CellType, INERT};
-    /// let t = CellType::inert();
-    /// assert_eq!(t.0, INERT);
+    /// use cella_lib::{CellType, INACTIVE};
+    /// let t = CellType::inactive();
+    /// assert_eq!(t.0, INACTIVE);
     /// ```
-    pub fn inert() -> Self { CellType(INERT.to_string()) }
+    pub fn inactive() -> Self { CellType(INACTIVE.to_string()) }
 }
 
 impl Default for CellType {
-    fn default() -> Self { CellType::inert() }
+    fn default() -> Self { CellType::inactive() }
 }
 
 impl fmt::Display for CellType {
