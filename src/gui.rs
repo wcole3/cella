@@ -47,6 +47,13 @@ struct CellaApp {
     scale: usize, // pixel size per cell
     colors: HashMap<String, Color32>,
     palette: Vec<Color32>,
+    // Grid overlay
+    show_grid_lines: bool,
+    grid_line_color: Color32,
+
+    // 1D history rendering
+    history_1d: Vec<Vec<CellType>>, // past lines from oldest->newest (excluding current)
+    history_limit_1d: usize,
 
     // Export
     export_steps: u32,
@@ -71,6 +78,10 @@ impl CellaApp {
             scale: 8,
             colors: HashMap::new(),
             palette: default_palette(),
+            show_grid_lines: true,
+            grid_line_color: Color32::from_rgb(60, 60, 70),
+            history_1d: Vec::new(),
+            history_limit_1d: 100,
             export_steps: 300,
             export_fps: 12,
             custom_code_input: "30".into(),
@@ -100,7 +111,14 @@ impl CellaApp {
 
     fn step_once(&mut self) {
         match self.dim {
-            Some(Dim::D1) => if let Some(g) = &mut self.d1 { g.step(); },
+            Some(Dim::D1) => if let Some(g) = &mut self.d1 {
+                // push current row to history before stepping
+                let mut row: Vec<CellType> = Vec::with_capacity(g.width);
+                for x in 0..g.width { row.push(g.cells[x].current.clone()); }
+                self.history_1d.push(row);
+                if self.history_1d.len() > self.history_limit_1d { let overflow = self.history_1d.len() - self.history_limit_1d; self.history_1d.drain(0..overflow); }
+                g.step();
+            },
             Some(Dim::D2) => if let Some(g) = &mut self.d2 { g.step(); },
             None => {}
         }
@@ -140,17 +158,45 @@ impl CellaApp {
             Some(Dim::D1) => {
                 let g = self.d1.as_ref()?;
                 let w = g.width.max(1);
-                let h = 1usize;
+                let total_rows = self.history_1d.len() + 1; // history + current
+                let h = total_rows.max(1);
                 let mut img = egui::ColorImage::new([w * self.scale, h * self.scale], self.inactive_color());
+                // draw history rows
+                for (row_i, row) in self.history_1d.iter().enumerate() {
+                    let ww = w.min(row.len());
+                    for x in 0..ww {
+                        let col = self.color_of(&row[x]);
+                        for dy in 0..self.scale {
+                            for dx in 0..self.scale {
+                                let px = x * self.scale + dx;
+                                let py = row_i * self.scale + dy;
+                                img[(px, py)] = col;
+                            }
+                        }
+                    }
+                }
+                // draw current last row
+                let last_y = h - 1;
                 for x in 0..w {
                     let col = self.color_of(&g.cells[x].current);
-                    // fill block
                     for dy in 0..self.scale {
                         for dx in 0..self.scale {
                             let px = x * self.scale + dx;
-                            let py = 0 * self.scale + dy;
+                            let py = last_y * self.scale + dy;
                             img[(px, py)] = col;
                         }
+                    }
+                }
+                // overlay grid lines
+                if self.show_grid_lines {
+                    let width_px = w * self.scale;
+                    let height_px = h * self.scale;
+                    let gc = self.grid_line_color;
+                    for x in (0..width_px).step_by(self.scale) {
+                        for y in 0..height_px { img[(x, y)] = gc; }
+                    }
+                    for y in (0..height_px).step_by(self.scale) {
+                        for x in 0..width_px { img[(x, y)] = gc; }
                     }
                 }
                 Some(img)
@@ -171,6 +217,17 @@ impl CellaApp {
                                 img[(px, py)] = col;
                             }
                         }
+                    }
+                }
+                if self.show_grid_lines {
+                    let width_px = w * self.scale;
+                    let height_px = h * self.scale;
+                    let gc = self.grid_line_color;
+                    for x in (0..width_px).step_by(self.scale) {
+                        for y in 0..height_px { img[(x, y)] = gc; }
+                    }
+                    for y in (0..height_px).step_by(self.scale) {
+                        for x in 0..width_px { img[(x, y)] = gc; }
                     }
                 }
                 Some(img)
@@ -205,6 +262,7 @@ impl CellaApp {
                 // Clear current simulation and show the menu (dataset controls)
                 self.playing = false;
                 self.run_to_target = None;
+                self.history_1d.clear();
                 self.d1 = None; self.d2 = None; self.dim = None;
             }
         });
@@ -226,6 +284,16 @@ impl CellaApp {
                 ui.label("n:");
                 ui.add(egui::DragValue::new(&mut self.custom_n).clamp_range(1..=8));
                 if ui.button("Build").clicked() { self.load_demo_1d_custom_from_inputs(); }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.show_grid_lines, "Grid lines");
+                let mut col = self.grid_line_color;
+                if ui.color_edit_button_srgba(&mut col).changed() { self.grid_line_color = col; }
+            });
+            ui.horizontal(|ui| {
+                ui.label("1D history limit:");
+                ui.add(egui::DragValue::new(&mut self.history_limit_1d).clamp_range(1..=10_000));
             });
         });
     }
@@ -272,6 +340,7 @@ impl CellaApp {
         let (w,h,hist) = (50usize, 30usize, 5usize);
         self.d1 = None; self.dim = Some(Dim::D2);
         self.d2 = Some(build_2d_life(w,h,hist));
+        self.history_1d.clear();
         self.colors.clear();
     }
 
@@ -279,6 +348,7 @@ impl CellaApp {
         let width = 201usize; let hist = 5usize;
         self.d2 = None; self.dim = Some(Dim::D1);
         self.d1 = Some(build_1d_rule30(width, hist));
+        self.history_1d.clear();
         self.colors.clear();
     }
 
@@ -287,6 +357,7 @@ impl CellaApp {
         let width = 201usize; let hist = 5usize;
         self.d2 = None; self.dim = Some(Dim::D1);
         self.d1 = Some(build_1d_code_n(code, 2, width, hist).expect("n2 builder should validate"));
+        self.history_1d.clear();
         self.colors.clear();
     }
 
@@ -297,6 +368,7 @@ impl CellaApp {
         if let Ok(grid) = build_1d_code_n(wolfram_code, n, width, hist) {
             self.d2 = None; self.dim = Some(Dim::D1);
             self.d1 = Some(grid);
+            self.history_1d.clear();
             self.colors.clear();
         }
     }
@@ -307,7 +379,7 @@ impl CellaApp {
                 Ok(cfg) => match cfg {
                     cella_lib::config::CellaConfig::D1(_) => {
                         if let Some(g) = cfg.build_grid1d() {
-                            self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None; self.colors.clear();
+                            self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None; self.history_1d.clear(); self.colors.clear();
                         }
                     }
                     cella_lib::config::CellaConfig::D2(_) => {
@@ -370,17 +442,81 @@ impl eframe::App for CellaApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(img) = self.render_image(ctx) {
-                let tex = ui.ctx().load_texture(
-                    "grid_tex",
-                    egui::ImageData::Color(img.into()),
-                    egui::TextureOptions::NEAREST,
-                );
-                let size = tex.size_vec2();
-                ui.add(egui::Image::new(&tex).fit_to_exact_size(size));
-            } else {
-                ui.label("No grid loaded.");
-            }
+            egui::ScrollArea::both().show(ui, |ui| {
+                if let Some(img) = self.render_image(ctx) {
+                    let tex = ui.ctx().load_texture(
+                        "grid_tex",
+                        egui::ImageData::Color(img.into()),
+                        egui::TextureOptions::NEAREST,
+                    );
+                    let size = tex.size_vec2();
+                    let response = ui.add(egui::Image::new(&tex).fit_to_exact_size(size).sense(egui::Sense::click()));
+
+                    // Zoom with Ctrl+MouseWheel when hovered
+                    if response.hovered() {
+                        ui.input(|i| {
+                            if i.modifiers.ctrl {
+                                if i.raw_scroll_delta.y > 0.0 { self.scale = (self.scale + 1).min(32); }
+                                else if i.raw_scroll_delta.y < 0.0 { self.scale = self.scale.saturating_sub(1).max(1); }
+                            }
+                        });
+                    }
+
+                    // Click to edit when paused
+                    if response.clicked() && !self.playing {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            let local = pos - response.rect.min;
+                            let px = local.x.max(0.0) as usize;
+                            let py = local.y.max(0.0) as usize;
+                            let cell_x = px / self.scale.max(1);
+                            let cell_y = py / self.scale.max(1);
+                            match self.dim {
+                                Some(Dim::D1) => {
+                                    if let Some(g) = &mut self.d1 {
+                                        let total_rows = self.history_1d.len() + 1;
+                                        if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
+                                            let current = g.cells[cell_x].current.clone();
+                                            // Build type list locally to avoid borrowing self
+                                            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                                            for c in &g.cells { set.insert(c.current.0.clone()); }
+                                            let mut names: Vec<String> = Vec::new();
+                                            names.push(INACTIVE.to_string());
+                                            for n in set { if n != INACTIVE { names.push(n); } }
+                                            let tys: Vec<CellType> = names.iter().map(|s| CellType(s.clone())).collect();
+                                            let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
+                                            idx = (idx + 1) % tys.len();
+                                            let next = tys[idx].clone();
+                                            g.cells[cell_x].transition(&next);
+                                        }
+                                    }
+                                }
+                                Some(Dim::D2) => {
+                                    if let Some(g) = &mut self.d2 {
+                                        if cell_x < g.width && cell_y < g.height {
+                                            let i = cell_y * g.width + cell_x;
+                                            let current = g.cells[i].current.clone();
+                                            // Build type list locally to avoid borrowing self
+                                            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                                            for c in &g.cells { set.insert(c.current.0.clone()); }
+                                            let mut names: Vec<String> = Vec::new();
+                                            names.push(INACTIVE.to_string());
+                                            for n in set { if n != INACTIVE { names.push(n); } }
+                                            let tys: Vec<CellType> = names.iter().map(|s| CellType(s.clone())).collect();
+                                            let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
+                                            idx = (idx + 1) % tys.len();
+                                            let next = tys[idx].clone();
+                                            g.cells[i].transition(&next);
+                                        }
+                                    }
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                } else {
+                    ui.label("No grid loaded.");
+                }
+            });
         });
 
         self.tick_play();
