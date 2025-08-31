@@ -20,10 +20,12 @@
 // set CELLA_BENCH=1 to print per-test timings immediately.
 
 use cella_lib::*;
+use cella_lib::threads::{set_thread_override, clear_thread_override, thread_count};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+use std::collections::HashMap;
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
@@ -102,15 +104,15 @@ fn bench_store() -> &'static Mutex<Vec<(String, u128)>> {
     BENCH_DATA.get_or_init(|| Mutex::new(Vec::new()))
 }
 fn record_bench(name: &str, ms: u128) {
+    let suffix = format!("_t{}", thread_count());
+    let full = format!("{}{}", name, suffix);
     let mut v = bench_store().lock().unwrap();
-    v.push((name.to_string(), ms));
+    v.push((full.clone(), ms));
     if std::env::var("CELLA_BENCH").ok().as_deref() == Some("1") {
-        println!("[bench] {:>28}: {} ms", name, ms);
+        println!("[bench] {:>28}: {} ms", full, ms);
     }
 }
 
-#[test]
-#[ignore]
 fn stress_2d_life_like_moore() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -132,8 +134,6 @@ fn stress_2d_life_like_moore() {
     assert_snapshot("2d_life_like_moore", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_2d_von_neumann_threshold() {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -154,8 +154,6 @@ fn stress_2d_von_neumann_threshold() {
     assert_snapshot("2d_vonneumann_threshold", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_2d_langdon_diagonals() {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -174,8 +172,6 @@ fn stress_2d_langdon_diagonals() {
     assert_snapshot("2d_langdon_diagonals", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_1d_rule30_center_seed() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -194,8 +190,6 @@ fn stress_1d_rule30_center_seed() {
     assert_snapshot("1d_rule30_center", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_1d_n2_alternating_code() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -215,8 +209,6 @@ fn stress_1d_n2_alternating_code() {
     assert_snapshot("1d_n2_alt", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_1d_n3_custom_code() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -239,8 +231,6 @@ fn stress_1d_n3_custom_code() {
 
 // -------- Larger stress tests to exercise multithreading --------
 
-#[test]
-#[ignore]
 fn stress_2d_large_moore_256() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -270,8 +260,6 @@ fn stress_2d_large_moore_256() {
     assert_snapshot("2d_large_moore_256", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_2d_large_vn_256() {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -291,8 +279,6 @@ fn stress_2d_large_vn_256() {
     assert_snapshot("2d_large_vn_256", hash);
 }
 
-#[test]
-#[ignore]
 fn stress_1d_large_rule30_2049() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -320,13 +306,150 @@ fn zzz_benchmark_summary() {
         println!("[bench] No benchmarks recorded. Did you run with --ignored?");
         return;
     }
+    // Build current map
+    let mut current: HashMap<String, u128> = HashMap::new();
+    for (name, ms) in data.iter() { current.insert(name.clone(), *ms); }
+    // Load previous results if any
+    let prev = load_previous_benchmarks();
+
     println!("\n[bench] Summary ({} entries):", data.len());
     let mut total: u128 = 0;
     let mut entries = data.clone();
     entries.sort_by(|a,b| a.0.cmp(&b.0));
     for (name, ms) in entries {
-        println!("[bench] {:>28}: {} ms", name, ms);
         total += ms;
+        if let Some(old) = prev.get(&name) {
+            if *old > 0 {
+                let diff = ms as i128 - *old as i128;
+                let pct = (diff as f64) * 100.0 / (*old as f64);
+                let sign = if diff >= 0 { "+" } else { "" };
+                println!("[bench] {:>28}: {} ms (Δ {}{} ms, {:+.2}%)", name, ms, sign, diff, pct);
+            } else {
+                println!("[bench] {:>28}: {} ms (Δ n/a)", name, ms);
+            }
+        } else {
+            println!("[bench] {:>28}: {} ms (new)", name, ms);
+        }
     }
     println!("[bench] {:>28}: {} ms (sum)", "TOTAL", total);
+    if let Err(e) = save_current_benchmarks(&current) {
+        eprintln!("[bench] Failed to save benchmarks: {}", e);
+    } else {
+        println!("[bench] Saved current timings to {}", benchmarks_file().display());
+    }
+}
+
+
+// -------- Thread-count variants (1,4,8) for all long tests --------
+#[test]
+#[ignore]
+fn stress_2d_life_like_moore_t1() { set_thread_override(1); stress_2d_life_like_moore(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_life_like_moore_t4() { set_thread_override(4); stress_2d_life_like_moore(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_life_like_moore_t8() { set_thread_override(8); stress_2d_life_like_moore(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_von_neumann_threshold_t1() { set_thread_override(1); stress_2d_von_neumann_threshold(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_von_neumann_threshold_t4() { set_thread_override(4); stress_2d_von_neumann_threshold(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_von_neumann_threshold_t8() { set_thread_override(8); stress_2d_von_neumann_threshold(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_langdon_diagonals_t1() { set_thread_override(1); stress_2d_langdon_diagonals(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_langdon_diagonals_t4() { set_thread_override(4); stress_2d_langdon_diagonals(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_langdon_diagonals_t8() { set_thread_override(8); stress_2d_langdon_diagonals(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_1d_rule30_center_seed_t1() { set_thread_override(1); stress_1d_rule30_center_seed(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_rule30_center_seed_t4() { set_thread_override(4); stress_1d_rule30_center_seed(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_rule30_center_seed_t8() { set_thread_override(8); stress_1d_rule30_center_seed(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_1d_n2_alternating_code_t1() { set_thread_override(1); stress_1d_n2_alternating_code(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_n2_alternating_code_t4() { set_thread_override(4); stress_1d_n2_alternating_code(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_n2_alternating_code_t8() { set_thread_override(8); stress_1d_n2_alternating_code(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_1d_n3_custom_code_t1() { set_thread_override(1); stress_1d_n3_custom_code(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_n3_custom_code_t4() { set_thread_override(4); stress_1d_n3_custom_code(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_n3_custom_code_t8() { set_thread_override(8); stress_1d_n3_custom_code(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_large_moore_256_t1() { set_thread_override(1); stress_2d_large_moore_256(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_large_moore_256_t4() { set_thread_override(4); stress_2d_large_moore_256(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_large_moore_256_t8() { set_thread_override(8); stress_2d_large_moore_256(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_large_vn_256_t1() { set_thread_override(1); stress_2d_large_vn_256(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_large_vn_256_t4() { set_thread_override(4); stress_2d_large_vn_256(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_large_vn_256_t8() { set_thread_override(8); stress_2d_large_vn_256(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_1d_large_rule30_2049_t1() { set_thread_override(1); stress_1d_large_rule30_2049(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_large_rule30_2049_t4() { set_thread_override(4); stress_1d_large_rule30_2049(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_large_rule30_2049_t8() { set_thread_override(8); stress_1d_large_rule30_2049(); clear_thread_override(); }
+
+
+// -------- Benchmark persistence helpers --------
+fn benchmarks_file() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("benchmarks_last.json")
+}
+
+fn load_previous_benchmarks() -> HashMap<String, u128> {
+    let path = benchmarks_file();
+    if let Ok(s) = fs::read_to_string(&path) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, u128>>(&s) {
+            return map;
+        }
+    }
+    HashMap::new()
+}
+
+fn save_current_benchmarks(map: &HashMap<String, u128>) -> Result<(), Box<dyn std::error::Error>> {
+    let s = serde_json::to_string_pretty(map)?;
+    if let Some(parent) = benchmarks_file().parent() { let _ = fs::create_dir_all(parent); }
+    fs::write(benchmarks_file(), s)?;
+    Ok(())
 }

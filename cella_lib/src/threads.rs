@@ -12,9 +12,11 @@
 //! `std::thread::available_parallelism()` (or 1 on error).
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 static THREADS: OnceLock<usize> = OnceLock::new();
+static THREAD_OVERRIDE: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
+fn override_slot() -> &'static Mutex<Option<usize>> { THREAD_OVERRIDE.get_or_init(|| Mutex::new(None)) }
 
 fn find_properties_file() -> Option<PathBuf> {
     // Start from current_dir and walk up a few levels to find `cella.properties`.
@@ -48,13 +50,27 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
 
 /// Get the configured thread count for parallel stepping.
 /// 
-/// This is resolved once per process. See module docs for the
-/// configuration file format and lookup logic.
+/// This first honors a process-local override (used by tests/benchmarks),
+/// otherwise reads from cella.properties once per process and caches it.
 pub fn thread_count() -> usize {
+    if let Some(n) = *override_slot().lock().expect("thread override lock") { return n.max(1); }
     *THREADS.get_or_init(|| {
         if let Some(path) = find_properties_file() {
             if let Some(n) = parse_threads_from_props(&path) { return n; }
         }
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
     })
+}
+
+/// Set a process-local override thread count (>=1) used by `thread_count()`.
+/// Useful for tests/benchmarks to run with specific parallelism settings.
+pub fn set_thread_override(n: usize) {
+    let mut slot = override_slot().lock().expect("thread override lock");
+    *slot = Some(n.max(1));
+}
+
+/// Clear the process-local override so `thread_count()` resumes using config.
+pub fn clear_thread_override() {
+    let mut slot = override_slot().lock().expect("thread override lock");
+    *slot = None;
 }
