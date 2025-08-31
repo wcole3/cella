@@ -164,11 +164,13 @@ fn stress_1d_rule30_center_seed() {
 #[ignore]
 fn stress_1d_n2_alternating_code() {
     let x = CellType("X".into());
+    let inactive = CellType::inactive();
     let code: u128 = 0xAAAAAAAA; // alternating bits over first 32 patterns
-    let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
-    let rule = Rule1D { subrules: vec![sub] };
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
     let w = 301usize; let hist = 3usize;
-    let mut init = vec![CellType::inactive(); w];
+    let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
     for _ in 0..400 { g.step(); }
@@ -180,12 +182,14 @@ fn stress_1d_n2_alternating_code() {
 #[ignore]
 fn stress_1d_n3_custom_code() {
     let x = CellType("X".into());
+    let inactive = CellType::inactive();
     // n=3 -> 2^(2*3+1)=2^7=128 patterns; pick a code with some structure
     let code: u128 = 0xF0F0_F0F0_F0F0_F0F0;
-    let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 3, randomness: None, output_type: x.clone() };
-    let rule = Rule1D { subrules: vec![sub] };
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 3, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 3, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
     let w = 257usize; let hist = 2usize;
-    let mut init = vec![CellType::inactive(); w];
+    let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
     for _ in 0..350 { g.step(); }

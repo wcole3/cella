@@ -85,12 +85,15 @@ fn demo_1d_rule30() {
 
 fn demo_1d_n2() {
     let x = CellType("X".into());
+    let inactive = CellType::inactive();
     // A made-up n=2 code producing interesting patterns (checker-ish)
     let code: u128 = 0xAAAAAAAA; // 32-bit alternating
-    let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
-    let rule = Rule1D { subrules: vec![sub] };
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+    // Allow Inactive cells to become X under the same code.
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
     let width = 41usize; let hist = 5usize;
-    let mut init = vec![CellType::inactive(); width];
+    let mut init = vec![inactive.clone(); width];
     init[width/2] = x.clone();
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
