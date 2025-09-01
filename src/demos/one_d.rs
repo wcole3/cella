@@ -1,6 +1,30 @@
 use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
 
+// ------- Reusable builders (for CLI and GUI) -------
+pub fn build_1d_rule30(width: usize, history: usize) -> Grid1D {
+    let x = CellType("X".into());
+    let inactive = CellType::inactive();
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+    let mut init = vec![inactive.clone(); width];
+    init[width/2] = x.clone();
+    Grid1D::new(width, history, init, rule)
+}
+
+pub fn build_1d_code_n(wolfram_code: u128, n: u8, width: usize, history: usize) -> Result<Grid1D, RuleError> {
+    let x = CellType("X".into());
+    let inactive = CellType::inactive();
+    let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
+    let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code, n, randomness: None, output_type: x.clone() };
+    let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
+    rule.validate()?;
+    let mut init = vec![inactive.clone(); width];
+    init[width/2] = x.clone();
+    Ok(Grid1D::new(width, history, init, rule))
+}
+
 fn print_grid_1d(g: &Grid1D, active: &CellType) {
     let mut line = String::with_capacity(g.width);
     for i in 0..g.width {

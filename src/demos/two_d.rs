@@ -3,6 +3,32 @@ use cella_lib::*;
 use std::fs;
 use std::io::{self, Write};
 
+// ------- Reusable builders (for CLI and GUI) -------
+pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
+    let alive = CellType("Alive".into());
+    let inactive = CellType::inactive();
+    let rule = Rule2D { subrules: vec![
+        // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        // Survival: Alive stays Alive (>=2 Alive neighbors), after overpopulation check
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        // Prevent birth unless exactly 3 Alive neighbors
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        // Birth (exactly 3)
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+    ]};
+    let mut init = vec![CellType::inactive(); width*height];
+    // seed a blinker in the middle-ish
+    if width >= 3 && height >= 1 {
+        let y = height/2; let x = width/2;
+        let set = |x: usize, y: usize, v: &mut Vec<CellType>| v[y*width + x] = alive.clone();
+        if x>0 { set(x-1, y, &mut init); }
+        set(x, y, &mut init);
+        if x+1<width { set(x+1, y, &mut init); }
+    }
+    Grid2D::new(width, height, history, init, rule)
+}
+
 fn print_grid_2d(g: &Grid2D, active: &CellType) {
     for y in 0..g.height {
         let mut line = String::with_capacity(g.width);
@@ -18,8 +44,12 @@ pub fn demo_life() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        // Overpopulation
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        // Survival
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        // Birth (exactly 3)
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
     ]};
 
     let width = 20usize; let height = 10usize; let hist = 5usize;

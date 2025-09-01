@@ -1,10 +1,10 @@
 mod demos;
-use crate::demos::*;
+mod gui;
 use std::io::{self, Write};
 
 fn menu() {
     loop {
-        println!("\nCella demos:");
+        println!("\nCella demos (CLI):");
         println!("1) 2D Game of Life (approx)");
         println!("2) 1D Wolfram Rule 30 (n=1)");
         println!("3) 1D Wolfram n=2 demo");
@@ -29,5 +29,13 @@ fn menu() {
 }
 
 fn main() {
+    // Choose GUI or CLI via args: pass --gui to launch GUI
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--gui" || a.eq_ignore_ascii_case("gui")) {
+        if let Err(e) = gui::run_gui() {
+            eprintln!("GUI error: {}", e);
+        }
+        return;
+    }
     menu();
 }

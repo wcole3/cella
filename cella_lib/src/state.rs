@@ -11,12 +11,16 @@ use crate::grid2d::Grid2D;
 ///
 /// Example
 /// ```rust
-/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState};
+/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState, CountOp};
 /// let alive = CellType("Alive".into());
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-///   Rule2DSubrule { current_type: inactive.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
+///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+///   // Survival: Alive stays Alive if at least 2 Alive neighbors (after overpop check)
+///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   // Birth: Inactive becomes Alive if exactly 3 Alive neighbors
+///   Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
 /// ]};
 /// let (w,h) = (4usize, 4usize);
 /// let mut init = vec![CellType::inactive(); w*h];
