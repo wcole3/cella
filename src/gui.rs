@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life};
 use cella_lib::*;
-use egui::{Color32, Context, Key, Vec2};
+use egui::{Color32, Context, Key};
 use rfd::FileDialog;
-use crate::demos::{build_1d_rule30, build_1d_code_n, build_2d_life};
 
 /// GUI frontend for the Cella demos and configurations.
 ///
@@ -258,7 +258,7 @@ impl CellaApp {
         }
     }
 
-    fn ui_top_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn ui_top_controls(&mut self, ui: &mut egui::Ui, _ctx: &Context) {
         ui.horizontal(|ui| {
             if ui.button(if self.playing { "Pause" } else { "Play" }).clicked() {
                 self.playing = !self.playing;
@@ -270,7 +270,7 @@ impl CellaApp {
             ui.separator();
             ui.add(egui::DragValue::new(&mut self.run_to_steps).clamp_range(1..=1_000_000).suffix(" steps"));
             if ui.button("Run to +N").clicked() {
-                self.run_to_target = Some(self.current_step().saturating_add(self.run_to_steps as u64));
+                self.run_to_target = Some(self.current_step().saturating_add(self.run_to_steps));
                 self.playing = true; // ensure stepping
             }
             ui.separator();
@@ -416,9 +416,9 @@ impl CellaApp {
 
     fn load_config_dialog(&mut self) {
         if let Some(path) = FileDialog::new().add_filter("json", &["json"]).pick_file() {
-            match cella_lib::config::CellaConfig::from_file(&path) {
+            match config::CellaConfig::from_file(&path) {
                 Ok(cfg) => match cfg {
-                    cella_lib::config::CellaConfig::D1(_) => {
+                    config::CellaConfig::D1(_) => {
                         if let Some(g) = cfg.build_grid1d() {
                             self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None;
                             if let Some(gr) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(gr)); }
@@ -426,7 +426,7 @@ impl CellaApp {
                             self.update_selected_draw_type_default();
                         }
                     }
-                    cella_lib::config::CellaConfig::D2(_) => {
+                    config::CellaConfig::D2(_) => {
                         if let Some(g) = cfg.build_grid2d() {
                             self.dim = Some(Dim::D2); self.d2 = Some(g); self.d1 = None;
                             if let Some(gr) = &self.d2 { self.initial_state = Some(GridState::from_grid2d(gr)); }
@@ -510,7 +510,7 @@ impl CellaApp {
 }
 
 impl eframe::App for CellaApp {
-    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_controls").show(ctx, |ui| {
             self.ui_top_controls(ui, ctx);
         });
@@ -519,9 +519,9 @@ impl eframe::App for CellaApp {
             ui.separator();
             ui.collapsing("Editing", |ui| {
                 ui.horizontal(|ui| {
-                    let mut is_cycle = matches!(self.draw_mode, DrawMode::Cycle);
+                    let is_cycle = matches!(self.draw_mode, DrawMode::Cycle);
                     if ui.radio(is_cycle, "Cycle").clicked() { self.draw_mode = DrawMode::Cycle; }
-                    let mut is_paint = matches!(self.draw_mode, DrawMode::Paint);
+                    let is_paint = matches!(self.draw_mode, DrawMode::Paint);
                     if ui.radio(is_paint, "Paint").clicked() { self.draw_mode = DrawMode::Paint; }
                 });
                 ui.horizontal(|ui| {
@@ -566,7 +566,7 @@ impl eframe::App for CellaApp {
             // Hotkeys: Ctrl+Z undo last edit when paused
             if !self.playing {
                 ui.input(|i| {
-                    if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::Z) {
+                    if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(Key::Z) {
                         if let Some(batch) = self.undo_stack.pop() {
                             match self.dim {
                                 Some(Dim::D1) => if let Some(g) = &mut self.d1 { for (idx, prev) in batch { if idx < g.width { g.cells[idx].transition(&prev); } } },
@@ -740,7 +740,7 @@ fn export_gif_2d(
     steps: usize,
     fps: u32,
     scale: u16,
-    colors: &HashMap<String, Color32>,
+    _colors: &HashMap<String, Color32>,
     palette: &Vec<Color32>,
     inactive: Color32,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -770,8 +770,8 @@ fn export_gif_2d(
                 };
                 for dy in 0..scale as usize {
                     for dx in 0..scale as usize {
-                        let px = (x as usize) * (scale as usize) + dx;
-                        let py = (y as usize) * (scale as usize) + dy;
+                        let px = (x) * (scale as usize) + dx;
+                        let py = (y) * (scale as usize) + dy;
                         buf[py * (w as usize) + px] = index;
                     }
                 }
@@ -792,13 +792,13 @@ fn export_gif_1d(
     steps: usize,
     fps: u32,
     scale: u16,
-    colors: &HashMap<String, Color32>,
+    _colors: &HashMap<String, Color32>,
     palette: &Vec<Color32>,
     inactive: Color32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
     let w = (grid.width as u16).saturating_mul(scale);
-    let h = (1u16).saturating_mul(scale);
+    let h = 1u16.saturating_mul(scale);
 
     // Build a fixed 256-color palette: index 0 = inactive, others from provided palette
     let mut color_table: Vec<u8> = Vec::with_capacity(256 * 3);
@@ -822,7 +822,7 @@ fn export_gif_1d(
             };
             for dy in 0..scale as usize {
                 for dx in 0..scale as usize {
-                    let px = (x as usize) * (scale as usize) + dx;
+                    let px = (x) * (scale as usize) + dx;
                     let py = 0usize * (scale as usize) + dy;
                     buf[py * (w as usize) + px] = index;
                 }
