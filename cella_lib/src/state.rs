@@ -16,13 +16,11 @@ use crate::grid2d::Grid2D;
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
 ///   // Survival: Alive stays Alive if at least 2 Alive neighbors (after overpop check)
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-///   // Prevent birth unless exactly 3 Alive neighbors
-///   Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
-///   // Birth: Inactive becomes Alive if == 3 Alive neighbors
-///   Rule2DSubrule { current_type: inactive.clone(),  criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   // Birth: Inactive becomes Alive if exactly 3 Alive neighbors
+///   Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
 /// ]};
 /// let (w,h) = (4usize, 4usize);
 /// let mut init = vec![CellType::inactive(); w*h];

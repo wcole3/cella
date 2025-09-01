@@ -28,7 +28,9 @@ fn two_d_randomness_one_never_applies() {
     let sub = Rule2DSubrule {
         current_type: a.clone(),
         criteria_type: b.clone(),
-        threshold: 1,
+        count: 1,
+        op: CountOp::Gt,
+        limit: None,
         range: 1,
         neighborhood: Neighborhood2D::Moore,
         randomness: Some(1.0), // should never pass

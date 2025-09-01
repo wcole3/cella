@@ -9,13 +9,13 @@ pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
         // Survival: Alive stays Alive (>=2 Alive neighbors), after overpopulation check
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
         // Prevent birth unless exactly 3 Alive neighbors
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
-        // Birth
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        // Birth (exactly 3)
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
     ]};
     let mut init = vec![CellType::inactive(); width*height];
     // seed a blinker in the middle-ish
@@ -45,11 +45,11 @@ pub fn demo_life() {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
         // Survival
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-        // Birth
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        // Birth (exactly 3)
+        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
     ]};
 
     let width = 20usize; let height = 10usize; let hist = 5usize;

@@ -140,15 +140,31 @@ impl Rule1D {
 /// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D};
 /// let a = CellType("A".into());
 /// let b = CellType("B".into());
-/// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), threshold: 1, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
+/// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
 /// assert!(s.validate().is_ok());
 /// ```
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CountOp {
+    #[serde(rename = "lt")] Lt,
+    #[serde(rename = "gt")] Gt,
+    #[serde(rename = "eq")] Eq,
+}
+
+/// One subrule for a 2D automaton using neighbor-count comparisons.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule2DSubrule {
     pub current_type: CellType,
     pub criteria_type: CellType,
-    /// Count of criteria cells required to trigger (>= threshold).
-    pub threshold: u32,
+    /// Comparison baseline value.
+    pub count: u32,
+    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
+    /// between-range inclusive clause (see `validate`).
+    pub op: CountOp,
+    /// Optional bound for "between":
+    /// - If op=Gt, `limit` is an inclusive upper bound (count..=limit).
+    /// - If op=Lt, `limit` is an inclusive lower bound (limit..=count).
+    /// - If op=Eq, `limit` must be None.
+    pub limit: Option<u32>,
     /// Range n >= 1 defines (2n+1)^2 window.
     pub range: u8,
     pub neighborhood: Neighborhood2D,
@@ -158,10 +174,21 @@ pub struct Rule2DSubrule {
 }
 
 impl Rule2DSubrule {
-    /// Validate subrule parameters (range>=1 and randomness bounds).
+    /// Validate subrule parameters (range>=1 and randomness/limit bounds).
     pub fn validate(&self) -> Result<(), RuleError> {
         if self.range < 1 { return Err(RuleError::InvalidRange2D); }
         if let Some(r) = self.randomness { if !(0.0..=1.0).contains(&r) { return Err(RuleError::InvalidRandomness); } }
+        match self.op {
+            CountOp::Eq => {
+                if self.limit.is_some() { return Err(RuleError::InvalidRange2D); }
+            }
+            CountOp::Gt => {
+                if let Some(hi) = self.limit { if hi < self.count { return Err(RuleError::InvalidRange2D); } }
+            }
+            CountOp::Lt => {
+                if let Some(lo) = self.limit { if lo > self.count { return Err(RuleError::InvalidRange2D); } }
+            }
+        }
         Ok(())
     }
 
@@ -174,23 +201,28 @@ impl Rule2DSubrule {
         }
     }
 
-    /// Evaluate this subrule by counting matching neighbors.
-    ///
-    /// The `get_neighbor(dx, dy)` callback should return the type at the
-    /// relative offset from the center. The center itself is excluded.
+    /// Evaluate this subrule by counting matching neighbors and applying op/limit.
     pub fn applies_and_output<F>(&self, center_current: &CellType, mut get_neighbor: F) -> Option<CellType>
     where F: FnMut(i32, i32) -> CellType {
         if center_current != &self.current_type { return None; }
         let n = self.range as i32;
-        let mut count = 0u32;
+        let mut neighbors = 0u32;
         for dy in -n..=n {
             for dx in -n..=n {
                 if !Self::within_neighborhood(dx, dy, n, self.neighborhood) { continue; }
                 let t = get_neighbor(dx, dy);
-                if t == self.criteria_type { count += 1; }
+                if t == self.criteria_type { neighbors += 1; }
             }
         }
-        if count >= self.threshold {
+        let pass = match (self.op, self.limit) {
+            (CountOp::Eq, None) => neighbors == self.count,
+            (CountOp::Gt, None) => neighbors >= self.count,
+            (CountOp::Lt, None) => neighbors <= self.count,
+            (CountOp::Gt, Some(hi)) => neighbors >= self.count && neighbors <= hi,
+            (CountOp::Lt, Some(lo)) => neighbors <= self.count && neighbors >= lo,
+            (CountOp::Eq, Some(_)) => false,
+        };
+        if pass {
             if let Some(r) = self.randomness {
                 let mut rng = rand::thread_rng();
                 let v: f64 = rng.r#gen();
