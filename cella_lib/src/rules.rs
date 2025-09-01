@@ -59,7 +59,7 @@ pub struct Rule1DSubrule {
     pub wolfram_code: u128,
     /// Neighborhood radius (>=1): window size is 2n+1.
     pub n: u8,
-    /// Optional randomness in [0,1]; pass only if random >= value.
+    /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     pub output_type: CellType,
 }
@@ -67,7 +67,7 @@ pub struct Rule1DSubrule {
 impl Rule1DSubrule {
     /// Validate subrule parameters.
     ///
-    /// Ensures `n>=1`, `randomness` in [0,1], and `wolfram_code` within range
+    /// Ensures `n>=1`, `randomness` in (0-1), and `wolfram_code` within range
     /// for the window size (when computable within u128 limits).
     pub fn validate(&self) -> Result<(), RuleError> {
         if self.n < 1 { return Err(RuleError::InvalidN1D(self.n)); }
@@ -168,7 +168,7 @@ pub struct Rule2DSubrule {
     /// Range n >= 1 defines (2n+1)^2 window.
     pub range: u8,
     pub neighborhood: Neighborhood2D,
-    /// Optional randomness in [0,1]; pass only if random >= value.
+    /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     pub output_type: CellType,
 }
