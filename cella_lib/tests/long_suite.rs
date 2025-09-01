@@ -56,7 +56,6 @@ fn hash_grid1d_state(g: &Grid1D) -> u64 {
     // include dims and step
     acc ^= fnv1a64(&g.width.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
-    acc ^= hash_rule_serde_1d(&g.rule);
     for c in &g.cells {
         acc ^= fnv1a64(c.current.0.as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
@@ -69,7 +68,6 @@ fn hash_grid2d_state(g: &Grid2D) -> u64 {
     acc ^= fnv1a64(&g.width.to_le_bytes());
     acc ^= fnv1a64(&g.height.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
-    acc ^= hash_rule_serde_2d(&g.rule);
     for c in &g.cells {
         acc ^= fnv1a64(c.current.0.as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
