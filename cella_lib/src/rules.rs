@@ -137,7 +137,7 @@ impl Rule1D {
 ///
 /// Example
 /// ```rust
-/// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D};
+/// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
 /// let a = CellType("A".into());
 /// let b = CellType("B".into());
 /// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };

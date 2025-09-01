@@ -11,7 +11,7 @@ use crate::grid2d::Grid2D;
 ///
 /// Example
 /// ```rust
-/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState};
+/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState, CountOp};
 /// let alive = CellType("Alive".into());
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![

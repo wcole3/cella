@@ -41,16 +41,6 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
-fn hash_rule_serde_1d(rule: &Rule1D) -> u64 {
-    let s = serde_json::to_string(rule).unwrap();
-    fnv1a64(s.as_bytes())
-}
-
-fn hash_rule_serde_2d(rule: &Rule2D) -> u64 {
-    let s = serde_json::to_string(rule).unwrap();
-    fnv1a64(s.as_bytes())
-}
-
 fn hash_grid1d_state(g: &Grid1D) -> u64 {
     let mut acc: u64 = 0;
     // include dims and step

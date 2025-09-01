@@ -11,7 +11,7 @@ use crate::threads::thread_count;
 ///
 /// Example
 /// ```rust
-/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType};
+/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, CountOp};
 /// let alive = CellType("Alive".into());
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
