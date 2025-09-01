@@ -25,7 +25,9 @@ use crate::grid2d::Grid2D;
 ///   "initial":["Inactive","Inactive","Inactive","Inactive","Alive","Inactive","Inactive","Inactive","Inactive"],
 ///   "rule":{
 ///     "subrules":[
+///       {"current_type":"Alive","criteria_type":"Alive","threshold":4,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Inactive"},
 ///       {"current_type":"Alive","criteria_type":"Alive","threshold":2,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"},
+///       {"current_type":"Inactive","criteria_type":"Alive","threshold":4,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Inactive"},
 ///       {"current_type":"Inactive","criteria_type":"Alive","threshold":3,"range":1,"neighborhood":"Moore","randomness":null,"output_type":"Alive"}
 ///     ]
 ///   }

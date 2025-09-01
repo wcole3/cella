@@ -118,7 +118,13 @@ mod tests {
         let alive = CellType("Alive".into());
         let inactive = CellType::inactive();
         let rule = Rule2D { subrules: vec![
+            // Overpopulation: Alive with >=4 Alive neighbors becomes Inactive
+            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+            // Survival: Alive stays Alive with >=2 Alive neighbors (checked after overpop)
             Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), threshold: 2, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+            // Prevent birth unless exactly 3 Alive neighbors
+            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 4, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+            // Birth: Inactive becomes Alive with ==3 Alive neighbors
             Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), threshold: 3, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
         ]};
         let w=4; let h=4; let hist=3;
