@@ -303,16 +303,6 @@ impl CellaApp {
             if ui.button("Export GIF...").clicked() { self.export_gif_dialog(); }
             if ui.button("Save Final State").clicked() { self.save_final_state(); }
             if ui.button("Reset").clicked() { self.reset_to_initial(); }
-            ui.separator();
-            if ui.button("Return to Menu").clicked() {
-                // Clear current simulation and show the menu (dataset controls)
-                self.playing = false;
-                self.run_to_target = None;
-                self.history_1d.clear();
-                self.undo_stack.clear();
-                self.current_paint_batch = None;
-                self.d1 = None; self.d2 = None; self.dim = None;
-            }
         });
     }
 
@@ -593,14 +583,15 @@ impl eframe::App for CellaApp {
                 ui.label("Hold and drag on the grid while paused to paint.");
             });
             ui.separator();
-            ui.label("Export settings:");
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut self.export_steps).clamp_range(1..=10_000));
-                ui.label("steps");
-            });
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut self.export_fps).clamp_range(1..=60));
-                ui.label("fps");
+            ui.collapsing("Export", |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.export_steps).clamp_range(1..=10_000));
+                    ui.label("steps");
+                });
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.export_fps).clamp_range(1..=60));
+                    ui.label("fps");
+                });
             });
             ui.separator();
             self.ui_colors(ui);
@@ -654,49 +645,51 @@ impl eframe::App for CellaApp {
                     }
 
                     // Painting mode: click/drag to set cells when paused
-                    if !self.playing && response.dragged() && matches!(self.draw_mode, DrawMode::Paint) {
+                    if !self.playing && matches!(self.draw_mode, DrawMode::Paint) {
                         let is_down = ui.input(|i| i.pointer.primary_down());
                         if is_down {
                             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                                let local = pos - response.rect.min;
-                                let px = local.x.max(0.0) as usize;
-                                let py = local.y.max(0.0) as usize;
-                                let cell_x = px / self.scale.max(1);
-                                let cell_y = py / self.scale.max(1);
-                                let paint_ty = self.selected_draw_type.clone().unwrap_or_else(CellType::inactive);
-                                match self.dim {
-                                    Some(Dim::D1) => {
-                                        if let Some(g) = &mut self.d1 {
-                                            let total_rows = self.history_1d.len() + 1;
-                                            if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
-                                                let idx = cell_x;
-                                                let prev = g.cells[idx].current.clone();
-                                                if prev != paint_ty {
-                                                    if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
-                                                    if let Some(batch) = &mut self.current_paint_batch {
-                                                        if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
+                                if response.rect.contains(pos) {
+                                    let local = pos - response.rect.min;
+                                    let px = local.x.max(0.0) as usize;
+                                    let py = local.y.max(0.0) as usize;
+                                    let cell_x = px / self.scale.max(1);
+                                    let cell_y = py / self.scale.max(1);
+                                    let paint_ty = self.selected_draw_type.clone().unwrap_or_else(CellType::inactive);
+                                    match self.dim {
+                                        Some(Dim::D1) => {
+                                            if let Some(g) = &mut self.d1 {
+                                                let total_rows = self.history_1d.len() + 1;
+                                                if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
+                                                    let idx = cell_x;
+                                                    let prev = g.cells[idx].current.clone();
+                                                    if prev != paint_ty {
+                                                        if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
+                                                        if let Some(batch) = &mut self.current_paint_batch {
+                                                            if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
+                                                        }
+                                                        g.cells[idx].transition(&paint_ty);
                                                     }
-                                                    g.cells[idx].transition(&paint_ty);
                                                 }
                                             }
                                         }
-                                    }
-                                    Some(Dim::D2) => {
-                                        if let Some(g) = &mut self.d2 {
-                                            if cell_x < g.width && cell_y < g.height {
-                                                let idx = cell_y * g.width + cell_x;
-                                                let prev = g.cells[idx].current.clone();
-                                                if prev != paint_ty {
-                                                    if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
-                                                    if let Some(batch) = &mut self.current_paint_batch {
-                                                        if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
+                                        Some(Dim::D2) => {
+                                            if let Some(g) = &mut self.d2 {
+                                                if cell_x < g.width && cell_y < g.height {
+                                                    let idx = cell_y * g.width + cell_x;
+                                                    let prev = g.cells[idx].current.clone();
+                                                    if prev != paint_ty {
+                                                        if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
+                                                        if let Some(batch) = &mut self.current_paint_batch {
+                                                            if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
+                                                        }
+                                                        g.cells[idx].transition(&paint_ty);
                                                     }
-                                                    g.cells[idx].transition(&paint_ty);
                                                 }
                                             }
                                         }
+                                        None => {}
                                     }
-                                    None => {}
                                 }
                             }
                         } else {
