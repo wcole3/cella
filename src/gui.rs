@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::time::{Duration, Instant};
 
 use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life};
@@ -78,10 +78,13 @@ struct CellaApp {
     custom_code_input: String,
     custom_n: u8,
 
+    // UI text/font scaling
+    font_scale: f32,
+    base_text_styles: BTreeMap<egui::TextStyle, egui::FontId>,
 }
 
 impl CellaApp {
-    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self {
             d1: None,
             d2: None,
@@ -108,6 +111,8 @@ impl CellaApp {
             export_fps: 12,
             custom_code_input: "30".into(),
             custom_n: 1,
+            font_scale: 1.0,
+            base_text_styles: cc.egui_ctx.style().text_styles.clone(),
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -129,6 +134,16 @@ impl CellaApp {
         for &b in ty.0.as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
         let idx = (h as usize) % self.palette.len().max(1);
         self.palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
+    }
+
+    fn apply_font_scale(&self, ctx: &Context) {
+        let mut style = (*ctx.style()).clone();
+        let mut map = self.base_text_styles.clone();
+        for (_ts, font) in map.iter_mut() {
+            font.size = (font.size * self.font_scale).max(6.0);
+        }
+        style.text_styles = map;
+        ctx.set_style(style);
     }
 
     fn step_once(&mut self) {
@@ -511,11 +526,21 @@ impl CellaApp {
 
 impl eframe::App for CellaApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+            self.apply_font_scale(ctx);
         egui::TopBottomPanel::top("top_controls").show(ctx, |ui| {
             self.ui_top_controls(ui, ctx);
         });
         egui::SidePanel::left("left_controls").default_width(260.0).show(ctx, |ui| {
             self.ui_dataset_controls(ui);
+            ui.separator();
+            ui.collapsing("UI Settings", |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("A-").clicked() { self.font_scale = (self.font_scale - 0.1).max(0.5); }
+                    if ui.button("A+").clicked() { self.font_scale = (self.font_scale + 0.1).min(3.0); }
+                    ui.label(format!("Font: {:.0}%", self.font_scale * 100.0));
+                });
+                ui.add(egui::Slider::new(&mut self.font_scale, 0.5..=3.0).text("Font scale"));
+            });
             ui.separator();
             ui.collapsing("Editing", |ui| {
                 ui.horizontal(|ui| {
