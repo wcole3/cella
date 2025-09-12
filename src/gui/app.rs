@@ -5,7 +5,7 @@ use cella_lib::*;
 use egui::{Color32, Context, Key};
 use rfd::FileDialog;
 
-use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life};
+use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle};
 
 use super::export::{export_gif_1d, export_gif_2d};
 use super::render::default_palette;
@@ -334,6 +334,7 @@ impl CellaApp {
                 if ui.button("Demo: Life (2D)").clicked() { self.load_demo_life(); }
                 if ui.button("Demo: 1D Rule 30").clicked() { self.load_demo_1d_rule30(); }
                 if ui.button("Demo: 1D n=2").clicked() { self.load_demo_1d_n2(); }
+                if ui.button("Demo: 2D three-state").clicked() { self.load_demo_2d_three_state_cycle(); }
             });
             ui.separator();
             ui.label("Custom 1D (Wolfram code + n):");
@@ -442,6 +443,18 @@ impl CellaApp {
         self.current_paint_batch = None;
         self.colors.clear();
         self.update_selected_draw_type_default()
+    }
+
+    fn load_demo_2d_three_state_cycle(&mut self) {
+        let (w,h,hist) = (48usize, 27usize, 3usize);
+        self.d1 = None; self.dim = Some(Dim::D2);
+        self.d2 = Some(build_2d_three_state_cycle(w,h,hist));
+        self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
+        self.history_1d.clear();
+        self.undo_stack.clear();
+        self.current_paint_batch = None;
+        self.colors.clear();
+        self.update_selected_draw_type_default();
     }
 
     fn load_demo_1d_custom_from_inputs(&mut self) {

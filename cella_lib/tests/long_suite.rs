@@ -227,6 +227,50 @@ fn stress_1d_n3_custom_code() {
 
 // -------- Larger stress tests to exercise multithreading --------
 
+fn stress_1d_three_state_cycle() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let c = CellType("C".into());
+    let any = 0xFFu128;
+    let rule = Rule1D { subrules: vec![
+        Rule1DSubrule { current_type: a.clone(), criteria_type: a.clone(), wolfram_code: any, n: 1, randomness: None, output_type: b.clone() },
+        Rule1DSubrule { current_type: b.clone(), criteria_type: b.clone(), wolfram_code: any, n: 1, randomness: None, output_type: c.clone() },
+        Rule1DSubrule { current_type: c.clone(), criteria_type: c.clone(), wolfram_code: any, n: 1, randomness: None, output_type: a.clone() },
+    ]};
+    let w = 1024usize; let hist = 3usize;
+    let init = (0..w).map(|i| match i % 3 { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }).collect::<Vec<_>>();
+    let mut g = Grid1D::new(w, hist, init, rule);
+    let t0 = Instant::now();
+    for _ in 0..800 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("1d_three_state_cycle", elapsed);
+    let hash = hash_grid1d_state(&g);
+    assert_snapshot("1d_three_state_cycle", hash);
+}
+
+fn stress_2d_three_state_cycle() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let c = CellType("C".into());
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
+        Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: c.clone() },
+        Rule2DSubrule { current_type: c.clone(), criteria_type: a.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: a.clone() },
+    ]};
+    let (w,h,hist) = (192usize, 128usize, 3usize);
+    let mut init = Vec::with_capacity(w*h);
+    for y in 0..h { for x in 0..w { let idx = (x + y) % 3; init.push(match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }); } }
+    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let t0 = Instant::now();
+    for _ in 0..240 { g.step(); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_three_state_cycle", elapsed);
+    let hash = hash_grid2d_state(&g);
+    assert_snapshot("2d_three_state_cycle", hash);
+}
+
+// -------- Larger stress tests to exercise multithreading --------
+
 fn stress_2d_large_moore_256() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -435,6 +479,26 @@ fn stress_1d_large_rule30_2049_t4() { set_thread_override(4); stress_1d_large_ru
 #[test]
 #[ignore]
 fn stress_1d_large_rule30_2049_t8() { set_thread_override(8); stress_1d_large_rule30_2049(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_1d_three_state_cycle_t1() { set_thread_override(1); stress_1d_three_state_cycle(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_three_state_cycle_t4() { set_thread_override(4); stress_1d_three_state_cycle(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_1d_three_state_cycle_t8() { set_thread_override(8); stress_1d_three_state_cycle(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_three_state_cycle_t1() { set_thread_override(1); stress_2d_three_state_cycle(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_three_state_cycle_t4() { set_thread_override(4); stress_2d_three_state_cycle(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_three_state_cycle_t8() { set_thread_override(8); stress_2d_three_state_cycle(); clear_thread_override(); }
 
 
 // -------- Benchmark persistence helpers --------

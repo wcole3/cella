@@ -1,5 +1,6 @@
 use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
+use std::collections::BTreeMap;
 
 // ------- Reusable builders (for CLI and GUI) -------
 pub fn build_1d_rule30(width: usize, history: usize) -> Grid1D {
@@ -25,10 +26,41 @@ pub fn build_1d_code_n(wolfram_code: u128, n: u8, width: usize, history: usize) 
     Ok(Grid1D::new(width, history, init, rule))
 }
 
-fn print_grid_1d(g: &Grid1D, active: &CellType) {
+pub fn build_1d_three_state_cycle(width: usize, history: usize) -> Grid1D {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let c = CellType("C".into());
+    let any = 0xFFu128; // match any 3-bit window
+    let rule = Rule1D { subrules: vec![
+        Rule1DSubrule { current_type: a.clone(), criteria_type: a.clone(), wolfram_code: any, n: 1, randomness: None, output_type: b.clone() },
+        Rule1DSubrule { current_type: b.clone(), criteria_type: b.clone(), wolfram_code: any, n: 1, randomness: None, output_type: c.clone() },
+        Rule1DSubrule { current_type: c.clone(), criteria_type: c.clone(), wolfram_code: any, n: 1, randomness: None, output_type: a.clone() },
+    ]};
+    let init = (0..width).map(|i| match i % 3 { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }).collect();
+    Grid1D::new(width, history, init, rule)
+}
+
+fn print_grid_1d(g: &Grid1D) {
+    // Build stable mapping for active states (non-Inactive)
+    let mut names: Vec<String> = g
+        .cells
+        .iter()
+        .map(|c| c.current.0.clone())
+        .filter(|n| n != INACTIVE)
+        .collect();
+    names.sort();
+    names.dedup();
+    let symbol_pool: Vec<char> = "!@#$%^&*()".chars().chain('a'..='z').collect();
+    let mut map: BTreeMap<String, char> = BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        let ch = symbol_pool.get(i).copied().unwrap_or('?');
+        map.insert(n.clone(), ch);
+    }
     let mut line = String::with_capacity(g.width);
     for i in 0..g.width {
-        if g.cells[i].current == *active { line.push('#'); } else { line.push('.'); }
+        let ty = &g.cells[i].current.0;
+        if ty == INACTIVE { line.push('.'); }
+        else { line.push(*map.get(ty).unwrap_or(&'?')); }
     }
     println!("{}", line);
 }
@@ -45,8 +77,8 @@ pub fn demo_1d_rule30() {
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
     println!("Initial:");
-    print_grid_1d(&g, &x);
-    for _ in 0..steps { g.step(); print_grid_1d(&g, &x); }
+    print_grid_1d(&g);
+    for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
 
 pub fn demo_1d_n2() {
@@ -62,8 +94,8 @@ pub fn demo_1d_n2() {
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
     println!("Initial:");
-    print_grid_1d(&g, &x);
-    for _ in 0..steps { g.step(); print_grid_1d(&g, &x); }
+    print_grid_1d(&g);
+    for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
 
 pub fn demo_1d_custom() {
@@ -85,6 +117,17 @@ pub fn demo_1d_custom() {
     let mut g = Grid1D::new(width, hist, init, rule);
     let steps = ask_steps(20);
     println!("Initial:");
-    print_grid_1d(&g, &x);
-    for _ in 0..steps { g.step(); print_grid_1d(&g, &x); }
+    print_grid_1d(&g);
+    for _ in 0..steps { g.step(); print_grid_1d(&g); }
+}
+
+pub fn demo_1d_three_state_cycle() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let c = CellType("C".into());
+    let mut g = build_1d_three_state_cycle(39, 3);
+    let steps = ask_steps(15);
+    println!("Initial:");
+    print_grid_1d(&g);
+    for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
