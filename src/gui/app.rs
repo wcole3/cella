@@ -17,16 +17,18 @@ enum Dim { D1, D2 }
 enum DrawMode { Cycle, Paint }
 
 /// Run the native GUI application.
-pub fn run_gui() -> eframe::Result<()> {
-    // Prefer configuring the initial window via NativeOptions/ViewportBuilder
-    // Use a 16:9 window, scaled relative to the current screen when possible.
-    // We can't query the monitor size here without owning the event loop,
-    // so pick a sensible default and let the OS scale if needed. Many WMs
-    // will also center new windows by default.
-    let aspect = 16.0 / 9.0;
-    let mut w = 1280.0_f32; // default width
-    let mut h = (w / aspect) as f32;
-    // clamp minimums
+pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
+    // Configure the initial window via NativeOptions/ViewportBuilder.
+    // If size is provided, use it; otherwise default to a 16:9 reasonable size.
+    let (mut w, mut h) = if let Some((w, h)) = size {
+        (w, h)
+    } else {
+        let aspect = 16.0 / 9.0;
+        let w = 1280.0_f32; // default width
+        let h = (w / aspect) as f32;
+        (w, h)
+    };
+    // Clamp minimums for the initial inner size
     w = w.max(800.0);
     h = h.max(450.0);
 
