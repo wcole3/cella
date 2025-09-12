@@ -18,7 +18,25 @@ enum DrawMode { Cycle, Paint }
 
 /// Run the native GUI application.
 pub fn run_gui() -> eframe::Result<()> {
-    let options = eframe::NativeOptions::default();
+    // Prefer configuring the initial window via NativeOptions/ViewportBuilder
+    // Use a 16:9 window, scaled relative to the current screen when possible.
+    // We can't query the monitor size here without owning the event loop,
+    // so pick a sensible default and let the OS scale if needed. Many WMs
+    // will also center new windows by default.
+    let aspect = 16.0 / 9.0;
+    let mut w = 1280.0_f32; // default width
+    let mut h = (w / aspect) as f32;
+    // clamp minimums
+    w = w.max(800.0);
+    h = h.max(450.0);
+
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size(egui::vec2(w, h))
+        .with_min_inner_size(egui::vec2(800.0, 450.0))
+        .with_title("Cella GUI");
+
+    let options = eframe::NativeOptions { viewport, ..eframe::NativeOptions::default() };
+
     eframe::run_native(
         "Cella GUI",
         options,
