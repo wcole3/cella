@@ -225,6 +225,40 @@ impl CellaApp {
         result
     }
 
+    /// Collect all declared types for the current scenario (from rules/config),
+    /// including Inactive, regardless of whether they are currently present on the grid.
+    fn declared_types(&self) -> Vec<CellType> {
+        use std::collections::BTreeSet;
+        let mut set: BTreeSet<String> = BTreeSet::new();
+        set.insert(INACTIVE.to_string());
+        match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    for s in &g.rule.subrules {
+                        set.insert(s.current_type.0.clone());
+                        set.insert(s.criteria_type.0.clone());
+                        set.insert(s.output_type.0.clone());
+                    }
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    for s in &g.rule.subrules {
+                        set.insert(s.current_type.0.clone());
+                        set.insert(s.criteria_type.0.clone());
+                        set.insert(s.output_type.0.clone());
+                    }
+                }
+            }
+            None => {}
+        }
+        // Order with Inactive first, then alphabetical for readability
+        let mut names: Vec<String> = set.into_iter().collect();
+        names.sort();
+        names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
+        names.into_iter().map(CellType).collect()
+    }
+
     /// Render the grid into a ColorImage respecting user colors and grid overlay.
     fn render_image(&mut self, _ctx: &Context) -> Option<egui::ColorImage> {
         // populate color map for current types to avoid mutable borrow during render
@@ -754,11 +788,11 @@ impl eframe::App for CellaApp {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Paint type:");
-                    // Build a type list including Inactive
-                    let mut names: Vec<String> = vec![INACTIVE.to_string()];
-                    for ty in self.collect_types() {
-                        if ty.0 != INACTIVE { names.push(ty.0.clone()); }
-                    }
+                    // Build a type list from rule/config declared types (not just currently present)
+                    let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.0).collect();
+                    // Ensure ordering with Inactive first
+                    names.sort();
+                    names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
                     let current_name = self.selected_draw_type.as_ref().map(|t| t.0.clone()).unwrap_or_else(|| INACTIVE.to_string());
                     let mut sel = current_name.clone();
                     egui::ComboBox::from_label("")
