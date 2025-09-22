@@ -608,10 +608,10 @@ impl CellaApp {
         if !keys.iter().any(|k| k == INACTIVE) { keys.push(INACTIVE.to_string()); }
         keys.sort();
         keys.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
-        // Default visibility: Inactive + first 9 actives
+        // Default visibility: first 9 active types (Inactive off by default)
         let mut shown_left = 9usize;
         for k in keys {
-            let show = if k == INACTIVE { true } else if shown_left > 0 { shown_left -= 1; true } else { false };
+            let show = if k == INACTIVE { false } else if shown_left > 0 { shown_left -= 1; true } else { false };
             self.stats_show.insert(k.clone(), show);
             let c = *counts.get(&k).unwrap_or(&0);
             self.stats_history.insert(k, vec![(step, c)]);
@@ -625,16 +625,16 @@ impl CellaApp {
             Some(Dim::D2) => { if let Some(g) = &self.d2 { (g.counts_current.clone(), g.step) } else { return; } }
             None => return,
         };
-        // Ensure entries for any newly seen types (default hidden unless Inactive)
+        // Ensure entries for any newly seen types (default hidden, including Inactive)
         for (k, _) in counts.iter() {
             if !self.stats_history.contains_key(k) {
                 self.stats_history.insert(k.clone(), Vec::new());
-                self.stats_show.entry(k.clone()).or_insert(k == INACTIVE);
+                self.stats_show.entry(k.clone()).or_insert(false);
             }
         }
         if !self.stats_history.contains_key(INACTIVE) {
             self.stats_history.insert(INACTIVE.to_string(), Vec::new());
-            self.stats_show.entry(INACTIVE.to_string()).or_insert(true);
+            self.stats_show.entry(INACTIVE.to_string()).or_insert(false);
         }
         // Union of keys
         let mut keys: Vec<String> = self.stats_history.keys().cloned().collect();
