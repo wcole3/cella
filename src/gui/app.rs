@@ -93,6 +93,7 @@ struct CellaApp {
     // Export
     export_steps: u32,
     export_fps: u32,
+    export_1d_with_history: bool,
 
     // Custom 1D builder inputs
     custom_code_input: String,
@@ -135,6 +136,7 @@ impl CellaApp {
             current_paint_batch: None,
             export_steps: 300,
             export_fps: 12,
+            export_1d_with_history: false,
             custom_code_input: "30".into(),
             custom_n: 1,
             font_scale: 1.0,
@@ -572,7 +574,11 @@ impl CellaApp {
             let steps = self.export_steps.max(1);
             let fps = self.export_fps.max(1);
             match self.dim {
-                Some(Dim::D1) => if let Some(g) = &self.d1 { let mut clone = g.clone(); let _ = export_gif_1d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color()); },
+                Some(Dim::D1) => if let Some(g) = &self.d1 {
+                    let mut clone = g.clone();
+                    let history_opt = if self.export_1d_with_history { Some(self.history_limit_1d) } else { None };
+                    let _ = export_gif_1d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color(), history_opt);
+                },
                 Some(Dim::D2) => if let Some(g) = &self.d2 { let mut clone = g.clone(); let _ = export_gif_2d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color()); },
                 None => {}
             }
@@ -813,6 +819,15 @@ impl eframe::App for CellaApp {
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.export_fps).clamp_range(1..=60));
                     ui.label("fps");
+                });
+                ui.collapsing("Options", |ui| {
+                    ui.horizontal(|ui| {
+                        let mut flag = self.export_1d_with_history;
+                        if ui.checkbox(&mut flag, "1D GIF: include vertical history").changed() {
+                            self.export_1d_with_history = flag;
+                        }
+                    });
+                    ui.small("Applies to 1D GIF export; height limited by 1D history limit.");
                 });
             });
             ui.separator();
