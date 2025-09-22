@@ -22,6 +22,9 @@
 // Benchmarks: Each test records elapsed wall time. A final ignored test
 // `zzz_benchmark_summary` prints a summary of all recorded times. You can also
 // set CELLA_BENCH=1 to print per-test timings immediately.
+//
+// ASCII dumps: Set CELLA_ASCII=1 to write ASCII renders of the initial and
+// final states for each test to text files under tests/ascii/<testname>.txt.
 
 use cella_lib::*;
 use cella_lib::threads::{set_thread_override, clear_thread_override, thread_count};
@@ -30,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use std::collections::HashMap;
+use std::io::Write;
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
@@ -105,6 +109,94 @@ fn record_bench(name: &str, ms: u128) {
     }
 }
 
+// -------- Optional ASCII rendering helpers --------
+fn ascii_enabled() -> bool {
+    std::env::var("CELLA_ASCII").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
+}
+
+fn ascii_dir() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("ascii") }
+
+fn ascii_base_and_truncate(label: &str) -> (String, bool) {
+    if let Some(idx) = label.find(':') {
+        let base = label[..idx].trim().to_string();
+        let phase = label[idx+1..].trim().to_ascii_lowercase();
+        let truncate = phase.starts_with("initial");
+        (base, truncate)
+    } else {
+        (label.trim().to_string(), false)
+    }
+}
+
+fn ascii_open_for(label: &str) -> std::io::Result<std::fs::File> {
+    let (base, truncate) = ascii_base_and_truncate(label);
+    let dir = ascii_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.txt", base));
+    let mut opts = fs::OpenOptions::new();
+    opts.create(true).write(true);
+    if truncate { opts.truncate(true); } else { opts.append(true); }
+    opts.open(path)
+}
+
+fn ascii_symbols_map(names: &mut Vec<String>) -> std::collections::BTreeMap<String, char> {
+    names.sort();
+    names.dedup();
+    let symbol_pool: Vec<char> = "!@#$%^&*()abcdefghijklmnopqrstuvwxyz".chars().collect();
+    let mut map: std::collections::BTreeMap<String, char> = std::collections::BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        let ch = *symbol_pool.get(i).unwrap_or(&'?');
+        map.insert(n.clone(), ch);
+    }
+    map
+}
+
+fn print_ascii_1d(label: &str, g: &Grid1D) {
+    use std::collections::BTreeMap;
+    let mut names: Vec<String> = g
+        .cells
+        .iter()
+        .map(|c| c.current.0.clone())
+        .filter(|n| n != INACTIVE)
+        .collect();
+    let map: BTreeMap<String, char> = ascii_symbols_map(&mut names);
+    let mut line = String::with_capacity(g.width);
+    for i in 0..g.width {
+        let ty = &g.cells[i].current.0;
+        if ty == INACTIVE { line.push('.'); }
+        else { line.push(*map.get(ty).unwrap_or(&'?')); }
+    }
+    if let Ok(mut f) = ascii_open_for(label) {
+        let _ = writeln!(f, "[ascii] {} (1D w={})", label, g.width);
+        let _ = writeln!(f, "{}", line);
+        let _ = writeln!(f);
+    }
+}
+
+fn print_ascii_2d(label: &str, g: &Grid2D) {
+    use std::collections::BTreeMap;
+    let mut names: Vec<String> = g
+        .cells
+        .iter()
+        .map(|c| c.current.0.clone())
+        .filter(|n| n != INACTIVE)
+        .collect();
+    let map: BTreeMap<String, char> = ascii_symbols_map(&mut names);
+    if let Ok(mut f) = ascii_open_for(label) {
+        let _ = writeln!(f, "[ascii] {} (2D {}x{})", label, g.width, g.height);
+        for y in 0..g.height {
+            let mut line = String::with_capacity(g.width);
+            for x in 0..g.width {
+                let i = y * g.width + x;
+                let ty = &g.cells[i].current.0;
+                if ty == INACTIVE { line.push('.'); }
+                else { line.push(*map.get(ty).unwrap_or(&'?')); }
+            }
+            let _ = writeln!(f, "{}", line);
+        }
+        let _ = writeln!(f);
+    }
+}
+
 fn stress_2d_life_like_moore() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -122,8 +214,10 @@ fn stress_2d_life_like_moore() {
     let mut set = |x: usize, y: usize| init[y*w + x] = alive.clone();
     set(1,0); set(2,1); set(0,2); set(1,2); set(2,2);
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_life_like_moore: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..300 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_life_like_moore: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_life_like_moore", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -142,8 +236,10 @@ fn stress_2d_von_neumann_threshold() {
     // random-ish seed (deterministic pattern)
     for y in 0..h { for x in 0..w { if (x ^ y) % 7 == 0 { init[y*w + x] = b.clone(); } } }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_vonneumann_threshold: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..200 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_vonneumann_threshold: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_vonneumann_threshold", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -160,8 +256,10 @@ fn stress_2d_langdon_diagonals() {
     let mut init = vec![a.clone(); w*h];
     for i in 0..w.min(h) { init[i*w + i] = b.clone(); }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..180 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_langdon_diagonals", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -178,8 +276,10 @@ fn stress_1d_rule30_center_seed() {
     let mut init = vec![CellType::inactive(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    if ascii_enabled() { print_ascii_1d("1d_rule30_center: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..500 { g.step(); }
+    if ascii_enabled() { print_ascii_1d("1d_rule30_center: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("1d_rule30_center", elapsed);
     let hash = hash_grid1d_state(&g);
@@ -197,8 +297,10 @@ fn stress_1d_n2_alternating_code() {
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    if ascii_enabled() { print_ascii_1d("1d_n2_alt: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..400 { g.step(); }
+    if ascii_enabled() { print_ascii_1d("1d_n2_alt: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("1d_n2_alt", elapsed);
     let hash = hash_grid1d_state(&g);
@@ -217,8 +319,10 @@ fn stress_1d_n3_custom_code() {
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    if ascii_enabled() { print_ascii_1d("1d_n3_custom: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..350 { g.step(); }
+    if ascii_enabled() { print_ascii_1d("1d_n3_custom: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("1d_n3_custom", elapsed);
     let hash = hash_grid1d_state(&g);
@@ -240,8 +344,10 @@ fn stress_1d_three_state_cycle() {
     let w = 1024usize; let hist = 3usize;
     let init = (0..w).map(|i| match i % 3 { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }).collect::<Vec<_>>();
     let mut g = Grid1D::new(w, hist, init, rule);
+    if ascii_enabled() { print_ascii_1d("1d_three_state_cycle: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..800 { g.step(); }
+    if ascii_enabled() { print_ascii_1d("1d_three_state_cycle: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("1d_three_state_cycle", elapsed);
     let hash = hash_grid1d_state(&g);
@@ -261,8 +367,10 @@ fn stress_2d_three_state_cycle() {
     let mut init = Vec::with_capacity(w*h);
     for y in 0..h { for x in 0..w { let idx = (x + y) % 3; init.push(match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }); } }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_three_state_cycle: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..240 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_three_state_cycle: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_three_state_cycle", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -296,8 +404,10 @@ fn stress_2d_large_moore_256() {
         }
     }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_large_moore_256: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..200 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_large_moore_256: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_large_moore_256", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -315,8 +425,10 @@ fn stress_2d_large_vn_256() {
     let mut init = vec![a.clone(); w*h];
     for y in 0..h { for x in 0..w { if (x*3 + y*5) % 11 == 0 { init[y*w + x] = b.clone(); } } }
     let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_large_vn_256: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..160 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_large_vn_256: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("2d_large_vn_256", elapsed);
     let hash = hash_grid2d_state(&g);
@@ -333,8 +445,10 @@ fn stress_1d_large_rule30_2049() {
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
     let mut g = Grid1D::new(w, hist, init, rule);
+    if ascii_enabled() { print_ascii_1d("1d_large_rule30_2049: initial", &g); }
     let t0 = Instant::now();
     for _ in 0..1200 { g.step(); }
+    if ascii_enabled() { print_ascii_1d("1d_large_rule30_2049: final", &g); }
     let elapsed = t0.elapsed().as_millis();
     record_bench("1d_large_rule30_2049", elapsed);
     let hash = hash_grid1d_state(&g);
