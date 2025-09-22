@@ -570,6 +570,50 @@ impl CellaApp {
         }
         self.selected_draw_type = Some(pick.unwrap_or_else(CellType::inactive));
     }
+
+    /// Show a collapsible panel with per-type statistics (current and peak counts).
+    fn ui_statistics(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Statistics", |ui| {
+            let mut entries: Vec<(String, u64, u64)> = Vec::new();
+            match self.dim {
+                Some(Dim::D1) => if let Some(g) = &self.d1 {
+                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    for k in g.counts_current.keys() { keys.insert(k.clone()); }
+                    for k in g.peak_counts.keys() { keys.insert(k.clone()); }
+                    for k in keys {
+                        let cur = *g.counts_current.get(&k).unwrap_or(&0);
+                        let peak = *g.peak_counts.get(&k).unwrap_or(&0);
+                        entries.push((k, cur, peak));
+                    }
+                },
+                Some(Dim::D2) => if let Some(g) = &self.d2 {
+                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    for k in g.counts_current.keys() { keys.insert(k.clone()); }
+                    for k in g.peak_counts.keys() { keys.insert(k.clone()); }
+                    for k in keys {
+                        let cur = *g.counts_current.get(&k).unwrap_or(&0);
+                        let peak = *g.peak_counts.get(&k).unwrap_or(&0);
+                        entries.push((k, cur, peak));
+                    }
+                },
+                None => {}
+            }
+            // Sort with Inactive first, then by name
+            entries.sort_by(|a, b| {
+                let ai = (a.0 != INACTIVE) as u8;
+                let bi = (b.0 != INACTIVE) as u8;
+                ai.cmp(&bi).then_with(|| a.0.cmp(&b.0))
+            });
+            let mut total: u64 = 0;
+            for (_n, c, _p) in &entries { total = total.saturating_add(*c); }
+            ui.label(format!("Total cells: {}", total));
+            for (name, cur, peak) in entries {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{:>10}: {} (peak {})", name, cur, peak));
+                });
+            }
+        });
+    }
 }
 
 impl eframe::App for CellaApp {
@@ -628,6 +672,8 @@ impl eframe::App for CellaApp {
             });
             ui.separator();
             self.ui_colors(ui);
+            ui.separator();
+            self.ui_statistics(ui);
         });
 
         egui::TopBottomPanel::bottom("bottom_status").show(ctx, |ui| {

@@ -45,6 +45,10 @@ pub struct Grid2D {
     pub step: u64,
     /// Rule used for updates.
     pub rule: Rule2D,
+    /// Current count of cells per type name.
+    pub counts_current: std::collections::HashMap<String, u64>,
+    /// Peak (max-so-far) count of cells per type name since start/reset.
+    pub peak_counts: std::collections::HashMap<String, u64>,
 }
 
 impl Grid2D {
@@ -53,8 +57,11 @@ impl Grid2D {
     /// `initial.len()` must equal `width*height`.
     pub fn new(width: usize, height: usize, history_limit: usize, initial: Vec<CellType>, rule: Rule2D) -> Self {
         assert_eq!(initial.len(), width * height, "initial types len must equal width*height");
-        let cells = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
-        Self { width, height, history_limit, cells, step: 0, rule }
+        let cells: Vec<CellState> = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
+        let mut counts_current: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for c in &cells { *counts_current.entry(c.current.0.clone()).or_insert(0) += 1; }
+        let peak_counts = counts_current.clone();
+        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts }
     }
 
     fn idx(&self, x: isize, y: isize) -> Option<usize> {
@@ -66,6 +73,12 @@ impl Grid2D {
 
     fn get_type_or_inactive(&self, x: isize, y: isize) -> CellType {
         match self.idx(x, y) { Some(i) => self.cells[i].current.clone(), None => CellType::inactive() }
+    }
+
+    fn recompute_counts_from_cells(cells: &[CellState]) -> std::collections::HashMap<String, u64> {
+        let mut map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for c in cells { *map.entry(c.current.0.clone()).or_insert(0) += 1; }
+        map
     }
 
     /// Advance the automaton by one step using double-buffering.
@@ -95,6 +108,10 @@ impl Grid2D {
                     next[i].transition(&new_type);
                 }
             }
+            // Update counts and peaks from next before swapping
+            let counts = Self::recompute_counts_from_cells(&next);
+            self.counts_current = counts.clone();
+            for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
             self.cells = next;
             self.step = self.step.saturating_add(1);
             return;
@@ -139,6 +156,10 @@ impl Grid2D {
             }));
         }
         for h in handles { for (idx, ty) in h.join().expect("thread join") { next[idx].transition(&ty); } }
+        // Update counts and peaks
+        let counts = Self::recompute_counts_from_cells(&next);
+        self.counts_current = counts.clone();
+        for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
         self.cells = next;
         self.step = self.step.saturating_add(1);
     }

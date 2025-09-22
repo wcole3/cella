@@ -36,15 +36,32 @@ use crate::grid2d::Grid2D;
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum GridState {
-    D1 { width: usize, history_limit: usize, cells: Vec<CellState>, step: u64, rule: Rule1D },
-    D2 { width: usize, height: usize, history_limit: usize, cells: Vec<CellState>, step: u64, rule: Rule2D },
+    D1 {
+        width: usize,
+        history_limit: usize,
+        cells: Vec<CellState>,
+        step: u64,
+        rule: Rule1D,
+        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
+        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+    },
+    D2 {
+        width: usize,
+        height: usize,
+        history_limit: usize,
+        cells: Vec<CellState>,
+        step: u64,
+        rule: Rule2D,
+        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
+        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+    },
 }
 
 impl GridState {
     /// Snapshot a 1D grid.
-    pub fn from_grid1d(g: &Grid1D) -> Self { Self::D1 { width: g.width, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone() } }
+    pub fn from_grid1d(g: &Grid1D) -> Self { Self::D1 { width: g.width, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
     /// Snapshot a 2D grid.
-    pub fn from_grid2d(g: &Grid2D) -> Self { Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone() } }
+    pub fn from_grid2d(g: &Grid2D) -> Self { Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
 
     /// Serialize to pretty JSON.
     pub fn to_json_pretty(&self) -> String { serde_json::to_string_pretty(self).unwrap() }
@@ -59,7 +76,15 @@ impl Grid1D {
     /// Build a Grid1D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D1 { width, history_limit, cells, step, rule } => Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone() }),
+            GridState::D1 { width, history_limit, cells, step, rule, counts_current, peak_counts } => {
+                let mut counts = counts_current.clone();
+                if counts.is_empty() {
+                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
+                }
+                let mut peaks = peak_counts.clone();
+                if peaks.is_empty() { peaks = counts.clone(); }
+                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+            }
             _ => None,
         }
     }
@@ -69,7 +94,15 @@ impl Grid2D {
     /// Build a Grid2D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D2 { width, height, history_limit, cells, step, rule } => Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone() }),
+            GridState::D2 { width, height, history_limit, cells, step, rule, counts_current, peak_counts } => {
+                let mut counts = counts_current.clone();
+                if counts.is_empty() {
+                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
+                }
+                let mut peaks = peak_counts.clone();
+                if peaks.is_empty() { peaks = counts.clone(); }
+                Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+            }
             _ => None,
         }
     }
