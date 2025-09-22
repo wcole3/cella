@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cella_lib::*;
 use egui::{Color32, Context, Key};
@@ -94,6 +96,10 @@ struct CellaApp {
     export_steps: u32,
     export_fps: u32,
     export_1d_with_history: bool,
+    export_total: usize,
+    export_progress: Option<Arc<AtomicUsize>>,
+    export_join: Option<std::thread::JoinHandle<Result<(), String>>>,
+    export_message: Option<String>,
 
     // Custom 1D builder inputs
     custom_code_input: String,
@@ -137,6 +143,10 @@ impl CellaApp {
             export_steps: 300,
             export_fps: 12,
             export_1d_with_history: false,
+            export_total: 0,
+            export_progress: None,
+            export_join: None,
+            export_message: None,
             custom_code_input: "30".into(),
             custom_n: 1,
             font_scale: 1.0,
@@ -367,7 +377,10 @@ impl CellaApp {
             ui.add(egui::DragValue::new(&mut self.scale).clamp_range(1..=32).suffix(" px"));
             ui.label("Scale");
             ui.separator();
-            if ui.button("Export GIF...").clicked() { self.export_gif_dialog(); }
+            let exporting = self.export_join.is_some();
+            let export_btn = ui.add_enabled(!exporting, egui::Button::new("Export GIF..."));
+            if export_btn.clicked() { self.export_gif_dialog(); }
+            if exporting { ui.label("Exporting..."); }
             if ui.button("Save Final State").clicked() { self.save_final_state(); }
             if ui.button("Reset").clicked() { self.reset_to_initial(); }
         });
@@ -569,17 +582,40 @@ impl CellaApp {
     }
 
     /// Export an animated GIF using the current color settings (including Inactive).
+    /// Runs the export in a background thread and shows a progress bar; optionally
+    /// continues stepping the live grid while exporting based on `export_live_update`.
     fn export_gif_dialog(&mut self) {
+        if self.export_join.is_some() { return; }
         if let Some(path) = FileDialog::new().set_file_name("cella.gif").save_file() {
-            let steps = self.export_steps.max(1);
+            let steps = self.export_steps.max(1) as usize;
             let fps = self.export_fps.max(1);
+            let scale = self.scale as u16;
+            let colors = self.colors.clone();
+            let palette = self.palette.clone();
+            let inactive = self.inactive_color();
+            let progress = Arc::new(AtomicUsize::new(0));
+            self.export_total = steps;
+            self.export_progress = Some(progress.clone());
             match self.dim {
                 Some(Dim::D1) => if let Some(g) = &self.d1 {
-                    let mut clone = g.clone();
+                    let mut grid_clone = g.clone();
                     let history_opt = if self.export_1d_with_history { Some(self.history_limit_1d) } else { None };
-                    let _ = export_gif_1d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color(), history_opt);
+                    let path2 = path.clone();
+                    let handle = std::thread::spawn(move || {
+                        export_gif_1d(&mut grid_clone, path2, steps, fps, scale, &colors, &palette, inactive, history_opt, Some(&progress))
+                            .map_err(|e| e.to_string())
+                    });
+                    self.export_join = Some(handle);
                 },
-                Some(Dim::D2) => if let Some(g) = &self.d2 { let mut clone = g.clone(); let _ = export_gif_2d(&mut clone, path.clone(), steps as usize, fps, self.scale as u16, &self.colors, &self.palette, self.inactive_color()); },
+                Some(Dim::D2) => if let Some(g) = &self.d2 {
+                    let mut grid_clone = g.clone();
+                    let path2 = path.clone();
+                    let handle = std::thread::spawn(move || {
+                        export_gif_2d(&mut grid_clone, path2, steps, fps, scale, &colors, &palette, inactive, Some(&progress))
+                            .map_err(|e| e.to_string())
+                    });
+                    self.export_join = Some(handle);
+                },
                 None => {}
             }
         }
@@ -829,6 +865,14 @@ impl eframe::App for CellaApp {
                     });
                     ui.small("Applies to 1D GIF export; height limited by 1D history limit.");
                 });
+                ui.separator();
+                if let Some(p) = &self.export_progress {
+                    let done = p.load(Ordering::Relaxed) as u32;
+                    let total = self.export_total.max(1) as u32;
+                    let frac = (done as f32) / (total as f32);
+                    ui.add(egui::ProgressBar::new(frac).text(format!("Exporting: {} / {}", done, total)));
+                }
+                if let Some(msg) = &self.export_message { ui.label(msg.clone()); }
             });
             ui.separator();
             self.ui_colors(ui);
@@ -995,6 +1039,20 @@ impl eframe::App for CellaApp {
                 }
             });
         });
+
+        // If an export thread is active, poll for completion and finalize
+        if let Some(handle) = &self.export_join {
+            if handle.is_finished() {
+                if let Some(handle) = self.export_join.take() {
+                    match handle.join().unwrap_or_else(|_| Err("export thread panicked".to_string())) {
+                        Ok(()) => { self.export_message = Some("Export complete".into()); },
+                        Err(e) => { self.export_message = Some(format!("Export failed: {}", e)); },
+                    }
+                }
+                self.export_progress = None;
+                self.export_total = 0;
+            }
+        }
 
         self.tick_play();
         ctx.request_repaint_after(Duration::from_millis(10));

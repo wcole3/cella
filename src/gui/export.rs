@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cella_lib::*;
 use egui::Color32;
@@ -66,6 +68,7 @@ pub fn export_gif_2d(
     colors: &HashMap<String, Color32>,
     palette: &Vec<Color32>,
     inactive: Color32,
+    progress: Option<&Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
     let w = (grid.width as u16).saturating_mul(scale);
@@ -82,7 +85,7 @@ pub fn export_gif_2d(
     let mut encoder = Encoder::new(&mut file, w, h, &color_table)?;
     let delay_cs = (100.0 / (fps.max(1) as f32)).round() as u16;
 
-    for _ in 0..steps {
+    for i in 0..steps {
         let mut buf = vec![0u8; (w as usize) * (h as usize)];
         for y in 0..grid.height {
             for x in 0..grid.width {
@@ -101,6 +104,7 @@ pub fn export_gif_2d(
         let mut frame = Frame::default();
         frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
         encoder.write_frame(&frame)?;
+        if let Some(p) = progress { p.store(i+1, Ordering::Relaxed); }
         grid.step();
     }
 
@@ -119,6 +123,7 @@ pub fn export_gif_1d(
     palette: &Vec<Color32>,
     inactive: Color32,
     history_rows: Option<usize>,
+    progress: Option<&Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
     let w = (grid.width as u16).saturating_mul(scale);
@@ -141,7 +146,7 @@ pub fn export_gif_1d(
     // Local rolling history of prior rows (excluding current)
     let mut history: Vec<Vec<CellType>> = Vec::new();
 
-    for _ in 0..steps {
+    for i in 0..steps {
         let mut buf = vec![0u8; (w as usize) * (h as usize)];
 
         // How many history rows to show above the current row
@@ -181,6 +186,7 @@ pub fn export_gif_1d(
         let mut frame = Frame::default();
         frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
         encoder.write_frame(&frame)?;
+        if let Some(p) = progress { p.store(i+1, Ordering::Relaxed); }
 
         // After writing the frame, push the current row into history and cap length
         let mut row_now: Vec<CellType> = Vec::with_capacity(grid.width);
