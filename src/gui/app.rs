@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use cella_lib::*;
 use egui::{Color32, Context, Key};
+use egui_plot::{Plot, Line, PlotPoints, Legend};
 use rfd::FileDialog;
 
 use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle};
@@ -100,6 +101,11 @@ struct CellaApp {
     // UI text/font scaling
     font_scale: f32,
     base_text_styles: BTreeMap<egui::TextStyle, egui::FontId>,
+
+    // Statistics history for per-type counts (sliding window)
+    stats_history: BTreeMap<String, Vec<(u64, u64)>>,
+    stats_show: BTreeMap<String, bool>,
+    stats_window_len: usize,
 }
 
 impl CellaApp {
@@ -133,6 +139,9 @@ impl CellaApp {
             custom_n: 1,
             font_scale: 1.0,
             base_text_styles: cc.egui_ctx.style().text_styles.clone(),
+            stats_history: BTreeMap::new(),
+            stats_show: BTreeMap::new(),
+            stats_window_len: 300,
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -183,6 +192,8 @@ impl CellaApp {
             Some(Dim::D2) => if let Some(g) = &mut self.d2 { g.step(); },
             None => {}
         }
+        // record stats after a successful step
+        self.stats_record_step();
     }
 
     /// Current step number from the loaded grid, or 0 when none loaded.
@@ -418,6 +429,7 @@ impl CellaApp {
         self.current_paint_batch = None;
         self.colors.clear();
         self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
     }
 
     fn load_demo_1d_rule30(&mut self) {
@@ -430,6 +442,7 @@ impl CellaApp {
         self.current_paint_batch = None;
         self.colors.clear();
         self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
     }
 
     fn load_demo_1d_n2(&mut self) {
@@ -442,7 +455,8 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.update_selected_draw_type_default()
+        self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
     }
 
     fn load_demo_2d_three_state_cycle(&mut self) {
@@ -455,6 +469,7 @@ impl CellaApp {
         self.current_paint_batch = None;
         self.colors.clear();
         self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
     }
 
     fn load_demo_1d_custom_from_inputs(&mut self) {
@@ -470,6 +485,7 @@ impl CellaApp {
             self.current_paint_batch = None;
             self.colors.clear();
             self.update_selected_draw_type_default();
+            self.stats_clear_and_init();
         }
     }
 
@@ -483,6 +499,7 @@ impl CellaApp {
                             if let Some(gr) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(gr)); }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
                             self.update_selected_draw_type_default();
+                            self.stats_clear_and_init();
                         }
                     }
                     config::CellaConfig::D2(_) => {
@@ -491,6 +508,7 @@ impl CellaApp {
                             if let Some(gr) = &self.d2 { self.initial_state = Some(GridState::from_grid2d(gr)); }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
                             self.update_selected_draw_type_default();
+                            self.stats_clear_and_init();
                         }
                     }
                 },
@@ -554,6 +572,7 @@ impl CellaApp {
         }
         // Update default draw type after resetting
         self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
     }
 
     /// Update default draw type to the first non-Inactive type in the grid, else Inactive.
@@ -571,9 +590,70 @@ impl CellaApp {
         self.selected_draw_type = Some(pick.unwrap_or_else(CellType::inactive));
     }
 
-    /// Show a collapsible panel with per-type statistics (current and peak counts).
+    /// Internal: clear and initialize statistics history/toggles from current grid.
+    fn stats_clear_and_init(&mut self) {
+        self.stats_history.clear();
+        self.stats_show.clear();
+        let (counts, step) = match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 { (g.counts_current.clone(), g.step) } else { return; }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 { (g.counts_current.clone(), g.step) } else { return; }
+            }
+            None => return,
+        };
+        // Build ordered keys: Inactive first, then by name
+        let mut keys: Vec<String> = counts.keys().cloned().collect();
+        if !keys.iter().any(|k| k == INACTIVE) { keys.push(INACTIVE.to_string()); }
+        keys.sort();
+        keys.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
+        // Default visibility: Inactive + first 9 actives
+        let mut shown_left = 9usize;
+        for k in keys {
+            let show = if k == INACTIVE { true } else if shown_left > 0 { shown_left -= 1; true } else { false };
+            self.stats_show.insert(k.clone(), show);
+            let c = *counts.get(&k).unwrap_or(&0);
+            self.stats_history.insert(k, vec![(step, c)]);
+        }
+    }
+
+    /// Internal: after stepping, append counts for each known type and cap window.
+    fn stats_record_step(&mut self) {
+        let (counts, step) = match self.dim {
+            Some(Dim::D1) => { if let Some(g) = &self.d1 { (g.counts_current.clone(), g.step) } else { return; } }
+            Some(Dim::D2) => { if let Some(g) = &self.d2 { (g.counts_current.clone(), g.step) } else { return; } }
+            None => return,
+        };
+        // Ensure entries for any newly seen types (default hidden unless Inactive)
+        for (k, _) in counts.iter() {
+            if !self.stats_history.contains_key(k) {
+                self.stats_history.insert(k.clone(), Vec::new());
+                self.stats_show.entry(k.clone()).or_insert(k == INACTIVE);
+            }
+        }
+        if !self.stats_history.contains_key(INACTIVE) {
+            self.stats_history.insert(INACTIVE.to_string(), Vec::new());
+            self.stats_show.entry(INACTIVE.to_string()).or_insert(true);
+        }
+        // Union of keys
+        let mut keys: Vec<String> = self.stats_history.keys().cloned().collect();
+        keys.sort();
+        keys.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
+        for k in keys {
+            let v = counts.get(&k).copied().unwrap_or(0);
+            if let Some(list) = self.stats_history.get_mut(&k) {
+                list.push((step, v));
+                if list.len() > self.stats_window_len { let drop = list.len() - self.stats_window_len; list.drain(0..drop); }
+            }
+        }
+    }
+
+    /// Show a collapsible panel with per-type statistics (current and peak counts),
+    /// and a running history chart (fixed-size window) similar to Task Manager.
     fn ui_statistics(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Statistics", |ui| {
+            // Current/peak table
             let mut entries: Vec<(String, u64, u64)> = Vec::new();
             match self.dim {
                 Some(Dim::D1) => if let Some(g) = &self.d1 {
@@ -598,7 +678,6 @@ impl CellaApp {
                 },
                 None => {}
             }
-            // Sort with Inactive first, then by name
             entries.sort_by(|a, b| {
                 let ai = (a.0 != INACTIVE) as u8;
                 let bi = (b.0 != INACTIVE) as u8;
@@ -607,11 +686,43 @@ impl CellaApp {
             let mut total: u64 = 0;
             for (_n, c, _p) in &entries { total = total.saturating_add(*c); }
             ui.label(format!("Total cells: {}", total));
-            for (name, cur, peak) in entries {
+            for (name, cur, peak) in &entries {
                 ui.horizontal(|ui| {
                     ui.label(format!("{:>10}: {} (peak {})", name, cur, peak));
                 });
             }
+            ui.separator();
+
+            // Visibility toggles
+            ui.label("Series shown in graph:");
+            let mut names: Vec<String> = self.stats_history.keys().cloned().collect();
+            //names.sort();
+            names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
+            ui.horizontal_wrapped(|ui| {
+                for n in &names {
+                    let mut show = *self.stats_show.get(n).unwrap_or(&false);
+                    let color = self.color_of(&CellType(n.clone()));
+                    let label = egui::RichText::new(n.clone()).color(color);
+                    if ui.checkbox(&mut show, label).changed() {
+                        self.stats_show.insert(n.clone(), show);
+                    }
+                }
+            });
+
+            // Line plot of the last N samples per selected series
+            let plot = Plot::new("stats_plot").legend(Legend::default());
+            plot.show(ui, |plot_ui| {
+                for n in names {
+                    if !self.stats_show.get(&n).copied().unwrap_or(false) { continue; }
+                    if let Some(list) = self.stats_history.get(&n) {
+                        if list.is_empty() { continue; }
+                        let pts: PlotPoints = list.iter().map(|(s, v)| [*s as f64, *v as f64]).collect::<Vec<_>>().into();
+                        let color = self.color_of(&CellType(n.clone()));
+                        let line = Line::new(pts).name(n.clone()).color(color);
+                        plot_ui.line(line);
+                    }
+                }
+            });
         });
     }
 }
