@@ -19,6 +19,112 @@ enum Dim { D1, D2 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DrawMode { Cycle, Paint }
 
+// ---------------- Rule Editor Models ----------------
+#[derive(Clone, Debug)]
+struct Rule1DSubruleEdit {
+    current: String,
+    criteria: String,
+    wolfram_code: String,
+    n: u8,
+    randomness_enabled: bool,
+    randomness_value: f64,
+    output: String,
+}
+
+#[derive(Clone, Debug)]
+struct Rule1DEdit { subrules: Vec<Rule1DSubruleEdit> }
+
+impl Rule1DEdit {
+    fn from_rule(rule: &Rule1D) -> Self {
+        let subs = rule.subrules.iter().map(|s| Rule1DSubruleEdit {
+            current: s.current_type.0.clone(),
+            criteria: s.criteria_type.0.clone(),
+            wolfram_code: s.wolfram_code.to_string(),
+            n: s.n,
+            randomness_enabled: s.randomness.is_some(),
+            randomness_value: s.randomness.unwrap_or(0.0),
+            output: s.output_type.0.clone(),
+        }).collect();
+        Self { subrules: subs }
+    }
+    fn to_rule(&self) -> Result<Rule1D, String> {
+        let mut subs: Vec<Rule1DSubrule> = Vec::new();
+        for s in &self.subrules {
+            let code = s.wolfram_code.trim().parse::<u128>().map_err(|e| format!("wolfram_code parse error: {}", e))?;
+            let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
+            let sub = Rule1DSubrule {
+                current_type: CellType(s.current.clone()),
+                criteria_type: CellType(s.criteria.clone()),
+                wolfram_code: code,
+                n: s.n,
+                randomness,
+                output_type: CellType(s.output.clone()),
+            };
+            if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
+            subs.push(sub);
+        }
+        Ok(Rule1D { subrules: subs })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Rule2DSubruleEdit {
+    current: String,
+    criteria: String,
+    count: u32,
+    op: CountOp,
+    limit_enabled: bool,
+    limit_value: u32,
+    range: u8,
+    neighborhood: Neighborhood2D,
+    randomness_enabled: bool,
+    randomness_value: f64,
+    output: String,
+}
+
+#[derive(Clone, Debug)]
+struct Rule2DEdit { subrules: Vec<Rule2DSubruleEdit> }
+
+impl Rule2DEdit {
+    fn from_rule(rule: &Rule2D) -> Self {
+        let subs = rule.subrules.iter().map(|s| Rule2DSubruleEdit {
+            current: s.current_type.0.clone(),
+            criteria: s.criteria_type.0.clone(),
+            count: s.count,
+            op: s.op,
+            limit_enabled: s.limit.is_some(),
+            limit_value: s.limit.unwrap_or(0),
+            range: s.range,
+            neighborhood: s.neighborhood,
+            randomness_enabled: s.randomness.is_some(),
+            randomness_value: s.randomness.unwrap_or(0.0),
+            output: s.output_type.0.clone(),
+        }).collect();
+        Self { subrules: subs }
+    }
+    fn to_rule(&self) -> Result<Rule2D, String> {
+        let mut subs: Vec<Rule2DSubrule> = Vec::new();
+        for s in &self.subrules {
+            let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
+            let limit = if s.limit_enabled { Some(s.limit_value) } else { None };
+            let sub = Rule2DSubrule {
+                current_type: CellType(s.current.clone()),
+                criteria_type: CellType(s.criteria.clone()),
+                count: s.count,
+                op: s.op,
+                limit,
+                range: s.range,
+                neighborhood: s.neighborhood,
+                randomness,
+                output_type: CellType(s.output.clone()),
+            };
+            if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
+            subs.push(sub);
+        }
+        Ok(Rule2D { subrules: subs })
+    }
+}
+
 /// Run the native GUI application.
 pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
     // Configure the initial window via NativeOptions/ViewportBuilder.
@@ -113,6 +219,16 @@ struct CellaApp {
     stats_history: BTreeMap<String, Vec<(u64, u64)>>,
     stats_show: BTreeMap<String, bool>,
     stats_window_len: usize,
+
+    // Rule editor state
+    rule_edit_1d: Option<Rule1DEdit>,
+    rule_edit_2d: Option<Rule2DEdit>,
+    rule_error_msg: Option<String>,
+    // Extra declared types added via UI (beyond those seen in rules/initial grid)
+    custom_types: std::collections::BTreeSet<String>,
+
+    // Transient input for adding a new type/state
+    new_type_name: String,
 }
 
 impl CellaApp {
@@ -154,6 +270,12 @@ impl CellaApp {
             stats_history: BTreeMap::new(),
             stats_show: BTreeMap::new(),
             stats_window_len: 300,
+            // Rule editor defaults
+            rule_edit_1d: None,
+            rule_edit_2d: None,
+            rule_error_msg: None,
+            custom_types: std::collections::BTreeSet::new(),
+            new_type_name: String::new(),
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -264,6 +386,8 @@ impl CellaApp {
             }
             None => {}
         }
+        // Include any extra types added via the editor
+        for t in &self.custom_types { set.insert(t.clone()); }
         // Order with Inactive first, then alphabetical for readability
         let mut names: Vec<String> = set.into_iter().collect();
         names.sort();
@@ -415,6 +539,225 @@ impl CellaApp {
                 ui.label("1D history limit:");
                 ui.add(egui::DragValue::new(&mut self.history_limit_1d).clamp_range(1..=10_000));
             });
+            ui.separator();
+            self.ui_rule_editor(ui);
+        });
+    }
+
+    /// Build the color editor panel, including the Inactive color.
+    /// Rule editor residing in the Scenario panel. Allows adding types and fully editing rules.
+    fn ui_rule_editor(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Rule editor", |ui| {
+            // Manage known types
+            ui.label("Types/states available to rules:");
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.new_type_name);
+                if ui.button("Add type").clicked() {
+                    let name = self.new_type_name.trim();
+                    if !name.is_empty() && name != INACTIVE {
+                        self.custom_types.insert(name.to_string());
+                        // set a default color if desired (optional; fallback hash works)
+                        self.new_type_name.clear();
+                    }
+                }
+            });
+            // Show current list
+            let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.0).collect();
+            names.sort(); names.sort_by(|a,b| (a != INACTIVE).cmp(&(b != INACTIVE)));
+            ui.horizontal_wrapped(|ui| {
+                for n in &names { ui.label(egui::RichText::new(n.clone()).monospace()); }
+            });
+            ui.separator();
+
+            if let Some(dim) = self.dim {
+                match dim {
+                    Dim::D1 => {
+                        // Ensure editor model exists
+                        if self.rule_edit_1d.is_none() {
+                            if let Some(g) = &self.d1 { self.rule_edit_1d = Some(Rule1DEdit::from_rule(&g.rule)); }
+                        }
+                        if let Some(edit) = &mut self.rule_edit_1d {
+                            // Subrules list
+                            let mut remove_idx: Option<usize> = None;
+                            for i in 0..edit.subrules.len() {
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Subrule #{}", i+1));
+                                        if ui.button("Remove").clicked() { remove_idx = Some(i); }
+                                    });
+                                    let ty_names = names.clone();
+                                    let sub = &mut edit.subrules[i];
+                                    // current
+                                    ui.horizontal(|ui| {
+                                        ui.label("current:");
+                                        let mut sel = sub.current.clone();
+                                        egui::ComboBox::from_id_source(format!("d1_cur_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| {
+                                                for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
+                                            });
+                                        if sel != sub.current { sub.current = sel; }
+                                    });
+                                    // criteria
+                                    ui.horizontal(|ui| {
+                                        ui.label("criteria:");
+                                        let mut sel = sub.criteria.clone();
+                                        egui::ComboBox::from_id_source(format!("d1_crit_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| {
+                                                for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
+                                            });
+                                        if sel != sub.criteria { sub.criteria = sel; }
+                                    });
+                                    // output
+                                    ui.horizontal(|ui| {
+                                        ui.label("output:");
+                                        let mut sel = sub.output.clone();
+                                        egui::ComboBox::from_id_source(format!("d1_out_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| {
+                                                for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
+                                            });
+                                        if sel != sub.output { sub.output = sel; }
+                                    });
+                                    // code and n
+                                    ui.horizontal(|ui| {
+                                        ui.label("wolfram code:");
+                                        ui.text_edit_singleline(&mut sub.wolfram_code);
+                                        ui.label("n:");
+                                        ui.add(egui::DragValue::new(&mut sub.n).clamp_range(1..=8));
+                                    });
+                                    // randomness
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(&mut sub.randomness_enabled, "randomness");
+                                        if sub.randomness_enabled {
+                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3));
+                                        }
+                                    });
+                                });
+                            }
+                            if let Some(idx) = remove_idx { edit.subrules.remove(idx); }
+                            if ui.button("Add subrule").clicked() {
+                                edit.subrules.push(Rule1DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), wolfram_code: "0".into(), n: 1, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string()});
+                            }
+                            if ui.button("Apply to grid").clicked() {
+                                match edit.to_rule() {
+                                    Ok(rule) => {
+                                        if let Some(g) = &mut self.d1 { g.rule = rule; }
+                                        self.rule_error_msg = None;
+                                        self.refresh_rule_editor_from_current();
+                                    }
+                                    Err(e) => { self.rule_error_msg = Some(e); }
+                                }
+                            }
+                        } else {
+                            ui.label("No 1D grid loaded.");
+                        }
+                    }
+                    Dim::D2 => {
+                        if self.rule_edit_2d.is_none() {
+                            if let Some(g) = &self.d2 { self.rule_edit_2d = Some(Rule2DEdit::from_rule(&g.rule)); }
+                        }
+                        if let Some(edit) = &mut self.rule_edit_2d {
+                            let mut remove_idx: Option<usize> = None;
+                            for i in 0..edit.subrules.len() {
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Subrule #{}", i+1));
+                                        if ui.button("Remove").clicked() { remove_idx = Some(i); }
+                                    });
+                                    let ty_names = names.clone();
+                                    let sub = &mut edit.subrules[i];
+                                    // current
+                                    ui.horizontal(|ui| {
+                                        ui.label("current:");
+                                        let mut sel = sub.current.clone();
+                                        egui::ComboBox::from_id_source(format!("d2_cur_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
+                                        if sel != sub.current { sub.current = sel; }
+                                    });
+                                    // criteria
+                                    ui.horizontal(|ui| {
+                                        ui.label("criteria:");
+                                        let mut sel = sub.criteria.clone();
+                                        egui::ComboBox::from_id_source(format!("d2_crit_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
+                                        if sel != sub.criteria { sub.criteria = sel; }
+                                    });
+                                    // output
+                                    ui.horizontal(|ui| {
+                                        ui.label("output:");
+                                        let mut sel = sub.output.clone();
+                                        egui::ComboBox::from_id_source(format!("d2_out_{}", i))
+                                            .selected_text(sel.clone())
+                                            .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
+                                        if sel != sub.output { sub.output = sel; }
+                                    });
+                                    // neighborhood modifiers
+                                    ui.horizontal(|ui| {
+                                        ui.label("count:"); ui.add(egui::DragValue::new(&mut sub.count).clamp_range(0..=99));
+                                        ui.label("op:");
+                                        let mut op = sub.op; 
+                                        egui::ComboBox::from_id_source(format!("d2_op_{}", i))
+                                            .selected_text(match op { CountOp::Lt=>"lt", CountOp::Gt=>"gt", CountOp::Eq=>"eq" })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut op, CountOp::Lt, "lt");
+                                                ui.selectable_value(&mut op, CountOp::Gt, "gt");
+                                                ui.selectable_value(&mut op, CountOp::Eq, "eq");
+                                            });
+                                        sub.op = op;
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(&mut sub.limit_enabled, "limit");
+                                        if sub.limit_enabled { ui.add(egui::DragValue::new(&mut sub.limit_value).clamp_range(0..=99)); }
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("range n:"); ui.add(egui::DragValue::new(&mut sub.range).clamp_range(1..=8));
+                                        ui.label("neighborhood:");
+                                        let mut nb = sub.neighborhood;
+                                        egui::ComboBox::from_id_source(format!("d2_nh_{}", i))
+                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon" })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut nb, Neighborhood2D::Moore, "Moore");
+                                                ui.selectable_value(&mut nb, Neighborhood2D::VonNeumann, "VonNeumann");
+                                                ui.selectable_value(&mut nb, Neighborhood2D::Langdon, "Langdon");
+                                            });
+                                        sub.neighborhood = nb;
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(&mut sub.randomness_enabled, "randomness");
+                                        if sub.randomness_enabled {
+                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3));
+                                        }
+                                    });
+                                });
+                            }
+                            if let Some(idx) = remove_idx { edit.subrules.remove(idx); }
+                            if ui.button("Add subrule").clicked() {
+                                edit.subrules.push(Rule2DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), count: 0, op: CountOp::Gt, limit_enabled: false, limit_value: 0, range: 1, neighborhood: Neighborhood2D::Moore, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string() });
+                            }
+                            if ui.button("Apply to grid").clicked() {
+                                match edit.to_rule() {
+                                    Ok(rule) => {
+                                        if let Some(g) = &mut self.d2 { g.rule = rule; }
+                                        self.rule_error_msg = None;
+                                        self.refresh_rule_editor_from_current();
+                                    }
+                                    Err(e) => { self.rule_error_msg = Some(e); }
+                                }
+                            }
+                        } else {
+                            ui.label("No 2D grid loaded.");
+                        }
+                    }
+                }
+            } else {
+                ui.label("No grid loaded.");
+            }
+
+            if let Some(err) = &self.rule_error_msg { ui.colored_label(egui::Color32::RED, format!("Rule error: {}", err)); }
         });
     }
 
@@ -479,6 +822,7 @@ impl CellaApp {
         self.colors.clear();
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_1d_rule30(&mut self) {
@@ -492,6 +836,7 @@ impl CellaApp {
         self.colors.clear();
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_1d_n2(&mut self) {
@@ -506,6 +851,7 @@ impl CellaApp {
         self.colors.clear();
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_2d_three_state_cycle(&mut self) {
@@ -519,6 +865,7 @@ impl CellaApp {
         self.colors.clear();
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_1d_custom_from_inputs(&mut self) {
@@ -535,6 +882,7 @@ impl CellaApp {
             self.colors.clear();
             self.update_selected_draw_type_default();
             self.stats_clear_and_init();
+            self.refresh_rule_editor_from_current();
         }
     }
 
@@ -563,6 +911,8 @@ impl CellaApp {
                 },
                 Err(e) => { eprintln!("Failed to load config: {}", e); }
             }
+            // After loading any config, sync the rule editor
+            self.refresh_rule_editor_from_current();
         }
     }
 
@@ -649,6 +999,7 @@ impl CellaApp {
         // Update default draw type after resetting
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
     }
 
     /// Update default draw type to the first non-Inactive type in the grid, else Inactive.
@@ -691,6 +1042,26 @@ impl CellaApp {
             self.stats_show.insert(k.clone(), show);
             let c = *counts.get(&k).unwrap_or(&0);
             self.stats_history.insert(k, vec![(step, c)]);
+        }
+    }
+
+    /// Sync the rule editor model from the currently loaded grid and clear errors.
+    fn refresh_rule_editor_from_current(&mut self) {
+        self.rule_error_msg = None;
+        match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    self.rule_edit_1d = Some(Rule1DEdit::from_rule(&g.rule));
+                    self.rule_edit_2d = None;
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    self.rule_edit_2d = Some(Rule2DEdit::from_rule(&g.rule));
+                    self.rule_edit_1d = None;
+                }
+            }
+            None => { self.rule_edit_1d = None; self.rule_edit_2d = None; }
         }
     }
 
