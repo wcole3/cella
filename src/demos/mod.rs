@@ -21,5 +21,5 @@ pub use two_d::{demo_life, demo_2d_three_state_cycle};
 pub use two_d::demo_from_config;
 
 // Builders for reuse (CLI + GUI)
-pub use one_d::{build_1d_rule30, build_1d_code_n, build_1d_three_state_cycle};
+pub use one_d::{build_1d_rule30, build_1d_code_n};
 pub use two_d::{build_2d_life, build_2d_three_state_cycle};
