@@ -232,6 +232,9 @@ struct CellaApp {
 
     // Transient input for adding a new type/state
     new_type_name: String,
+
+    // UI: visibility of the right-side Rule Editor panel
+    show_rule_editor: bool,
 }
 
 impl CellaApp {
@@ -282,6 +285,7 @@ impl CellaApp {
             rule_error_msg: None,
             custom_types: std::collections::BTreeSet::new(),
             new_type_name: String::new(),
+            show_rule_editor: true,
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -516,6 +520,9 @@ impl CellaApp {
             if exporting { ui.label("Exporting..."); }
             if ui.button("Save Final State").clicked() { self.save_final_state(); }
             if ui.button("Reset").clicked() { self.reset_to_initial(); }
+            ui.separator();
+            let toggle = if self.show_rule_editor { "Hide Rule Editor" } else { "Show Rule Editor" };
+            if ui.button(toggle).clicked() { self.show_rule_editor = !self.show_rule_editor; }
         });
     }
 
@@ -549,7 +556,7 @@ impl CellaApp {
                 ui.add(egui::DragValue::new(&mut self.history_limit_1d).clamp_range(1..=10_000));
             });
             ui.separator();
-            self.ui_rule_editor(ui);
+            // Rule editor moved to the right panel; see right-side Rule Editor panel.
         });
     }
 
@@ -589,6 +596,8 @@ impl CellaApp {
                         if let Some(edit) = &mut self.rule_edit_1d {
                             // Subrules list (scrollable)
                             let mut remove_idx: Option<usize> = None;
+                            let mut move_up_idx: Option<usize> = None;
+                            let mut move_down_idx: Option<usize> = None;
                             ui.set_min_height(240.0);
                             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                                 for i in 0..edit.subrules.len() {
@@ -639,6 +648,10 @@ impl CellaApp {
                                         ui.label("n:");
                                         ui.add(egui::DragValue::new(&mut sub.n).clamp_range(1..=8));
                                     });
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Up").clicked() { move_up_idx = Some(i); }
+                                        if ui.button("Down").clicked() { move_down_idx = Some(i); }
+                                    });
                                     // randomness
                                     ui.horizontal(|ui| {
                                         ui.checkbox(&mut sub.randomness_enabled, "randomness");
@@ -649,6 +662,8 @@ impl CellaApp {
                                 });
                             }
                             });
+                            if let Some(i) = move_up_idx { if i > 0 { edit.subrules.swap(i, i - 1); } }
+                            if let Some(i) = move_down_idx { if i + 1 < edit.subrules.len() { edit.subrules.swap(i, i + 1); } }
                             if let Some(idx) = remove_idx { edit.subrules.remove(idx); }
                             if ui.button("Add subrule").clicked() {
                                 edit.subrules.push(Rule1DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), wolfram_code: "0".into(), n: 1, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string()});
@@ -674,6 +689,8 @@ impl CellaApp {
                         }
                         if let Some(edit) = &mut self.rule_edit_2d {
                             let mut remove_idx: Option<usize> = None;
+                            let mut move_up_idx: Option<usize> = None;
+                            let mut move_down_idx: Option<usize> = None;
                             ui.set_min_height(240.0);
                             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                                 for i in 0..edit.subrules.len() {
@@ -748,9 +765,15 @@ impl CellaApp {
                                             ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3));
                                         }
                                     });
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Up").clicked() { move_up_idx = Some(i); }
+                                        if ui.button("Down").clicked() { move_down_idx = Some(i); }
+                                    });
                                 });
                             }
                             });
+                            if let Some(i) = move_up_idx { if i > 0 { edit.subrules.swap(i, i - 1); } }
+                            if let Some(i) = move_down_idx { if i + 1 < edit.subrules.len() { edit.subrules.swap(i, i + 1); } }
                             if let Some(idx) = remove_idx { edit.subrules.remove(idx); }
                             if ui.button("Add subrule").clicked() {
                                 edit.subrules.push(Rule2DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), count: 0, op: CountOp::Gt, limit_enabled: false, limit_value: 0, range: 1, neighborhood: Neighborhood2D::Moore, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string() });
@@ -1279,6 +1302,20 @@ impl eframe::App for CellaApp {
                 self.ui_statistics(ui);
             });
         });
+
+        // Right-side Rule Editor panel (resizable, can be hidden via toggle)
+        if self.show_rule_editor {
+            egui::SidePanel::right("right_rule_editor")
+                .resizable(true)
+                .min_width(220.0)
+                .default_width(340.0)
+                .show(ctx, |ui| {
+                    ui.heading("Rule Editor");
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        self.ui_rule_editor(ui);
+                    });
+                });
+        }
 
         egui::TopBottomPanel::bottom("bottom_status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
