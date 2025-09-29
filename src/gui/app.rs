@@ -850,8 +850,8 @@ impl CellaApp {
                 if ui.color_edit_button_srgba(&mut inact).changed() { self.inactive_color = inact; }
             });
             ui.separator();
-            // Dynamic colors for active types
-            let tys = self.collect_types();
+            // Colors for all declared types (from rules/config), not just those currently present
+            let tys = self.declared_types();
             for ty in tys {
                 if ty.0 == INACTIVE { continue; }
                 let mut col = self.color_of(&ty);
