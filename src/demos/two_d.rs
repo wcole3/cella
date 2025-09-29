@@ -162,3 +162,36 @@ pub fn demo_from_config() {
         Err(e) => println!("Failed to load config: {}", e),
     }
 }
+
+
+// StraightLine neighborhood demo and builder
+pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Grid2D {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let rule = Rule2D { subrules: vec![
+        // Any A with at least 1 B in straight cardinal directions within range 2 becomes B
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+        // Persistence: B stays B with at least 1 B straight neighbor (range 1)
+        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+    ]};
+    let mut init = vec![a.clone(); width*height];
+    // Seed a small cross of B near the center
+    if width > 2 && height > 2 {
+        let cx = width/2; let cy = height/2;
+        let mut set = |x: usize, y: usize| init[y*width + x] = b.clone();
+        set(cx, cy);
+        if cx > 0 { set(cx-1, cy); }
+        if cx + 1 < width { set(cx+1, cy); }
+        if cy > 0 { set(cx, cy-1); }
+        if cy + 1 < height { set(cx, cy+1); }
+    }
+    Grid2D::new(width, height, history, init, rule)
+}
+
+pub fn demo_2d_straightline() {
+    let mut g = build_2d_straightline(24, 12, 3);
+    let steps = ask_steps(8);
+    println!("Initial:");
+    print_grid_2d(&g);
+    for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }
+}

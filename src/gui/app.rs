@@ -8,7 +8,7 @@ use egui::{Color32, Context, Key};
 use egui_plot::{Plot, Line, PlotPoints, Legend};
 use rfd::FileDialog;
 
-use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle};
+use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle, build_2d_straightline};
 
 use super::export::{export_gif_1d, export_gif_2d};
 use super::render::default_palette;
@@ -535,6 +535,7 @@ impl CellaApp {
                 if ui.button("Demo: 1D Rule 30").clicked() { self.load_demo_1d_rule30(); }
                 if ui.button("Demo: 1D n=2").clicked() { self.load_demo_1d_n2(); }
                 if ui.button("Demo: 2D three-state").clicked() { self.load_demo_2d_three_state_cycle(); }
+                if ui.button("Demo: 2D straightline").clicked() { self.load_demo_2d_straightline(); }
             });
             ui.separator();
             ui.label("Custom 1D (Wolfram code + n):");
@@ -781,15 +782,16 @@ impl CellaApp {
                                                 ui.monospace(diag);
                                                 ui.small("Legend: @ center, # counted neighbor, . outside");
                                                 ui.separator();
-                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals");
+                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals; StraightLine = cardinal lines only");
                                             });
                                         let mut nb = sub.neighborhood;
                                         egui::ComboBox::from_id_source(format!("d2_nh_{}", i))
-                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon" })
+                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon", Neighborhood2D::StraightLine=>"StraightLine" })
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Moore, "Moore");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::VonNeumann, "VonNeumann");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Langdon, "Langdon");
+                                                ui.selectable_value(&mut nb, Neighborhood2D::StraightLine, "StraightLine");
                                             });
                                         sub.neighborhood = nb;
                                     });
@@ -938,6 +940,21 @@ impl CellaApp {
         self.d1 = None; self.dim = Some(Dim::D2);
         self.d2 = Some(build_2d_three_state_cycle(w,h,hist));
         self.set_status("Loaded demo: 2D three-state cycle");
+        self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
+        self.history_1d.clear();
+        self.undo_stack.clear();
+        self.current_paint_batch = None;
+        self.colors.clear();
+        self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
+        self.refresh_rule_editor_from_current();
+    }
+
+    fn load_demo_2d_straightline(&mut self) {
+        let (w,h,hist) = (48usize, 27usize, 3usize);
+        self.d1 = None; self.dim = Some(Dim::D2);
+        self.d2 = Some(build_2d_straightline(w,h,hist));
+        self.set_status("Loaded demo: 2D StraightLine");
         self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
         self.history_1d.clear();
         self.undo_stack.clear();
@@ -1266,6 +1283,7 @@ impl CellaApp {
             Neighborhood2D::Moore => "Moore",
             Neighborhood2D::VonNeumann => "VonNeumann",
             Neighborhood2D::Langdon => "Langdon",
+            Neighborhood2D::StraightLine => "StraightLine",
         };
         out.push_str(&format!("{} (n={})\n", name, range));
         for dy in -n..=n {
@@ -1277,6 +1295,7 @@ impl CellaApp {
                         Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
                         Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
                         Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
+                        Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
                     };
                     out.push(if inside { '#' } else { '.' });
                 }

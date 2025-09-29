@@ -13,6 +13,7 @@ fn menu() {
         println!("6) Langton's ant (placeholder)");
         println!("7) 1D three-state cycle demo");
         println!("8) 2D three-state cycle demo");
+        println!("9) 2D StraightLine neighborhood demo");
         println!("0) Exit");
         print!("Select an option: ");
         let _ = io::stdout().flush();
@@ -26,6 +27,7 @@ fn menu() {
             "6" => println!("Langton's ant not yet implemented in this engine (requires moving agent)."),
             "7" => demos::demo_1d_three_state_cycle(),
             "8" => demos::demo_2d_three_state_cycle(),
+            "9" => demos::demo_2d_straightline(),
             "0" => { println!("Bye!"); break; }
             _ => println!("Unknown option."),
         }

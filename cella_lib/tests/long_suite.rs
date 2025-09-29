@@ -246,6 +246,27 @@ fn stress_2d_von_neumann_threshold() {
     assert_snapshot("2d_vonneumann_threshold", hash);
 }
 
+fn stress_2d_straightline_threshold() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 3, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+    ]};
+    let (w,h,hist) = (64usize, 32usize, 3usize);
+    let mut init = vec![a.clone(); w*h];
+    for y in 0..h { for x in 0..w { if (x * 13 + y * 7) % 17 == 0 { init[y*w + x] = b.clone(); } } }
+    let mut g = Grid2D::new(w,h,hist,init,rule);
+    if ascii_enabled() { print_ascii_2d("2d_straightline_threshold: initial", &g); }
+    let t0 = Instant::now();
+    for _ in 0..200 { g.step(); }
+    if ascii_enabled() { print_ascii_2d("2d_straightline_threshold: final", &g); }
+    let elapsed = t0.elapsed().as_millis();
+    record_bench("2d_straightline_threshold", elapsed);
+    let hash = hash_grid2d_state(&g);
+    assert_snapshot("2d_straightline_threshold", hash);
+}
+
 fn stress_2d_langdon_diagonals() {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -523,6 +544,16 @@ fn stress_2d_von_neumann_threshold_t4() { set_thread_override(4); stress_2d_von_
 #[test]
 #[ignore]
 fn stress_2d_von_neumann_threshold_t8() { set_thread_override(8); stress_2d_von_neumann_threshold(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_straightline_threshold_t1() { set_thread_override(1); stress_2d_straightline_threshold(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_straightline_threshold_t4() { set_thread_override(4); stress_2d_straightline_threshold(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_straightline_threshold_t8() { set_thread_override(8); stress_2d_straightline_threshold(); clear_thread_override(); }
 
 #[test]
 #[ignore]

@@ -17,11 +17,13 @@ use crate::types::CellType;
 /// - `Moore`: all cells in the (2n+1)x(2n+1) square.
 /// - `VonNeumann`: cells with Manhattan distance <= n.
 /// - `Langdon`: diagonal cells where |dx|==|dy|<=n.
+/// - `StraightLine`: cells in straight cardinal lines (up/down/left/right) up to range n.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Neighborhood2D {
     Moore,
     VonNeumann,
     Langdon,
+    StraightLine,
 }
 
 /// Validation errors for rules.
@@ -143,6 +145,19 @@ impl Rule1D {
 /// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
 /// assert!(s.validate().is_ok());
 /// ```
+///
+/// StraightLine neighborhood example
+/// ```rust
+/// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
+/// let a = CellType("A".into());
+/// let b = CellType("B".into());
+/// let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() };
+/// // Place two B's in cardinal directions: up (0,-1) and right (+1,0)
+/// let out = sub.applies_and_output(&a, |dx, dy| {
+///     if (dx, dy) == (0, -1) || (dx, dy) == (1, 0) { b.clone() } else { CellType::inactive() }
+/// });
+/// assert_eq!(out, Some(b));
+/// ```
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CountOp {
     #[serde(rename = "lt")] Lt,
@@ -198,6 +213,7 @@ impl Rule2DSubrule {
             Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
             Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
             Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
+            Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
         }
     }
 
