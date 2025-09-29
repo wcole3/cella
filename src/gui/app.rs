@@ -565,10 +565,13 @@ impl CellaApp {
     fn ui_rule_editor(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Rule editor", |ui| {
             // Manage known types
-            ui.label("Types/states available to rules:");
+            ui.label("Types/states available to rules:").on_hover_text("Declare the distinct cell states used by your rules. 'Inactive' is reserved and always present.");
             ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.new_type_name);
-                if ui.button("Add type").clicked() {
+                ui.text_edit_singleline(&mut self.new_type_name)
+                    .on_hover_text("Enter a new state name (e.g., Alive, Dead, A, B). Avoid using 'Inactive'.");
+                if ui.button("Add type")
+                    .on_hover_text("Add the typed state so it can be used in rules and colored in the viewport.")
+                    .clicked() {
                     let name = self.new_type_name.trim();
                     if !name.is_empty() && name != INACTIVE {
                         self.custom_types.insert(name.to_string());
@@ -610,7 +613,8 @@ impl CellaApp {
                                     let sub = &mut edit.subrules[i];
                                     // current
                                     ui.horizontal(|ui| {
-                                        ui.label("current:");
+                                        ui.label("current:")
+                                            .on_hover_text("Center cell must currently be this state for the subrule to apply.");
                                         let mut sel = sub.current.clone();
                                         egui::ComboBox::from_id_source(format!("d1_cur_{}", i))
                                             .selected_text(sel.clone())
@@ -621,7 +625,8 @@ impl CellaApp {
                                     });
                                     // criteria
                                     ui.horizontal(|ui| {
-                                        ui.label("criteria:");
+                                        ui.label("criteria:")
+                                            .on_hover_text("Neighbor cells equal to this state are treated as 1s in the Wolfram pattern; others are 0s.");
                                         let mut sel = sub.criteria.clone();
                                         egui::ComboBox::from_id_source(format!("d1_crit_{}", i))
                                             .selected_text(sel.clone())
@@ -632,7 +637,8 @@ impl CellaApp {
                                     });
                                     // output
                                     ui.horizontal(|ui| {
-                                        ui.label("output:");
+                                        ui.label("output:")
+                                            .on_hover_text("The new state to set when this subrule matches.");
                                         let mut sel = sub.output.clone();
                                         egui::ComboBox::from_id_source(format!("d1_out_{}", i))
                                             .selected_text(sel.clone())
@@ -643,10 +649,14 @@ impl CellaApp {
                                     });
                                     // code and n
                                     ui.horizontal(|ui| {
-                                        ui.label("wolfram code:");
-                                        ui.text_edit_singleline(&mut sub.wolfram_code);
-                                        ui.label("n:");
-                                        ui.add(egui::DragValue::new(&mut sub.n).clamp_range(1..=8));
+                                        ui.label("wolfram code:")
+                                            .on_hover_text("Bitmask for patterns over a (2n+1) window of neighbors: 1 = match triggers. Indexing uses a binary window where neighbors equal to 'criteria' are 1.");
+                                        ui.text_edit_singleline(&mut sub.wolfram_code)
+                                            .on_hover_text("Enter a non-negative integer (u128). For n=1 there are 2^(3)=8 patterns; for larger n the number grows quickly.");
+                                        ui.label("n:")
+                                            .on_hover_text("Neighborhood radius (>=1). The window size is 2n+1 around the center cell.");
+                                        ui.add(egui::DragValue::new(&mut sub.n).clamp_range(1..=8))
+                                            .on_hover_text("Radius n between 1 and 8.");
                                     });
                                     ui.horizontal(|ui| {
                                         if ui.button("Up").clicked() { move_up_idx = Some(i); }
@@ -654,9 +664,11 @@ impl CellaApp {
                                     });
                                     // randomness
                                     ui.horizontal(|ui| {
-                                        ui.checkbox(&mut sub.randomness_enabled, "randomness");
+                                        ui.checkbox(&mut sub.randomness_enabled, "randomness")
+                                            .on_hover_text("Optional stochasticity: when enabled, the match will only apply with probability 1 - p.");
                                         if sub.randomness_enabled {
-                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3));
+                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3))
+                                                .on_hover_text("Probability p to cancel the match (so the rule applies with probability 1 - p).");
                                         }
                                     });
                                 });
@@ -703,7 +715,8 @@ impl CellaApp {
                                     let sub = &mut edit.subrules[i];
                                     // current
                                     ui.horizontal(|ui| {
-                                        ui.label("current:");
+                                        ui.label("current:")
+                                            .on_hover_text("Center cell must currently be this state for the subrule to apply.");
                                         let mut sel = sub.current.clone();
                                         egui::ComboBox::from_id_source(format!("d2_cur_{}", i))
                                             .selected_text(sel.clone())
@@ -712,7 +725,8 @@ impl CellaApp {
                                     });
                                     // criteria
                                     ui.horizontal(|ui| {
-                                        ui.label("criteria:");
+                                        ui.label("criteria:")
+                                            .on_hover_text("Neighbor cells of this state are counted within the chosen neighborhood.");
                                         let mut sel = sub.criteria.clone();
                                         egui::ComboBox::from_id_source(format!("d2_crit_{}", i))
                                             .selected_text(sel.clone())
@@ -721,7 +735,8 @@ impl CellaApp {
                                     });
                                     // output
                                     ui.horizontal(|ui| {
-                                        ui.label("output:");
+                                        ui.label("output:")
+                                            .on_hover_text("The new state to set when this subrule matches.");
                                         let mut sel = sub.output.clone();
                                         egui::ComboBox::from_id_source(format!("d2_out_{}", i))
                                             .selected_text(sel.clone())
@@ -730,8 +745,12 @@ impl CellaApp {
                                     });
                                     // neighborhood modifiers
                                     ui.horizontal(|ui| {
-                                        ui.label("count:"); ui.add(egui::DragValue::new(&mut sub.count).clamp_range(0..=99));
-                                        ui.label("op:");
+                                        ui.label("count:")
+                                            .on_hover_text("Baseline neighbor count for comparison. See 'op' for how it is used.");
+                                        ui.add(egui::DragValue::new(&mut sub.count).clamp_range(0..=99))
+                                            .on_hover_text("Set the baseline count between 0 and 99.");
+                                        ui.label("op:")
+                                            .on_hover_text("Comparison: gt means >= count, lt means <= count, eq means exactly count. With a limit, you can specify a range.");
                                         let mut op = sub.op; 
                                         egui::ComboBox::from_id_source(format!("d2_op_{}", i))
                                             .selected_text(match op { CountOp::Lt=>"lt", CountOp::Gt=>"gt", CountOp::Eq=>"eq" })
@@ -743,12 +762,27 @@ impl CellaApp {
                                         sub.op = op;
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.checkbox(&mut sub.limit_enabled, "limit");
-                                        if sub.limit_enabled { ui.add(egui::DragValue::new(&mut sub.limit_value).clamp_range(0..=99)); }
+                                        ui.checkbox(&mut sub.limit_enabled, "limit")
+                                            .on_hover_text("Optional second bound to create a range: with op=gt, checks count in [count..=limit]; with op=lt, checks count in [limit..=count].");
+                                        if sub.limit_enabled { 
+                                            ui.add(egui::DragValue::new(&mut sub.limit_value).clamp_range(0..=99))
+                                                .on_hover_text("Inclusive bound for the range comparison."); 
+                                        }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label("range n:"); ui.add(egui::DragValue::new(&mut sub.range).clamp_range(1..=8));
-                                        ui.label("neighborhood:");
+                                        ui.label("range n:")
+                                            .on_hover_text("Neighborhood range (>=1). The square window is (2n+1)^2, filtered by the chosen neighborhood type.");
+                                        ui.add(egui::DragValue::new(&mut sub.range).clamp_range(1..=8))
+                                            .on_hover_text("Set range n between 1 and 8.");
+                                        ui.label("neighborhood:")
+                                            .on_hover_ui(|ui| {
+                                                ui.label("Neighborhood shape around the center (@):");
+                                                let diag = CellaApp::neighborhood_ascii(sub.range, sub.neighborhood);
+                                                ui.monospace(diag);
+                                                ui.small("Legend: @ center, # counted neighbor, . outside");
+                                                ui.separator();
+                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals");
+                                            });
                                         let mut nb = sub.neighborhood;
                                         egui::ComboBox::from_id_source(format!("d2_nh_{}", i))
                                             .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon" })
@@ -760,9 +794,11 @@ impl CellaApp {
                                         sub.neighborhood = nb;
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.checkbox(&mut sub.randomness_enabled, "randomness");
+                                        ui.checkbox(&mut sub.randomness_enabled, "randomness")
+                                            .on_hover_text("Optional stochasticity: when enabled, the match will only apply with probability 1 - p.");
                                         if sub.randomness_enabled {
-                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3));
+                                            ui.add(egui::Slider::new(&mut sub.randomness_value, 0.0..=1.0).text("p").fixed_decimals(3))
+                                                .on_hover_text("Probability p to cancel the match (so the rule applies with probability 1 - p).");
                                         }
                                     });
                                     ui.horizontal(|ui| {
@@ -1221,6 +1257,33 @@ impl CellaApp {
                 }
             });
         });
+    }
+
+    fn neighborhood_ascii(range: u8, kind: Neighborhood2D) -> String {
+        let n = range as i32;
+        let mut out = String::new();
+        let name = match kind {
+            Neighborhood2D::Moore => "Moore",
+            Neighborhood2D::VonNeumann => "VonNeumann",
+            Neighborhood2D::Langdon => "Langdon",
+        };
+        out.push_str(&format!("{} (n={})\n", name, range));
+        for dy in -n..=n {
+            for dx in -n..=n {
+                if dx == 0 && dy == 0 {
+                    out.push('@');
+                } else {
+                    let inside = match kind {
+                        Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
+                        Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
+                        Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
+                    };
+                    out.push(if inside { '#' } else { '.' });
+                }
+            }
+            if dy != n { out.push('\n'); }
+        }
+        out
     }
 }
 
