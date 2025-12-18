@@ -1037,7 +1037,7 @@ impl CellaApp {
     /// continues stepping the live grid while exporting based on `export_live_update`.
     fn export_gif_dialog(&mut self) {
         if self.export_join.is_some() { return; }
-        if let Some(path) = FileDialog::new().set_file_name("cella.gif").save_file() {
+        if let Some(path) = FileDialog::new().add_filter("gif", &["gif"]).set_file_name("cella.gif").save_file() {
             let steps = self.export_steps.max(1) as usize;
             let fps = self.export_fps.max(1);
             let scale = self.scale as u16;
