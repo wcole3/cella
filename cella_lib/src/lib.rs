@@ -113,6 +113,22 @@ mod tests {
     }
 
     #[test]
+    fn two_d_straightline_cardinals() {
+        let a = CellType("A".into());
+        let b = CellType("B".into());
+        // Need two straight (cardinal) neighbors to trigger
+        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() }] };
+        let w=3; let h=3; let hist=2;
+        let mut init = vec![a.clone(); w*h];
+        // cardinal neighbors at (1,0) and (2,1) relative to center (1,1)
+        init[0*w + 1] = b.clone(); // up
+        init[1*w + 2] = b.clone(); // right
+        let mut g = Grid2D::new(w,h,hist,init,rule);
+        g.step();
+        assert_eq!(g.cells[1*w + 1].current, b);
+    }
+
+    #[test]
     fn config_roundtrip_build() {
         use crate::config::{CellaConfig, Config2D};
         let alive = CellType("Alive".into());

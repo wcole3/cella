@@ -2,6 +2,7 @@ use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
 use std::fs;
 use std::io::{self, Write};
+use std::collections::BTreeMap;
 
 // ------- Reusable builders (for CLI and GUI) -------
 pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
@@ -29,12 +30,44 @@ pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     Grid2D::new(width, height, history, init, rule)
 }
 
-fn print_grid_2d(g: &Grid2D, active: &CellType) {
+pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -> Grid2D {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let c = CellType("C".into());
+    // Rotate when condition always passes (count >= 0). Order matters: transition before survival.
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
+        Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: c.clone() },
+        Rule2DSubrule { current_type: c.clone(), criteria_type: a.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: a.clone() },
+    ]};
+    let mut init = vec![CellType::inactive(); width*height];
+    for y in 0..height { for x in 0..width { let idx = (x + y) % 3; init[y*width + x] = match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }; } }
+    Grid2D::new(width, height, history, init, rule)
+}
+
+fn print_grid_2d(g: &Grid2D) {
+    // Build stable mapping for active states (non-Inactive)
+    let mut names: Vec<String> = g
+        .cells
+        .iter()
+        .map(|c| c.current.0.clone())
+        .filter(|n| n != INACTIVE)
+        .collect();
+    names.sort();
+    names.dedup();
+    let symbol_pool: Vec<char> = "!@#$%^&*()".chars().chain('a'..='z').collect();
+    let mut map: BTreeMap<String, char> = BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        let ch = symbol_pool.get(i).copied().unwrap_or('?');
+        map.insert(n.clone(), ch);
+    }
     for y in 0..g.height {
         let mut line = String::with_capacity(g.width);
         for x in 0..g.width {
             let i = y * g.width + x;
-            if g.cells[i].current == *active { line.push('#'); } else { line.push('.'); }
+            let ty = &g.cells[i].current.0;
+            if ty == INACTIVE { line.push('.'); }
+            else { line.push(*map.get(ty).unwrap_or(&'?')); }
         }
         println!("{}", line);
     }
@@ -63,14 +96,23 @@ pub fn demo_life() {
     let mut grid = Grid2D::new(width, height, hist, init, rule);
     let steps = ask_steps(5);
     println!("Initial state (step {}):", grid.step);
-    print_grid_2d(&grid, &alive);
+    print_grid_2d(&grid);
     for _ in 0..steps {
         grid.step();
         println!("\nAfter step {}:", grid.step);
-        print_grid_2d(&grid, &alive);
+        print_grid_2d(&grid);
     }
     let json = grid2d_to_json(&grid);
     let _ = fs::write("snapshot.json", json);
+}
+
+pub fn demo_2d_three_state_cycle() {
+    let _a = CellType("A".into());
+    let mut g = build_2d_three_state_cycle(24, 12, 3);
+    let steps = ask_steps(8);
+    println!("Initial:");
+    print_grid_2d(&g);
+    for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }
 }
 
 pub fn demo_from_config() {
@@ -83,26 +125,34 @@ pub fn demo_from_config() {
             match cfg {
                 CellaConfig::D1(_) => {
                     if let Some(mut g) = cfg.build_grid1d() {
-                        let active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("X".into()));
                         let steps = ask_steps(10);
-                        // simple print
-                        let mut line = String::new();
-                        for _ in 0..g.width { line.push('.'); }
-                        println!("(1D) initial:");
                         for _ in 0..steps { g.step(); }
-                        println!("Ran {} steps.", steps);
-                        // show final
+                        // Build symbol map for final state
+                        let mut names: Vec<String> = g
+                            .cells
+                            .iter()
+                            .map(|c| c.current.0.clone())
+                            .filter(|n| n != INACTIVE)
+                            .collect();
+                        names.sort(); names.dedup();
+                        let symbol_pool: Vec<char> = "!@#$%^&*()".chars().chain('a'..='z').collect();
+                        let mut map: BTreeMap<String, char> = BTreeMap::new();
+                        for (i, n) in names.iter().enumerate() { map.insert(n.clone(), symbol_pool.get(i).copied().unwrap_or('?')); }
                         let mut line = String::with_capacity(g.width);
-                        for i in 0..g.width { if g.cells[i].current == active { line.push('#'); } else { line.push('.'); }}
+                        for i in 0..g.width {
+                            let ty = &g.cells[i].current.0;
+                            if ty == INACTIVE { line.push('.'); } else { line.push(*map.get(ty).unwrap_or(&'?')); }
+                        }
+                        println!("(1D) final after {} steps:", steps);
                         println!("{}", line);
                     } else { println!("Invalid 1D config lengths."); }
                 }
                 CellaConfig::D2(_) => {
                     if let Some(mut g) = cfg.build_grid2d() {
-                        let active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
+                        let _active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
                         let steps = ask_steps(10);
-                        print_grid_2d(&g, &active);
-                        for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g, &active); }
+                        print_grid_2d(&g);
+                        for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }
                         let json = grid2d_to_json(&g);
                         let _ = fs::write("snapshot.json", json);
                     } else { println!("Invalid 2D config lengths."); }
@@ -111,4 +161,37 @@ pub fn demo_from_config() {
         }
         Err(e) => println!("Failed to load config: {}", e),
     }
+}
+
+
+// StraightLine neighborhood demo and builder
+pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Grid2D {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    let rule = Rule2D { subrules: vec![
+        // Any A with at least 1 B in straight cardinal directions within range 2 becomes B
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+        // Persistence: B stays B with at least 1 B straight neighbor (range 1)
+        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+    ]};
+    let mut init = vec![a.clone(); width*height];
+    // Seed a small cross of B near the center
+    if width > 2 && height > 2 {
+        let cx = width/2; let cy = height/2;
+        let mut set = |x: usize, y: usize| init[y*width + x] = b.clone();
+        set(cx, cy);
+        if cx > 0 { set(cx-1, cy); }
+        if cx + 1 < width { set(cx+1, cy); }
+        if cy > 0 { set(cx, cy-1); }
+        if cy + 1 < height { set(cx, cy+1); }
+    }
+    Grid2D::new(width, height, history, init, rule)
+}
+
+pub fn demo_2d_straightline() {
+    let mut g = build_2d_straightline(24, 12, 3);
+    let steps = ask_steps(8);
+    println!("Initial:");
+    print_grid_2d(&g);
+    for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }
 }

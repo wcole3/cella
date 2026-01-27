@@ -32,6 +32,10 @@ pub struct Grid1D {
     pub step: u64,
     /// Rule used for updates.
     pub rule: Rule1D,
+    /// Current count of cells per type name.
+    pub counts_current: std::collections::HashMap<String, u64>,
+    /// Peak (max-so-far) count of cells per type name since start/reset.
+    pub peak_counts: std::collections::HashMap<String, u64>,
 }
 
 impl Grid1D {
@@ -40,13 +44,22 @@ impl Grid1D {
     /// `initial.len()` must equal `width`.
     pub fn new(width: usize, history_limit: usize, initial: Vec<CellType>, rule: Rule1D) -> Self {
         assert_eq!(initial.len(), width, "initial types len must equal width");
-        let cells = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
-        Self { width, history_limit, cells, step: 0, rule }
+        let cells: Vec<CellState> = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
+        let mut counts_current: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for c in &cells { *counts_current.entry(c.current.0.clone()).or_insert(0) += 1; }
+        let peak_counts = counts_current.clone();
+        Self { width, history_limit, cells, step: 0, rule, counts_current, peak_counts }
     }
 
     fn get_type_or_inactive(&self, idx: isize) -> CellType {
         if idx < 0 || idx as usize >= self.width { return CellType::inactive(); }
         self.cells[idx as usize].current.clone()
+    }
+
+    fn recompute_counts_from_cells(cells: &[CellState]) -> std::collections::HashMap<String, u64> {
+        let mut map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for c in cells { *map.entry(c.current.0.clone()).or_insert(0) += 1; }
+        map
     }
 
     /// Advance the automaton by one step using double-buffering.
@@ -77,6 +90,10 @@ impl Grid1D {
                 let new_type = decided.unwrap_or_else(CellType::inactive);
                 next[i].transition(&new_type);
             }
+            // Update counts and peaks from next before swapping
+            let counts = Self::recompute_counts_from_cells(&next);
+            self.counts_current = counts.clone();
+            for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
             self.cells = next;
             self.step = self.step.saturating_add(1);
             return;
@@ -122,6 +139,10 @@ impl Grid1D {
         for h in handles {
             for (i, ty) in h.join().expect("thread join") { next[i].transition(&ty); }
         }
+        // Update counts and peaks
+        let counts = Self::recompute_counts_from_cells(&next);
+        self.counts_current = counts.clone();
+        for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
         self.cells = next;
         self.step = self.step.saturating_add(1);
     }

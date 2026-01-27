@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cella_lib::*;
 use egui::Color32;
@@ -66,6 +68,7 @@ pub fn export_gif_2d(
     colors: &HashMap<String, Color32>,
     palette: &Vec<Color32>,
     inactive: Color32,
+    progress: Option<&Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
     let w = (grid.width as u16).saturating_mul(scale);
@@ -82,7 +85,7 @@ pub fn export_gif_2d(
     let mut encoder = Encoder::new(&mut file, w, h, &color_table)?;
     let delay_cs = (100.0 / (fps.max(1) as f32)).round() as u16;
 
-    for _ in 0..steps {
+    for i in 0..steps {
         let mut buf = vec![0u8; (w as usize) * (h as usize)];
         for y in 0..grid.height {
             for x in 0..grid.width {
@@ -101,6 +104,7 @@ pub fn export_gif_2d(
         let mut frame = Frame::default();
         frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
         encoder.write_frame(&frame)?;
+        if let Some(p) = progress { p.store(i+1, Ordering::Relaxed); }
         grid.step();
     }
 
@@ -118,10 +122,14 @@ pub fn export_gif_1d(
     colors: &HashMap<String, Color32>,
     palette: &Vec<Color32>,
     inactive: Color32,
+    history_rows: Option<usize>,
+    progress: Option<&Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
     let w = (grid.width as u16).saturating_mul(scale);
-    let h = 1u16.saturating_mul(scale);
+    let total_planned_rows = 1usize + steps;
+    let display_rows: usize = match history_rows { Some(maxr) => maxr.max(1).min(total_planned_rows), None => 1 };
+    let h = (display_rows as u16).saturating_mul(scale);
 
     // Gather current distinct types
     let mut set: BTreeMap<String, CellType> = BTreeMap::new();
@@ -135,22 +143,62 @@ pub fn export_gif_1d(
 
     let delay_cs = (100.0 / (fps.max(1) as f32)).round() as u16;
 
-    for _ in 0..steps {
+    // Local rolling history of prior rows (excluding current)
+    let mut history: Vec<Vec<CellType>> = Vec::new();
+
+    for i in 0..steps {
         let mut buf = vec![0u8; (w as usize) * (h as usize)];
+
+        // How many history rows to show above the current row
+        let hist_to_show = if display_rows > 1 { history.len().min(display_rows - 1) } else { 0 };
+        let start = history.len().saturating_sub(hist_to_show);
+
+        // Draw history rows (from oldest within window to newest)
+        for j in 0..hist_to_show {
+            let row = &history[start + j];
+            for x in 0..grid.width.min(row.len()) {
+                let ty = &row[x];
+                let pal_index = if ty.0 == INACTIVE { 0u8 } else { *index_map.get(&ty.0).unwrap_or(&1u8) };
+                for dy in 0..scale as usize {
+                    for dx in 0..scale as usize {
+                        let px = (x) * (scale as usize) + dx;
+                        let py = (j) * (scale as usize) + dy;
+                        buf[py * (w as usize) + px] = pal_index;
+                    }
+                }
+            }
+        }
+
+        // Draw current row at the bottom of the visible window
+        let cur_y = hist_to_show;
         for x in 0..grid.width {
             let ty = &grid.cells[x].current;
             let pal_index = if ty.0 == INACTIVE { 0u8 } else { *index_map.get(&ty.0).unwrap_or(&1u8) };
             for dy in 0..scale as usize {
                 for dx in 0..scale as usize {
                     let px = (x) * (scale as usize) + dx;
-                    let py = 0usize * (scale as usize) + dy;
+                    let py = (cur_y) * (scale as usize) + dy;
                     buf[py * (w as usize) + px] = pal_index;
                 }
             }
         }
+
         let mut frame = Frame::default();
         frame.width = w; frame.height = h; frame.delay = delay_cs; frame.buffer = std::borrow::Cow::Owned(buf);
         encoder.write_frame(&frame)?;
+        if let Some(p) = progress { p.store(i+1, Ordering::Relaxed); }
+
+        // After writing the frame, push the current row into history and cap length
+        let mut row_now: Vec<CellType> = Vec::with_capacity(grid.width);
+        for x in 0..grid.width { row_now.push(grid.cells[x].current.clone()); }
+        history.push(row_now);
+        if display_rows > 1 {
+            let cap = display_rows - 1;
+            if history.len() > cap { let drop = history.len() - cap; history.drain(0..drop); }
+        } else {
+            history.clear();
+        }
+
         grid.step();
     }
 
