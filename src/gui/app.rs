@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cella_lib::*;
 use egui::{Color32, Context, Key};
+use egui::scroll_area::ScrollSource;
 use egui_plot::{Plot, Line, PlotPoints, Legend};
 use rfd::FileDialog;
 
@@ -151,7 +152,7 @@ pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
     eframe::run_native(
         "Cella GUI",
         options,
-        Box::new(|cc| Box::new(CellaApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(CellaApp::new(cc)))),
     )
 }
 
@@ -415,7 +416,8 @@ impl CellaApp {
                 let w = g.width.max(1);
                 let total_rows = self.history_1d.len() + 1; // history + current
                 let visible_rows = total_rows.max(self.min_view_rows_1d.max(1));
-                let mut img = egui::ColorImage::new([w * self.scale, visible_rows * self.scale], self.inactive_color());
+                let size = [w * self.scale, visible_rows * self.scale];
+                let mut img = egui::ColorImage::new(size, vec![self.inactive_color(); size[0] * size[1]]);
                 // draw history rows
                 for (row_i, row) in self.history_1d.iter().enumerate() {
                     let ww = w.min(row.len());
@@ -460,7 +462,8 @@ impl CellaApp {
                 let g = self.d2.as_ref()?;
                 let w = g.width.max(1);
                 let h = g.height.max(1);
-                let mut img = egui::ColorImage::new([w * self.scale, h * self.scale], self.inactive_color());
+                let size = [w * self.scale, h * self.scale];
+                let mut img = egui::ColorImage::new(size, vec![self.inactive_color(); size[0] * size[1]]);
                 for y in 0..h {
                     for x in 0..w {
                         let idx = y * w + x;
@@ -500,10 +503,10 @@ impl CellaApp {
                 if self.playing { self.set_status("Playing"); } else { self.set_status("Paused"); }
             }
             if ui.button("Step").clicked() { self.step_once(); self.set_status(format!("Stepped to {}", self.current_step())); }
-            ui.add(egui::DragValue::new(&mut self.refresh_ms).clamp_range(10..=2000).suffix(" ms"));
+            ui.add(egui::DragValue::new(&mut self.refresh_ms).range(10..=2000).suffix(" ms"));
             ui.label("Refresh");
             ui.separator();
-            ui.add(egui::DragValue::new(&mut self.run_to_steps).clamp_range(1..=1_000_000).suffix(" steps"));
+            ui.add(egui::DragValue::new(&mut self.run_to_steps).range(1..=1_000_000).suffix(" steps"));
             if ui.button("Run to +N").clicked() {
                 let target = self.current_step().saturating_add(self.run_to_steps);
                 self.run_to_target = Some(target);
@@ -511,7 +514,7 @@ impl CellaApp {
                 self.set_status(format!("Running to {}", target));
             }
             ui.separator();
-            ui.add(egui::DragValue::new(&mut self.scale).clamp_range(1..=32).suffix(" px"));
+            ui.add(egui::DragValue::new(&mut self.scale).range(1..=32).suffix(" px"));
             ui.label("Scale");
             ui.separator();
             let exporting = self.export_join.is_some();
@@ -543,7 +546,7 @@ impl CellaApp {
                 ui.label("code:");
                 ui.text_edit_singleline(&mut self.custom_code_input);
                 ui.label("n:");
-                ui.add(egui::DragValue::new(&mut self.custom_n).clamp_range(1..=8));
+                ui.add(egui::DragValue::new(&mut self.custom_n).range(1..=8));
                 if ui.button("Build").clicked() { self.load_demo_1d_custom_from_inputs(); }
             });
             ui.separator();
@@ -554,7 +557,7 @@ impl CellaApp {
             });
             ui.horizontal(|ui| {
                 ui.label("1D history limit:");
-                ui.add(egui::DragValue::new(&mut self.history_limit_1d).clamp_range(1..=10_000));
+                ui.add(egui::DragValue::new(&mut self.history_limit_1d).range(1..=10_000));
             });
             ui.separator();
             // Rule editor moved to the right panel; see right-side Rule Editor panel.
@@ -603,7 +606,7 @@ impl CellaApp {
                             let mut move_up_idx: Option<usize> = None;
                             let mut move_down_idx: Option<usize> = None;
                             ui.set_min_height(240.0);
-                            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
                                 for i in 0..edit.subrules.len() {
                                 ui.group(|ui| {
                                     ui.horizontal(|ui| {
@@ -617,7 +620,7 @@ impl CellaApp {
                                         ui.label("current:")
                                             .on_hover_text("Center cell must currently be this state for the subrule to apply.");
                                         let mut sel = sub.current.clone();
-                                        egui::ComboBox::from_id_source(format!("d1_cur_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d1_cur_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| {
                                                 for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
@@ -629,7 +632,7 @@ impl CellaApp {
                                         ui.label("criteria:")
                                             .on_hover_text("Neighbor cells equal to this state are treated as 1s in the Wolfram pattern; others are 0s.");
                                         let mut sel = sub.criteria.clone();
-                                        egui::ComboBox::from_id_source(format!("d1_crit_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d1_crit_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| {
                                                 for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
@@ -641,7 +644,7 @@ impl CellaApp {
                                         ui.label("output:")
                                             .on_hover_text("The new state to set when this subrule matches.");
                                         let mut sel = sub.output.clone();
-                                        egui::ComboBox::from_id_source(format!("d1_out_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d1_out_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| {
                                                 for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); }
@@ -656,7 +659,7 @@ impl CellaApp {
                                             .on_hover_text("Enter a non-negative integer (u128). For n=1 there are 2^(3)=8 patterns; for larger n the number grows quickly.");
                                         ui.label("n:")
                                             .on_hover_text("Neighborhood radius (>=1). The window size is 2n+1 around the center cell.");
-                                        ui.add(egui::DragValue::new(&mut sub.n).clamp_range(1..=8))
+                                        ui.add(egui::DragValue::new(&mut sub.n).range(1..=8))
                                             .on_hover_text("Radius n between 1 and 8.");
                                     });
                                     ui.horizontal(|ui| {
@@ -705,7 +708,7 @@ impl CellaApp {
                             let mut move_up_idx: Option<usize> = None;
                             let mut move_down_idx: Option<usize> = None;
                             ui.set_min_height(240.0);
-                            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
                                 for i in 0..edit.subrules.len() {
                                 ui.group(|ui| {
                                     ui.horizontal(|ui| {
@@ -719,7 +722,7 @@ impl CellaApp {
                                         ui.label("current:")
                                             .on_hover_text("Center cell must currently be this state for the subrule to apply.");
                                         let mut sel = sub.current.clone();
-                                        egui::ComboBox::from_id_source(format!("d2_cur_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d2_cur_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
                                         if sel != sub.current { sub.current = sel; }
@@ -729,7 +732,7 @@ impl CellaApp {
                                         ui.label("criteria:")
                                             .on_hover_text("Neighbor cells of this state are counted within the chosen neighborhood.");
                                         let mut sel = sub.criteria.clone();
-                                        egui::ComboBox::from_id_source(format!("d2_crit_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d2_crit_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
                                         if sel != sub.criteria { sub.criteria = sel; }
@@ -739,7 +742,7 @@ impl CellaApp {
                                         ui.label("output:")
                                             .on_hover_text("The new state to set when this subrule matches.");
                                         let mut sel = sub.output.clone();
-                                        egui::ComboBox::from_id_source(format!("d2_out_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d2_out_{}", i))
                                             .selected_text(sel.clone())
                                             .show_ui(ui, |ui| { for n in &ty_names { ui.selectable_value(&mut sel, n.clone(), n); } });
                                         if sel != sub.output { sub.output = sel; }
@@ -748,12 +751,12 @@ impl CellaApp {
                                     ui.horizontal(|ui| {
                                         ui.label("count:")
                                             .on_hover_text("Baseline neighbor count for comparison. See 'op' for how it is used.");
-                                        ui.add(egui::DragValue::new(&mut sub.count).clamp_range(0..=99))
+                                        ui.add(egui::DragValue::new(&mut sub.count).range(0..=99))
                                             .on_hover_text("Set the baseline count between 0 and 99.");
                                         ui.label("op:")
                                             .on_hover_text("Comparison: gt means >= count, lt means <= count, eq means exactly count. With a limit, you can specify a range.");
                                         let mut op = sub.op; 
-                                        egui::ComboBox::from_id_source(format!("d2_op_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d2_op_{}", i))
                                             .selected_text(match op { CountOp::Lt=>"lt", CountOp::Gt=>"gt", CountOp::Eq=>"eq" })
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut op, CountOp::Lt, "lt");
@@ -766,14 +769,14 @@ impl CellaApp {
                                         ui.checkbox(&mut sub.limit_enabled, "limit")
                                             .on_hover_text("Optional second bound to create a range: with op=gt, checks count in [count..=limit]; with op=lt, checks count in [limit..=count].");
                                         if sub.limit_enabled { 
-                                            ui.add(egui::DragValue::new(&mut sub.limit_value).clamp_range(0..=99))
+                                            ui.add(egui::DragValue::new(&mut sub.limit_value).range(0..=99))
                                                 .on_hover_text("Inclusive bound for the range comparison."); 
                                         }
                                     });
                                     ui.horizontal(|ui| {
                                         ui.label("range n:")
                                             .on_hover_text("Neighborhood range (>=1). The square window is (2n+1)^2, filtered by the chosen neighborhood type.");
-                                        ui.add(egui::DragValue::new(&mut sub.range).clamp_range(1..=8))
+                                        ui.add(egui::DragValue::new(&mut sub.range).range(1..=8))
                                             .on_hover_text("Set range n between 1 and 8.");
                                         ui.label("neighborhood:")
                                             .on_hover_ui(|ui| {
@@ -785,7 +788,7 @@ impl CellaApp {
                                                 ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals; StraightLine = cardinal lines only");
                                             });
                                         let mut nb = sub.neighborhood;
-                                        egui::ComboBox::from_id_source(format!("d2_nh_{}", i))
+                                        egui::ComboBox::from_id_salt(format!("d2_nh_{}", i))
                                             .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon", Neighborhood2D::StraightLine=>"StraightLine" })
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Moore, "Moore");
@@ -1268,7 +1271,7 @@ impl CellaApp {
                         if list.is_empty() { continue; }
                         let pts: PlotPoints = list.iter().map(|(s, v)| [*s as f64, *v as f64]).collect::<Vec<_>>().into();
                         let color = self.color_of(&CellType(n.clone()));
-                        let line = Line::new(pts).name(n.clone()).color(color);
+                        let line = Line::new(n.clone(), pts).color(color);
                         plot_ui.line(line);
                     }
                 }
@@ -1353,11 +1356,11 @@ impl eframe::App for CellaApp {
                 ui.separator();
                 ui.collapsing("Export", |ui| {
                     ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.export_steps).clamp_range(1..=10_000));
+                        ui.add(egui::DragValue::new(&mut self.export_steps).range(1..=10_000));
                         ui.label("steps");
                     });
                     ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.export_fps).clamp_range(1..=60));
+                        ui.add(egui::DragValue::new(&mut self.export_fps).range(1..=60));
                         ui.label("fps");
                     });
                     ui.collapsing("Options", |ui| {
@@ -1424,7 +1427,13 @@ impl eframe::App for CellaApp {
                     }
                 });
             }
-            egui::ScrollArea::both().drag_to_scroll(false).show(ui, |ui| {
+            egui::ScrollArea::both()
+                .scroll_source(ScrollSource {
+                    drag: false,
+                    scroll_bar: true,
+                    mouse_wheel: true,
+                })
+                .show(ui, |ui| {
                 if let Some(img) = self.render_image(ctx) {
                     let tex = ui.ctx().load_texture(
                         "grid_tex",

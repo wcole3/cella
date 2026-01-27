@@ -107,7 +107,7 @@ pub fn demo_life() {
 }
 
 pub fn demo_2d_three_state_cycle() {
-    let a = CellType("A".into());
+    let _a = CellType("A".into());
     let mut g = build_2d_three_state_cycle(24, 12, 3);
     let steps = ask_steps(8);
     println!("Initial:");
@@ -149,7 +149,7 @@ pub fn demo_from_config() {
                 }
                 CellaConfig::D2(_) => {
                     if let Some(mut g) = cfg.build_grid2d() {
-                        let active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
+                        let _active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType("Alive".into()));
                         let steps = ask_steps(10);
                         print_grid_2d(&g);
                         for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }

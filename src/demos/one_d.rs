@@ -122,9 +122,9 @@ pub fn demo_1d_custom() {
 }
 
 pub fn demo_1d_three_state_cycle() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let _a = CellType("A".into());
+    let _b = CellType("B".into());
+    let _c = CellType("C".into());
     let mut g = build_1d_three_state_cycle(39, 3);
     let steps = ask_steps(15);
     println!("Initial:");
