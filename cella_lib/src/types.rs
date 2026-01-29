@@ -28,6 +28,10 @@ impl CellType {
     /// use cella_lib::{CellType, INACTIVE};
     /// let t = CellType::inactive();
     /// assert_eq!(t.0, INACTIVE);
+    ///
+    /// let t2 = CellType("testType".into());
+    /// assert_ne!(t, t2);
+    /// assert_eq!(t2.0, String::from("testType"));
     /// ```
     pub fn inactive() -> Self { CellType(INACTIVE.to_string()) }
 }
