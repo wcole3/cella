@@ -28,6 +28,7 @@
 
 use cella_lib::*;
 use cella_lib::threads::{set_thread_override, clear_thread_override, thread_count};
+use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -96,6 +97,7 @@ fn assert_snapshot(name: &str, value: u64) {
 
 // -------- Benchmark storage --------
 static BENCH_DATA: OnceLock<Mutex<Vec<(String, u128)>>> = OnceLock::new();
+const BENCH_RUNS: usize = 10;
 fn bench_store() -> &'static Mutex<Vec<(String, u128)>> {
     BENCH_DATA.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -106,6 +108,36 @@ fn record_bench(name: &str, ms: u128) {
     v.push((full.clone(), ms));
     if std::env::var("CELLA_BENCH").ok().as_deref() == Some("1") {
         println!("[bench] {:>28}: {} ms", full, ms);
+    }
+}
+
+fn run_benchmark_2d(name: &str, g_initial: &Grid2D, steps: usize) {
+    for i in 0..BENCH_RUNS {
+        let mut g = g_initial.clone();
+        let t0 = Instant::now();
+        for _ in 0..steps { g.step(); }
+        let elapsed = t0.elapsed().as_millis();
+        record_bench(name, elapsed);
+        if i == 0 {
+            if ascii_enabled() { print_ascii_2d(&format!("{}: final", name), &g); }
+            let hash = hash_grid2d_state(&g);
+            assert_snapshot(name, hash);
+        }
+    }
+}
+
+fn run_benchmark_1d(name: &str, g_initial: &Grid1D, steps: usize) {
+    for i in 0..BENCH_RUNS {
+        let mut g = g_initial.clone();
+        let t0 = Instant::now();
+        for _ in 0..steps { g.step(); }
+        let elapsed = t0.elapsed().as_millis();
+        record_bench(name, elapsed);
+        if i == 0 {
+            if ascii_enabled() { print_ascii_1d(&format!("{}: final", name), &g); }
+            let hash = hash_grid1d_state(&g);
+            assert_snapshot(name, hash);
+        }
     }
 }
 
@@ -213,15 +245,9 @@ fn stress_2d_life_like_moore() {
     // seed: glider-like shape
     let mut set = |x: usize, y: usize| init[y*w + x] = alive.clone();
     set(1,0); set(2,1); set(0,2); set(1,2); set(2,2);
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_life_like_moore: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..300 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_life_like_moore: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_life_like_moore", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_life_like_moore", hash);
+    run_benchmark_2d("2d_life_like_moore", &g, 300);
 }
 
 fn stress_2d_von_neumann_threshold() {
@@ -235,15 +261,9 @@ fn stress_2d_von_neumann_threshold() {
     let mut init = vec![a.clone(); w*h];
     // random-ish seed (deterministic pattern)
     for y in 0..h { for x in 0..w { if (x ^ y) % 7 == 0 { init[y*w + x] = b.clone(); } } }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_vonneumann_threshold: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..200 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_vonneumann_threshold: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_vonneumann_threshold", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_vonneumann_threshold", hash);
+    run_benchmark_2d("2d_vonneumann_threshold", &g, 200);
 }
 
 fn stress_2d_straightline_threshold() {
@@ -256,15 +276,9 @@ fn stress_2d_straightline_threshold() {
     let (w,h,hist) = (64usize, 32usize, 3usize);
     let mut init = vec![a.clone(); w*h];
     for y in 0..h { for x in 0..w { if (x * 13 + y * 7) % 17 == 0 { init[y*w + x] = b.clone(); } } }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_straightline_threshold: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..200 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_straightline_threshold: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_straightline_threshold", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_straightline_threshold", hash);
+    run_benchmark_2d("2d_straightline_threshold", &g, 200);
 }
 
 fn stress_2d_langdon_diagonals() {
@@ -276,15 +290,9 @@ fn stress_2d_langdon_diagonals() {
     let (w,h,hist) = (48usize, 48usize, 2usize);
     let mut init = vec![a.clone(); w*h];
     for i in 0..w.min(h) { init[i*w + i] = b.clone(); }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..180 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_langdon_diagonals", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_langdon_diagonals", hash);
+    run_benchmark_2d("2d_langdon_diagonals", &g, 180);
 }
 
 fn stress_1d_rule30_center_seed() {
@@ -296,15 +304,9 @@ fn stress_1d_rule30_center_seed() {
     let w = 257usize; let hist = 4usize;
     let mut init = vec![CellType::inactive(); w];
     init[w/2] = x.clone();
-    let mut g = Grid1D::new(w, hist, init, rule);
+    let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_rule30_center: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..500 { g.step(); }
-    if ascii_enabled() { print_ascii_1d("1d_rule30_center: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("1d_rule30_center", elapsed);
-    let hash = hash_grid1d_state(&g);
-    assert_snapshot("1d_rule30_center", hash);
+    run_benchmark_1d("1d_rule30_center", &g, 500);
 }
 
 fn stress_1d_n2_alternating_code() {
@@ -317,15 +319,9 @@ fn stress_1d_n2_alternating_code() {
     let w = 301usize; let hist = 3usize;
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
-    let mut g = Grid1D::new(w, hist, init, rule);
+    let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_n2_alt: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..400 { g.step(); }
-    if ascii_enabled() { print_ascii_1d("1d_n2_alt: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("1d_n2_alt", elapsed);
-    let hash = hash_grid1d_state(&g);
-    assert_snapshot("1d_n2_alt", hash);
+    run_benchmark_1d("1d_n2_alt", &g, 400);
 }
 
 fn stress_1d_n3_custom_code() {
@@ -339,15 +335,9 @@ fn stress_1d_n3_custom_code() {
     let w = 257usize; let hist = 2usize;
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
-    let mut g = Grid1D::new(w, hist, init, rule);
+    let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_n3_custom: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..350 { g.step(); }
-    if ascii_enabled() { print_ascii_1d("1d_n3_custom: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("1d_n3_custom", elapsed);
-    let hash = hash_grid1d_state(&g);
-    assert_snapshot("1d_n3_custom", hash);
+    run_benchmark_1d("1d_n3_custom", &g, 350);
 }
 
 // -------- Larger stress tests to exercise multithreading --------
@@ -364,15 +354,9 @@ fn stress_1d_three_state_cycle() {
     ]};
     let w = 1024usize; let hist = 3usize;
     let init = (0..w).map(|i| match i % 3 { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }).collect::<Vec<_>>();
-    let mut g = Grid1D::new(w, hist, init, rule);
+    let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_three_state_cycle: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..800 { g.step(); }
-    if ascii_enabled() { print_ascii_1d("1d_three_state_cycle: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("1d_three_state_cycle", elapsed);
-    let hash = hash_grid1d_state(&g);
-    assert_snapshot("1d_three_state_cycle", hash);
+    run_benchmark_1d("1d_three_state_cycle", &g, 800);
 }
 
 fn stress_2d_three_state_cycle() {
@@ -387,15 +371,9 @@ fn stress_2d_three_state_cycle() {
     let (w,h,hist) = (192usize, 128usize, 3usize);
     let mut init = Vec::with_capacity(w*h);
     for y in 0..h { for x in 0..w { let idx = (x + y) % 3; init.push(match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }); } }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_three_state_cycle: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..240 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_three_state_cycle: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_three_state_cycle", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_three_state_cycle", hash);
+    run_benchmark_2d("2d_three_state_cycle", &g, 240);
 }
 
 // -------- Larger stress tests to exercise multithreading --------
@@ -424,15 +402,9 @@ fn stress_2d_large_moore_256() {
             set(k+2, k+2, &mut init);
         }
     }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_large_moore_256: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..200 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_large_moore_256: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_large_moore_256", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_large_moore_256", hash);
+    run_benchmark_2d("2d_large_moore_256", &g, 200);
 }
 
 fn stress_2d_large_vn_256() {
@@ -445,15 +417,9 @@ fn stress_2d_large_vn_256() {
     let (w,h,hist) = (256usize, 256usize, 3usize);
     let mut init = vec![a.clone(); w*h];
     for y in 0..h { for x in 0..w { if (x*3 + y*5) % 11 == 0 { init[y*w + x] = b.clone(); } } }
-    let mut g = Grid2D::new(w,h,hist,init,rule);
+    let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_large_vn_256: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..160 { g.step(); }
-    if ascii_enabled() { print_ascii_2d("2d_large_vn_256: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("2d_large_vn_256", elapsed);
-    let hash = hash_grid2d_state(&g);
-    assert_snapshot("2d_large_vn_256", hash);
+    run_benchmark_2d("2d_large_vn_256", &g, 160);
 }
 
 fn stress_1d_large_rule30_2049() {
@@ -465,15 +431,9 @@ fn stress_1d_large_rule30_2049() {
     let w = 2049usize; let hist = 4usize;
     let mut init = vec![inactive.clone(); w];
     init[w/2] = x.clone();
-    let mut g = Grid1D::new(w, hist, init, rule);
+    let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_large_rule30_2049: initial", &g); }
-    let t0 = Instant::now();
-    for _ in 0..1200 { g.step(); }
-    if ascii_enabled() { print_ascii_1d("1d_large_rule30_2049: final", &g); }
-    let elapsed = t0.elapsed().as_millis();
-    record_bench("1d_large_rule30_2049", elapsed);
-    let hash = hash_grid1d_state(&g);
-    assert_snapshot("1d_large_rule30_2049", hash);
+    run_benchmark_1d("1d_large_rule30_2049", &g, 1200);
 }
 
 // Final summary printer (likely last if run with --test-threads=1)
@@ -485,35 +445,60 @@ fn zzz_benchmark_summary() {
         println!("[bench] No benchmarks recorded. Did you run with --ignored?");
         return;
     }
-    // Build current map
-    let mut current: HashMap<String, u128> = HashMap::new();
-    for (name, ms) in data.iter() { current.insert(name.clone(), *ms); }
+    // Group by name
+    let mut groups: HashMap<String, Vec<u128>> = HashMap::new();
+    for (name, ms) in data.iter() {
+        groups.entry(name.clone()).or_default().push(*ms);
+    }
+
     // Load previous results if any
     let prev = load_previous_benchmarks();
 
-    println!("\n[bench] Summary ({} entries):", data.len());
-    let mut total: u128 = 0;
-    let mut entries = data.clone();
-    entries.sort_by(|a,b| a.0.cmp(&b.0));
-    for (name, ms) in entries {
-        total += ms;
+    println!("\n[bench] Summary ({} runs for {} tests):", data.len(), groups.len());
+    let mut total_avg: f64 = 0.0;
+    let mut current_stats: HashMap<String, BenchStats> = HashMap::new();
+    
+    let mut names: Vec<_> = groups.keys().cloned().collect();
+    names.sort();
+
+    for name in names {
+        let times = &groups[&name];
+        let n = times.len() as f64;
+        let sum: u128 = times.iter().sum();
+        let avg = sum as f64 / n;
+        
+        let variance = if n > 1.0 {
+            times.iter().map(|&t| {
+                let diff = t as f64 - avg;
+                diff * diff
+            }).sum::<f64>() / n
+        } else {
+            0.0
+        };
+        let std_dev = variance.sqrt();
+        let stats = BenchStats { avg, std_dev };
+        current_stats.insert(name.clone(), stats.clone());
+        total_avg += avg;
+
         if let Some(old) = prev.get(&name) {
-            if *old > 0 {
-                let diff = ms as i128 - *old as i128;
-                let pct = (diff as f64) * 100.0 / (*old as f64);
-                let sign = if diff >= 0 { "+" } else { "" };
-                println!("[bench] {:>28}: {} ms (Δ {}{} ms, {:+.2}%)", name, ms, sign, diff, pct);
+            if old.avg > 0.0 {
+                let diff = avg - old.avg;
+                let pct = (diff * 100.0) / old.avg;
+                let sign = if diff >= 0.0 { "+" } else { "" };
+                println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (Δ {}{:7.2} ms, {:+.2}%)", 
+                         name, avg, std_dev, sign, diff, pct);
             } else {
-                println!("[bench] {:>28}: {} ms (Δ n/a)", name, ms);
+                println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (Δ n/a)", name, avg, std_dev);
             }
         } else {
-            println!("[bench] {:>28}: {} ms (new)", name, ms);
+            println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (new)", name, avg, std_dev);
         }
     }
-    println!("[bench] {:>28}: {} ms (sum)", "TOTAL", total);
+    println!("[bench] {:>28}: {:7.2} ms (sum of averages)", "TOTAL", total_avg);
+
     let update = std::env::var("CELLA_UPDATE_BENCH").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
     if update {
-        if let Err(e) = save_current_benchmarks(&current) {
+        if let Err(e) = save_current_benchmarks(&current_stats) {
             eprintln!("[bench] Failed to save benchmarks: {}", e);
         } else {
             println!("[bench] Saved current timings to {}", benchmarks_file().display());
@@ -646,22 +631,36 @@ fn stress_2d_three_state_cycle_t4() { set_thread_override(4); stress_2d_three_st
 fn stress_2d_three_state_cycle_t8() { set_thread_override(8); stress_2d_three_state_cycle(); clear_thread_override(); }
 
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct BenchStats {
+    avg: f64,
+    std_dev: f64,
+}
+
 // -------- Benchmark persistence helpers --------
 fn benchmarks_file() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("benchmarks_last.json")
 }
 
-fn load_previous_benchmarks() -> HashMap<String, u128> {
+fn load_previous_benchmarks() -> HashMap<String, BenchStats> {
     let path = benchmarks_file();
     if let Ok(s) = fs::read_to_string(&path) {
-        if let Ok(map) = serde_json::from_str::<HashMap<String, u128>>(&s) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, BenchStats>>(&s) {
             return map;
+        }
+        // Fallback to old format
+        if let Ok(map) = serde_json::from_str::<HashMap<String, u128>>(&s) {
+            let mut fallback = HashMap::new();
+            for (name, ms) in map {
+                fallback.insert(name, BenchStats { avg: ms as f64, std_dev: 0.0 });
+            }
+            return fallback;
         }
     }
     HashMap::new()
 }
 
-fn save_current_benchmarks(map: &HashMap<String, u128>) -> Result<(), Box<dyn std::error::Error>> {
+fn save_current_benchmarks(map: &HashMap<String, BenchStats>) -> Result<(), Box<dyn std::error::Error>> {
     let s = serde_json::to_string_pretty(map)?;
     if let Some(parent) = benchmarks_file().parent() { let _ = fs::create_dir_all(parent); }
     fs::write(benchmarks_file(), s)?;

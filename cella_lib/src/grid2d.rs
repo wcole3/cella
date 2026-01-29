@@ -1,4 +1,6 @@
 //! 2D grid implementation.
+use std::sync::Arc;
+use threadpool::ThreadPool;
 use serde::{Deserialize, Serialize};
 use crate::types::{CellState, CellType};
 use crate::rules::Rule2D;
@@ -31,7 +33,7 @@ use crate::threads::thread_count;
 /// g.step();
 /// assert!(g.step >= 1);
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Grid2D {
     /// Grid width in cells.
     pub width: usize,
@@ -49,6 +51,24 @@ pub struct Grid2D {
     pub counts_current: std::collections::HashMap<String, u64>,
     /// Peak (max-so-far) count of cells per type name since start/reset.
     pub peak_counts: std::collections::HashMap<String, u64>,
+    /// Cached thread pool for parallel stepping.
+    #[serde(skip)]
+    pub pool: Option<Arc<ThreadPool>>,
+}
+
+impl std::fmt::Debug for Grid2D {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Grid2D")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("history_limit", &self.history_limit)
+            .field("cells", &self.cells)
+            .field("step", &self.step)
+            .field("rule", &self.rule)
+            .field("counts_current", &self.counts_current)
+            .field("peak_counts", &self.peak_counts)
+            .finish()
+    }
 }
 
 impl Grid2D {
@@ -61,7 +81,9 @@ impl Grid2D {
         let mut counts_current: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
         for c in &cells { *counts_current.entry(c.current.0.clone()).or_insert(0) += 1; }
         let peak_counts = counts_current.clone();
-        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts }
+        let threads = thread_count();
+        let pool = if threads > 1 { Some(Arc::new(ThreadPool::new(threads))) } else { None };
+        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts, pool }
     }
 
     fn idx(&self, x: isize, y: isize) -> Option<usize> {
@@ -91,7 +113,13 @@ impl Grid2D {
         let mut next = self.cells.clone();
         let threads = thread_count();
         let total = self.width * self.height;
-        if threads <= 1 || total < 4096 {
+
+        // Ensure pool exists if we want to go parallel
+        if threads > 1 && self.pool.is_none() {
+            self.pool = Some(Arc::new(ThreadPool::new(threads)));
+        }
+
+        if threads <= 1 || total < 4096 || self.pool.is_none() {
             for y in 0..self.height {
                 for x in 0..self.width {
                     let i = y * self.width + x;
@@ -116,20 +144,25 @@ impl Grid2D {
             self.step = self.step.saturating_add(1);
             return;
         }
-        // Parallel path: snapshot, compute outputs per linear index in chunks
-        let snapshot = self.cells.clone();
-        let rule = self.rule.clone();
+
+        // Parallel path using cached thread pool
+        let pool = self.pool.as_ref().unwrap();
+        let snapshot = Arc::new(self.cells.clone());
+        let rule = Arc::new(self.rule.clone());
         let width = self.width;
         let height = self.height;
         let chunk = (total + threads - 1) / threads;
-        let mut handles = Vec::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+
         for t in 0..threads {
             let start = t * chunk;
             if start >= total { break; }
             let end = ((t + 1) * chunk).min(total);
+            let tx = tx.clone();
             let snapshot_t = snapshot.clone();
             let rule_t = rule.clone();
-            handles.push(std::thread::spawn(move || {
+
+            pool.execute(move || {
                 let mut out: Vec<(usize, CellType)> = Vec::with_capacity(end - start);
                 for idx in start..end {
                     let y = idx / width;
@@ -152,10 +185,16 @@ impl Grid2D {
                     let new_type = decided.unwrap_or_else(CellType::inactive);
                     out.push((idx, new_type));
                 }
-                out
-            }));
+                let _ = tx.send(out);
+            });
         }
-        for h in handles { for (idx, ty) in h.join().expect("thread join") { next[idx].transition(&ty); } }
+        drop(tx);
+        for received in rx {
+            for (idx, ty) in received {
+                next[idx].transition(&ty);
+            }
+        }
+
         // Update counts and peaks
         let counts = Self::recompute_counts_from_cells(&next);
         self.counts_current = counts.clone();

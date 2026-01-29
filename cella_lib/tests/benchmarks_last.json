@@ -1,38 +1,146 @@
 {
-  "1d_n3_custom_t8": 409,
-  "2d_large_moore_256_t8": 29816,
-  "1d_rule30_center_t8": 813,
-  "2d_straightline_threshold_t4": 452,
-  "2d_three_state_cycle_t8": 32447,
-  "2d_vonneumann_threshold_t8": 602,
-  "2d_life_like_moore_t8": 1052,
-  "2d_vonneumann_threshold_t4": 587,
-  "1d_three_state_cycle_t4": 3111,
-  "1d_n3_custom_t1": 220,
-  "2d_large_vn_256_t1": 15200,
-  "2d_straightline_threshold_t8": 474,
-  "1d_n2_alt_t1": 268,
-  "1d_n3_custom_t4": 318,
-  "1d_n2_alt_t4": 359,
-  "1d_rule30_center_t4": 578,
-  "2d_langdon_diagonals_t4": 439,
-  "2d_langdon_diagonals_t1": 442,
-  "2d_langdon_diagonals_t8": 448,
-  "2d_large_moore_256_t1": 30358,
-  "2d_life_like_moore_t4": 1052,
-  "2d_vonneumann_threshold_t1": 600,
-  "1d_large_rule30_2049_t4": 7823,
-  "1d_three_state_cycle_t1": 1994,
-  "1d_large_rule30_2049_t1": 5332,
-  "2d_large_moore_256_t4": 24870,
-  "1d_rule30_center_t1": 291,
-  "1d_three_state_cycle_t8": 4329,
-  "2d_straightline_threshold_t1": 454,
-  "2d_three_state_cycle_t1": 18700,
-  "2d_three_state_cycle_t4": 23531,
-  "2d_large_vn_256_t8": 36810,
-  "1d_large_rule30_2049_t8": 10620,
-  "2d_life_like_moore_t1": 1062,
-  "2d_large_vn_256_t4": 26545,
-  "1d_n2_alt_t8": 580
+  "2d_vonneumann_threshold_t1": {
+    "avg": 332.1,
+    "std_dev": 3.9102429592034302
+  },
+  "2d_langdon_diagonals_t1": {
+    "avg": 251.9,
+    "std_dev": 3.3896902513356584
+  },
+  "1d_n2_alt_t8": {
+    "avg": 406.5,
+    "std_dev": 5.886425061104575
+  },
+  "1d_n3_custom_t8": {
+    "avg": 349.8,
+    "std_dev": 5.81033561853358
+  },
+  "2d_straightline_threshold_t8": {
+    "avg": 248.8,
+    "std_dev": 3.487119154832538
+  },
+  "2d_vonneumann_threshold_t4": {
+    "avg": 333.8,
+    "std_dev": 5.1146847410177685
+  },
+  "1d_three_state_cycle_t8": {
+    "avg": 2816.2,
+    "std_dev": 38.991794008483375
+  },
+  "2d_large_moore_256_t1": {
+    "avg": 29573.0,
+    "std_dev": 9901.365723979698
+  },
+  "2d_straightline_threshold_t4": {
+    "avg": 250.9,
+    "std_dev": 1.9723082923316018
+  },
+  "1d_n3_custom_t1": {
+    "avg": 132.9,
+    "std_dev": 3.8065732621348563
+  },
+  "1d_n2_alt_t4": {
+    "avg": 270.6,
+    "std_dev": 6.199999999999998
+  },
+  "1d_n2_alt_t1": {
+    "avg": 148.6,
+    "std_dev": 2.576819745345025
+  },
+  "2d_langdon_diagonals_t4": {
+    "avg": 254.6,
+    "std_dev": 3.9293765408777004
+  },
+  "2d_large_moore_256_t8": {
+    "avg": 17587.5,
+    "std_dev": 180.97195915389764
+  },
+  "1d_large_rule30_2049_t4": {
+    "avg": 4755.7,
+    "std_dev": 91.58280406277152
+  },
+  "1d_rule30_center_t4": {
+    "avg": 439.0,
+    "std_dev": 7.0992957397195395
+  },
+  "2d_life_like_moore_t4": {
+    "avg": 577.7,
+    "std_dev": 8.075270893288968
+  },
+  "2d_three_state_cycle_t4": {
+    "avg": 12524.9,
+    "std_dev": 159.32824608336088
+  },
+  "2d_vonneumann_threshold_t8": {
+    "avg": 334.6,
+    "std_dev": 6.740919818541086
+  },
+  "2d_life_like_moore_t8": {
+    "avg": 575.0,
+    "std_dev": 4.795831523312719
+  },
+  "1d_rule30_center_t1": {
+    "avg": 174.8,
+    "std_dev": 4.377213725647858
+  },
+  "1d_three_state_cycle_t1": {
+    "avg": 1199.7,
+    "std_dev": 42.86735354555959
+  },
+  "2d_large_vn_256_t1": {
+    "avg": 8394.7,
+    "std_dev": 49.60453608290274
+  },
+  "2d_straightline_threshold_t1": {
+    "avg": 248.1,
+    "std_dev": 5.281098370604357
+  },
+  "2d_langdon_diagonals_t8": {
+    "avg": 250.7,
+    "std_dev": 1.4866068747318506
+  },
+  "2d_three_state_cycle_t8": {
+    "avg": 17242.3,
+    "std_dev": 90.69955898459484
+  },
+  "2d_large_moore_256_t4": {
+    "avg": 18195.5,
+    "std_dev": 5093.991602859196
+  },
+  "1d_rule30_center_t8": {
+    "avg": 688.9,
+    "std_dev": 14.522052196573322
+  },
+  "1d_three_state_cycle_t4": {
+    "avg": 1950.7,
+    "std_dev": 57.00008771923075
+  },
+  "2d_large_vn_256_t4": {
+    "avg": 14647.8,
+    "std_dev": 129.39845439571522
+  },
+  "2d_life_like_moore_t1": {
+    "avg": 576.1,
+    "std_dev": 6.155485358604957
+  },
+  "2d_large_vn_256_t8": {
+    "avg": 20188.7,
+    "std_dev": 180.25207349708907
+  },
+  "1d_large_rule30_2049_t1": {
+    "avg": 3913.4,
+    "std_dev": 1508.6735365876873
+  },
+  "2d_three_state_cycle_t1": {
+    "avg": 9824.0,
+    "std_dev": 48.33425286481627
+  },
+  "1d_large_rule30_2049_t8": {
+    "avg": 6579.4,
+    "std_dev": 103.56176900767966
+  },
+  "1d_n3_custom_t4": {
+    "avg": 232.9,
+    "std_dev": 4.011234224026316
+  }
 }

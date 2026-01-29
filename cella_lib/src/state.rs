@@ -1,9 +1,12 @@
 //! Grid state snapshots and (de)serialization helpers.
+use std::sync::Arc;
+use threadpool::ThreadPool;
 use serde::{Deserialize, Serialize};
 use crate::types::CellState;
 use crate::rules::{Rule1D, Rule2D};
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
+use crate::threads::thread_count;
 
 /// Serializable snapshot of either a 1D or 2D grid.
 ///
@@ -83,7 +86,9 @@ impl Grid1D {
                 }
                 let mut peaks = peak_counts.clone();
                 if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+                let threads = thread_count();
+                let pool = if threads > 1 { Some(Arc::new(ThreadPool::new(threads))) } else { None };
+                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks, pool })
             }
             _ => None,
         }
@@ -101,7 +106,9 @@ impl Grid2D {
                 }
                 let mut peaks = peak_counts.clone();
                 if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+                let threads = thread_count();
+                let pool = if threads > 1 { Some(Arc::new(ThreadPool::new(threads))) } else { None };
+                Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks, pool })
             }
             _ => None,
         }
