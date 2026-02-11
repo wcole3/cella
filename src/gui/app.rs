@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cella_lib::*;
-use egui::{Color32, Context, Key};
+use egui::{Color32, Context, Key, TextEdit};
 use egui::scroll_area::ScrollSource;
 use egui_plot::{Plot, Line, PlotPoints, Legend};
 use rfd::FileDialog;
@@ -532,7 +532,7 @@ impl CellaApp {
     /// Build dataset/scenario controls (load config/demos and related settings).
     fn ui_dataset_controls(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Load/Select Scenario", |ui| {
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 if ui.button("Load Config JSON...").clicked() { self.load_config_dialog(); }
                 if ui.button("Demo: Life (2D)").clicked() { self.load_demo_life(); }
                 if ui.button("Demo: 1D Rule 30").clicked() { self.load_demo_1d_rule30(); }
@@ -544,7 +544,8 @@ impl CellaApp {
             ui.label("Custom 1D (Wolfram code + n):");
             ui.horizontal(|ui| {
                 ui.label("code:");
-                ui.text_edit_singleline(&mut self.custom_code_input);
+                // text edit with a smaller area
+                ui.add_sized([20.0, 20.0], TextEdit::singleline(&mut self.custom_code_input));
                 ui.label("n:");
                 ui.add(egui::DragValue::new(&mut self.custom_n).range(1..=8));
                 if ui.button("Build").clicked() { self.load_demo_1d_custom_from_inputs(); }
