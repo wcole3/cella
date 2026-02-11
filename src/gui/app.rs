@@ -412,92 +412,134 @@ impl CellaApp {
         names.into_iter().map(CellType).collect()
     }
 
-    /// Render the grid into a ColorImage respecting user colors and grid overlay.
-    fn render_image(&mut self, _ctx: &Context) -> Option<egui::ColorImage> {
-        // populate color map for current types to avoid mutable borrow during render
-        let _ = self.collect_types();
-        match self.dim {
+    /// Paint the grid directly using egui's Painter API with viewport culling.
+    ///
+    /// Only cells visible in the current scroll viewport are drawn, which
+    /// eliminates the GPU texture-size limit that the old single-texture
+    /// approach hit on large grids and dramatically improves performance
+    /// because off-screen cells are skipped entirely.
+    fn paint_grid_viewport(&mut self, ui: &mut egui::Ui) -> Option<egui::Response> {
+        // Determine logical grid dimensions in cells
+        let (grid_w, grid_h) = match self.dim {
             Some(Dim::D1) => {
                 let g = self.d1.as_ref()?;
-                let w = g.width.max(1);
-                let total_rows = self.history_1d.len() + 1; // history + current
+                let total_rows = self.history_1d.len() + 1;
                 let visible_rows = total_rows.max(self.min_view_rows_1d.max(1));
-                let size = [w * self.scale, visible_rows * self.scale];
-                let mut img = egui::ColorImage::new(size, vec![self.inactive_color(); size[0] * size[1]]);
-                // draw history rows
-                for (row_i, row) in self.history_1d.iter().enumerate() {
-                    let ww = w.min(row.len());
-                    for x in 0..ww {
-                        let col = self.color_of(&row[x]);
-                        for dy in 0..self.scale {
-                            for dx in 0..self.scale {
-                                let px = x * self.scale + dx;
-                                let py = row_i * self.scale + dy;
-                                img[(px, py)] = col;
-                            }
-                        }
-                    }
-                }
-                // draw current row at y = history_len (leaving padding at bottom)
-                let current_y = self.history_1d.len();
-                for x in 0..w {
-                    let col = self.color_of(&g.cells[x].current);
-                    for dy in 0..self.scale {
-                        for dx in 0..self.scale {
-                            let px = x * self.scale + dx;
-                            let py = current_y * self.scale + dy;
-                            img[(px, py)] = col;
-                        }
-                    }
-                }
-                // overlay grid lines
-                if self.show_grid_lines {
-                    let width_px = w * self.scale;
-                    let height_px = visible_rows * self.scale;
-                    let gc = self.grid_line_color;
-                    for x in (0..width_px).step_by(self.scale) {
-                        for y in 0..height_px { img[(x, y)] = gc; }
-                    }
-                    for y in (0..height_px).step_by(self.scale) {
-                        for x in 0..width_px { img[(x, y)] = gc; }
-                    }
-                }
-                Some(img)
+                (g.width.max(1), visible_rows)
             }
             Some(Dim::D2) => {
                 let g = self.d2.as_ref()?;
-                let w = g.width.max(1);
-                let h = g.height.max(1);
-                let size = [w * self.scale, h * self.scale];
-                let mut img = egui::ColorImage::new(size, vec![self.inactive_color(); size[0] * size[1]]);
-                for y in 0..h {
-                    for x in 0..w {
-                        let idx = y * w + x;
-                        let col = self.color_of(&g.cells[idx].current);
-                        for dy in 0..self.scale {
-                            for dx in 0..self.scale {
-                                let px = x * self.scale + dx;
-                                let py = y * self.scale + dy;
-                                img[(px, py)] = col;
+                (g.width.max(1), g.height.max(1))
+            }
+            None => return None,
+        };
+
+        let scale = self.scale.max(1) as f32;
+        let total_size = egui::vec2(grid_w as f32 * scale, grid_h as f32 * scale);
+
+        // Allocate space for the full grid so the scroll area knows the content size
+        let (response, painter) = ui.allocate_painter(total_size, egui::Sense::click_and_drag());
+        let full_rect = response.rect;
+
+        // Determine visible region (clip rect intersected with allocated rect)
+        let clip = ui.clip_rect();
+        let visible = full_rect.intersect(clip);
+        if visible.width() <= 0.0 || visible.height() <= 0.0 {
+            return Some(response);
+        }
+
+        // Convert visible pixel range to cell range (with one cell margin for partial visibility)
+        let cell_x_start = ((visible.min.x - full_rect.min.x) / scale).floor().max(0.0) as usize;
+        let cell_y_start = ((visible.min.y - full_rect.min.y) / scale).floor().max(0.0) as usize;
+        let cell_x_end = ((visible.max.x - full_rect.min.x) / scale).ceil().min(grid_w as f32) as usize;
+        let cell_y_end = ((visible.max.y - full_rect.min.y) / scale).ceil().min(grid_h as f32) as usize;
+
+        // Populate color map for current types
+        let _ = self.collect_types();
+        let bg = self.inactive_color();
+
+        // Fill visible area with inactive background
+        painter.rect_filled(visible, 0.0, bg);
+
+        // Draw only visible cells
+        match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    let history_len = self.history_1d.len();
+                    // History rows
+                    for row_i in cell_y_start..cell_y_end.min(history_len) {
+                        let row = &self.history_1d[row_i];
+                        let row_w = row.len().min(g.width);
+                        for x in cell_x_start..cell_x_end.min(row_w) {
+                            let col = self.color_of(&row[x]);
+                            if col != bg {
+                                let rect = egui::Rect::from_min_size(
+                                    full_rect.min + egui::vec2(x as f32 * scale, row_i as f32 * scale),
+                                    egui::vec2(scale, scale),
+                                );
+                                painter.rect_filled(rect, 0.0, col);
+                            }
+                        }
+                    }
+                    // Current row at y = history_len
+                    if cell_y_end > history_len && cell_y_start <= history_len {
+                        for x in cell_x_start..cell_x_end.min(g.width) {
+                            let col = self.color_of(&g.cells[x].current);
+                            if col != bg {
+                                let rect = egui::Rect::from_min_size(
+                                    full_rect.min + egui::vec2(x as f32 * scale, history_len as f32 * scale),
+                                    egui::vec2(scale, scale),
+                                );
+                                painter.rect_filled(rect, 0.0, col);
                             }
                         }
                     }
                 }
-                if self.show_grid_lines {
-                    let width_px = w * self.scale;
-                    let height_px = h * self.scale;
-                    let gc = self.grid_line_color;
-                    for x in (0..width_px).step_by(self.scale) {
-                        for y in 0..height_px { img[(x, y)] = gc; }
-                    }
-                    for y in (0..height_px).step_by(self.scale) {
-                        for x in 0..width_px { img[(x, y)] = gc; }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    let w = g.width;
+                    for y in cell_y_start..cell_y_end.min(g.height) {
+                        for x in cell_x_start..cell_x_end.min(w) {
+                            let idx = y * w + x;
+                            let col = self.color_of(&g.cells[idx].current);
+                            if col != bg {
+                                let rect = egui::Rect::from_min_size(
+                                    full_rect.min + egui::vec2(x as f32 * scale, y as f32 * scale),
+                                    egui::vec2(scale, scale),
+                                );
+                                painter.rect_filled(rect, 0.0, col);
+                            }
+                        }
                     }
                 }
-                Some(img)
             }
-            None => None,
+            None => {}
         }
+
+        // Grid lines (only for visible cells; skip when scale < 3 as lines would dominate)
+        if self.show_grid_lines && scale >= 3.0 {
+            let gc = self.grid_line_color;
+            let stroke = egui::Stroke::new(1.0, gc);
+            // Vertical lines
+            for cx in cell_x_start..=cell_x_end.min(grid_w) {
+                let px = full_rect.min.x + cx as f32 * scale;
+                painter.line_segment(
+                    [egui::pos2(px, visible.min.y), egui::pos2(px, visible.max.y)],
+                    stroke,
+                );
+            }
+            // Horizontal lines
+            for cy in cell_y_start..=cell_y_end.min(grid_h) {
+                let py = full_rect.min.y + cy as f32 * scale;
+                painter.line_segment(
+                    [egui::pos2(visible.min.x, py), egui::pos2(visible.max.x, py)],
+                    stroke,
+                );
+            }
+        }
+
+        Some(response)
     }
 
     /// Build the top toolbar: play/pause, step, run-to, scale, export/save/reset.
@@ -1515,14 +1557,7 @@ impl eframe::App for CellaApp {
                     mouse_wheel: true,
                 })
                 .show(ui, |ui| {
-                if let Some(img) = self.render_image(ctx) {
-                    let tex = ui.ctx().load_texture(
-                        "grid_tex",
-                        egui::ImageData::Color(img.into()),
-                        egui::TextureOptions::NEAREST,
-                    );
-                    let size = tex.size_vec2();
-                    let response = ui.add(egui::Image::new(&tex).fit_to_exact_size(size).sense(egui::Sense::click_and_drag()));
+                if let Some(response) = self.paint_grid_viewport(ui) {
 
                     // Zoom with MouseWheel when hovered
                     if response.hovered() {
