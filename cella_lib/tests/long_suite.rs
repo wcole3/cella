@@ -97,7 +97,14 @@ fn assert_snapshot(name: &str, value: u64) {
 
 // -------- Benchmark storage --------
 static BENCH_DATA: OnceLock<Mutex<Vec<(String, u128)>>> = OnceLock::new();
-const BENCH_RUNS: usize = 10;
+
+fn bench_runs() -> usize {
+    std::env::var("CELLA_BENCH_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+}
+
 fn bench_store() -> &'static Mutex<Vec<(String, u128)>> {
     BENCH_DATA.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -112,7 +119,7 @@ fn record_bench(name: &str, ms: u128) {
 }
 
 fn run_benchmark_2d(name: &str, g_initial: &Grid2D, steps: usize) {
-    for i in 0..BENCH_RUNS {
+    for i in 0..bench_runs() {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
@@ -127,7 +134,7 @@ fn run_benchmark_2d(name: &str, g_initial: &Grid2D, steps: usize) {
 }
 
 fn run_benchmark_1d(name: &str, g_initial: &Grid1D, steps: usize) {
-    for i in 0..BENCH_RUNS {
+    for i in 0..bench_runs() {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
