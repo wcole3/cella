@@ -236,6 +236,10 @@ struct CellaApp {
 
     // UI: visibility of the right-side Rule Editor panel
     show_rule_editor: bool,
+
+    // Grid size configuration (editable by user)
+    grid_width: usize,
+    grid_height: usize,
 }
 
 impl CellaApp {
@@ -287,6 +291,8 @@ impl CellaApp {
             custom_types: std::collections::BTreeSet::new(),
             new_type_name: String::new(),
             show_rule_editor: true,
+            grid_width: 50,
+            grid_height: 30,
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -514,7 +520,7 @@ impl CellaApp {
                 self.set_status(format!("Running to {}", target));
             }
             ui.separator();
-            ui.add(egui::DragValue::new(&mut self.scale).range(1..=32).suffix(" px"));
+            ui.add(egui::DragValue::new(&mut self.scale).range(1..=64).suffix(" px"));
             ui.label("Scale");
             ui.separator();
             let exporting = self.export_join.is_some();
@@ -559,6 +565,19 @@ impl CellaApp {
             ui.horizontal(|ui| {
                 ui.label("1D history limit:");
                 ui.add(egui::DragValue::new(&mut self.history_limit_1d).range(1..=10_000));
+            });
+            ui.separator();
+            ui.label("Grid size:");
+            ui.horizontal(|ui| {
+                ui.label("W:");
+                ui.add(egui::DragValue::new(&mut self.grid_width).range(1..=2000).speed(1));
+                if matches!(self.dim, Some(Dim::D2)) {
+                    ui.label("H:");
+                    ui.add(egui::DragValue::new(&mut self.grid_height).range(1..=2000).speed(1));
+                }
+                if ui.button("Resize").on_hover_text("Rebuild the grid with the specified dimensions. Existing cells are preserved where they overlap; new cells are Inactive.").clicked() {
+                    self.resize_grid();
+                }
             });
             ui.separator();
             // Rule editor moved to the right panel; see right-side Rule Editor panel.
@@ -893,6 +912,55 @@ impl CellaApp {
         }
     }
 
+    /// Resize the current grid to `grid_width` x `grid_height`, preserving existing
+    /// cell data where it overlaps and filling new cells with Inactive.
+    fn resize_grid(&mut self) {
+        let new_w = self.grid_width.max(1);
+        let new_h = self.grid_height.max(1);
+        match self.dim {
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    let old_w = g.width;
+                    let rule = g.rule.clone();
+                    let hist = g.history_limit;
+                    let mut init: Vec<CellType> = vec![CellType::inactive(); new_w];
+                    for x in 0..new_w.min(old_w) {
+                        init[x] = g.cells[x].current.clone();
+                    }
+                    self.d1 = Some(Grid1D::new(new_w, hist, init, rule));
+                    self.initial_state = self.d1.as_ref().map(GridState::from_grid1d);
+                    self.history_1d.clear();
+                    self.undo_stack.clear();
+                    self.current_paint_batch = None;
+                    self.stats_clear_and_init();
+                    self.set_status(format!("Resized 1D grid to width {}", new_w));
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    let old_w = g.width;
+                    let old_h = g.height;
+                    let rule = g.rule.clone();
+                    let hist = g.history_limit;
+                    let mut init: Vec<CellType> = vec![CellType::inactive(); new_w * new_h];
+                    for y in 0..new_h.min(old_h) {
+                        for x in 0..new_w.min(old_w) {
+                            init[y * new_w + x] = g.cells[y * old_w + x].current.clone();
+                        }
+                    }
+                    self.d2 = Some(Grid2D::new(new_w, new_h, hist, init, rule));
+                    self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
+                    self.history_1d.clear();
+                    self.undo_stack.clear();
+                    self.current_paint_batch = None;
+                    self.stats_clear_and_init();
+                    self.set_status(format!("Resized 2D grid to {}×{}", new_w, new_h));
+                }
+            }
+            None => {}
+        }
+    }
+
     // ----- Scenario loading -----
     fn load_demo_life(&mut self) {
         let (w,h,hist) = (50usize, 30usize, 5usize);
@@ -903,6 +971,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.grid_width = w; self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -919,6 +988,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.grid_width = width; self.grid_height = 1;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -934,6 +1004,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.grid_width = width; self.grid_height = 1;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -949,6 +1020,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.grid_width = w; self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -964,6 +1036,7 @@ impl CellaApp {
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
+        self.grid_width = w; self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -982,6 +1055,7 @@ impl CellaApp {
             self.undo_stack.clear();
             self.current_paint_batch = None;
             self.colors.clear();
+            self.grid_width = width; self.grid_height = 1;
             self.update_selected_draw_type_default();
             self.stats_clear_and_init();
             self.refresh_rule_editor_from_current();
@@ -997,7 +1071,10 @@ impl CellaApp {
                         if let Some(g) = cfg.build_grid1d() {
                             self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None;
                             self.set_status(format!("Loaded config (1D): {}", name));
-                            if let Some(gr) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(gr)); }
+                            if let Some(gr) = &self.d1 {
+                                self.initial_state = Some(GridState::from_grid1d(gr));
+                                self.grid_width = gr.width; self.grid_height = 1;
+                            }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
@@ -1007,7 +1084,10 @@ impl CellaApp {
                         if let Some(g) = cfg.build_grid2d() {
                             self.dim = Some(Dim::D2); self.d2 = Some(g); self.d1 = None;
                             self.set_status(format!("Loaded config (2D): {}", name));
-                            if let Some(gr) = &self.d2 { self.initial_state = Some(GridState::from_grid2d(gr)); }
+                            if let Some(gr) = &self.d2 {
+                                self.initial_state = Some(GridState::from_grid2d(gr));
+                                self.grid_width = gr.width; self.grid_height = gr.height;
+                            }
                             self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
@@ -1447,7 +1527,7 @@ impl eframe::App for CellaApp {
                     // Zoom with MouseWheel when hovered
                     if response.hovered() {
                         ui.input(|i| {
-                            if i.raw_scroll_delta.y > 0.0 { self.scale = (self.scale + 1).min(32); }
+                            if i.raw_scroll_delta.y > 0.0 { self.scale = (self.scale + 1).min(64); }
                             else if i.raw_scroll_delta.y < 0.0 { self.scale = self.scale.saturating_sub(1).max(1); }
                         });
                     }
