@@ -27,6 +27,7 @@
 // final states for each test to text files under tests/ascii/<testname>.txt.
 
 use cella_lib::*;
+use cella_lib::config::{CellaConfig, Config2D};
 use cella_lib::threads::{set_thread_override, clear_thread_override, thread_count};
 use serde::{Serialize, Deserialize};
 use std::fs;
@@ -672,4 +673,62 @@ fn save_current_benchmarks(map: &HashMap<String, BenchStats>) -> Result<(), Box<
     if let Some(parent) = benchmarks_file().parent() { let _ = fs::create_dir_all(parent); }
     fs::write(benchmarks_file(), s)?;
     Ok(())
+}
+
+#[test]
+#[ignore]
+fn stress_config_load_and_run() {
+    let path = std::env::temp_dir().join(format!("cella_bench_config_{}.json", std::process::id()));
+    
+    let a = "Alive".to_string();
+    let b = "Inactive".to_string();
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule { 
+            current_type: CellType(b.clone()), 
+            criteria_type: CellType(a.clone()), 
+            count: 0, 
+            op: CountOp::Gt, 
+            limit: None, 
+            range: 1, 
+            neighborhood: Neighborhood2D::Moore, 
+            randomness: None, 
+            output_type: CellType(a.clone()) 
+        }
+    ]};
+    
+    let w = 100usize;
+    let h = 100usize;
+    let hist = 2usize;
+    let mut initial = Vec::with_capacity(w*h);
+    for y in 0..h {
+        for x in 0..w {
+            if x == w/2 && y == h/2 { initial.push(a.clone()); }
+            else { initial.push(b.clone()); }
+        }
+    }
+    
+    let cfg = CellaConfig::D2(Config2D {
+        width: w,
+        height: h,
+        history_limit: hist,
+        initial,
+        rule,
+    });
+    
+    // Save
+    cfg.to_file_pretty(&path).expect("save config");
+    
+    // Load
+    let t0 = Instant::now();
+    let loaded = CellaConfig::from_file(&path).expect("load config");
+    let load_time = t0.elapsed();
+    println!("Config load time: {:?}", load_time);
+    
+    let g = loaded.build_grid2d().expect("build grid");
+    
+    // Benchmark
+    run_benchmark_2d("stress_config_100x100", &g, 50);
+    
+    // Cleanup
+    let _ = fs::remove_file(path);
 }
