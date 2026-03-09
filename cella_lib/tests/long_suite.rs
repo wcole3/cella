@@ -25,6 +25,12 @@
 //
 // ASCII dumps: Set CELLA_ASCII=1 to write ASCII renders of the initial and
 // final states for each test to text files under tests/ascii/<testname>.txt.
+//
+// Config export: Set CELLA_EXPORT_CONFIGS=1 to write a JSON config file for
+// each long test to configs/<testname>.json at the project root. These files
+// can be loaded in the GUI to inspect the test case visually.
+//   On Windows PowerShell:
+//     $env:CELLA_EXPORT_CONFIGS=1; cargo test -p cella_lib -- --ignored; Remove-Item Env:CELLA_EXPORT_CONFIGS
 
 use cella_lib::*;
 use cella_lib::config::{CellaConfig, Config2D};
@@ -156,6 +162,52 @@ fn ascii_enabled() -> bool {
 
 fn ascii_dir() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("ascii") }
 
+// -------- Config export helpers --------
+fn configs_export_enabled() -> bool {
+    std::env::var("CELLA_EXPORT_CONFIGS").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
+}
+
+fn configs_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap_or(Path::new(".")).join("configs")
+}
+
+fn export_config_2d(name: &str, g: &Grid2D) {
+    use cella_lib::config::{CellaConfig, Config2D};
+    let initial: Vec<String> = g.cells.iter().map(|c| c.current.0.clone()).collect();
+    let cfg = CellaConfig::D2(Config2D {
+        width: g.width,
+        height: g.height,
+        history_limit: g.history_limit,
+        initial,
+        rule: g.rule.clone(),
+    });
+    let dir = configs_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.json", name));
+    match cfg.to_file_pretty(&path) {
+        Ok(_) => println!("exported config {} => {}", name, path.display()),
+        Err(e) => eprintln!("failed to export config {}: {}", name, e),
+    }
+}
+
+fn export_config_1d(name: &str, g: &Grid1D) {
+    use cella_lib::config::{CellaConfig, Config1D};
+    let initial: Vec<String> = g.cells.iter().map(|c| c.current.0.clone()).collect();
+    let cfg = CellaConfig::D1(Config1D {
+        width: g.width,
+        history_limit: g.history_limit,
+        initial,
+        rule: g.rule.clone(),
+    });
+    let dir = configs_dir();
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.json", name));
+    match cfg.to_file_pretty(&path) {
+        Ok(_) => println!("exported config {} => {}", name, path.display()),
+        Err(e) => eprintln!("failed to export config {}: {}", name, e),
+    }
+}
+
 fn ascii_base_and_truncate(label: &str) -> (String, bool) {
     if let Some(idx) = label.find(':') {
         let base = label[..idx].trim().to_string();
@@ -255,6 +307,7 @@ fn stress_2d_life_like_moore() {
     set(1,0); set(2,1); set(0,2); set(1,2); set(2,2);
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_life_like_moore: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_life_like_moore", &g); }
     run_benchmark_2d("2d_life_like_moore", &g, 300);
 }
 
@@ -271,6 +324,7 @@ fn stress_2d_von_neumann_threshold() {
     for y in 0..h { for x in 0..w { if (x ^ y) % 7 == 0 { init[y*w + x] = b.clone(); } } }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_vonneumann_threshold: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_vonneumann_threshold", &g); }
     run_benchmark_2d("2d_vonneumann_threshold", &g, 200);
 }
 
@@ -286,6 +340,7 @@ fn stress_2d_straightline_threshold() {
     for y in 0..h { for x in 0..w { if (x * 13 + y * 7) % 17 == 0 { init[y*w + x] = b.clone(); } } }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_straightline_threshold: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_straightline_threshold", &g); }
     run_benchmark_2d("2d_straightline_threshold", &g, 200);
 }
 
@@ -300,6 +355,7 @@ fn stress_2d_langdon_diagonals() {
     for i in 0..w.min(h) { init[i*w + i] = b.clone(); }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_langdon_diagonals", &g); }
     run_benchmark_2d("2d_langdon_diagonals", &g, 180);
 }
 
@@ -314,6 +370,7 @@ fn stress_1d_rule30_center_seed() {
     init[w/2] = x.clone();
     let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_rule30_center: initial", &g); }
+    if configs_export_enabled() { export_config_1d("1d_rule30_center", &g); }
     run_benchmark_1d("1d_rule30_center", &g, 500);
 }
 
@@ -329,6 +386,7 @@ fn stress_1d_n2_alternating_code() {
     init[w/2] = x.clone();
     let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_n2_alt: initial", &g); }
+    if configs_export_enabled() { export_config_1d("1d_n2_alt", &g); }
     run_benchmark_1d("1d_n2_alt", &g, 400);
 }
 
@@ -345,6 +403,7 @@ fn stress_1d_n3_custom_code() {
     init[w/2] = x.clone();
     let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_n3_custom: initial", &g); }
+    if configs_export_enabled() { export_config_1d("1d_n3_custom", &g); }
     run_benchmark_1d("1d_n3_custom", &g, 350);
 }
 
@@ -364,6 +423,7 @@ fn stress_1d_three_state_cycle() {
     let init = (0..w).map(|i| match i % 3 { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }).collect::<Vec<_>>();
     let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_three_state_cycle: initial", &g); }
+    if configs_export_enabled() { export_config_1d("1d_three_state_cycle", &g); }
     run_benchmark_1d("1d_three_state_cycle", &g, 800);
 }
 
@@ -381,6 +441,7 @@ fn stress_2d_three_state_cycle() {
     for y in 0..h { for x in 0..w { let idx = (x + y) % 3; init.push(match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }); } }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_three_state_cycle: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_three_state_cycle", &g); }
     run_benchmark_2d("2d_three_state_cycle", &g, 240);
 }
 
@@ -412,6 +473,7 @@ fn stress_2d_large_moore_256() {
     }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_large_moore_256: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_large_moore_256", &g); }
     run_benchmark_2d("2d_large_moore_256", &g, 200);
 }
 
@@ -427,6 +489,7 @@ fn stress_2d_large_vn_256() {
     for y in 0..h { for x in 0..w { if (x*3 + y*5) % 11 == 0 { init[y*w + x] = b.clone(); } } }
     let g = Grid2D::new(w,h,hist,init,rule);
     if ascii_enabled() { print_ascii_2d("2d_large_vn_256: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_large_vn_256", &g); }
     run_benchmark_2d("2d_large_vn_256", &g, 160);
 }
 
@@ -441,6 +504,7 @@ fn stress_1d_large_rule30_2049() {
     init[w/2] = x.clone();
     let g = Grid1D::new(w, hist, init, rule);
     if ascii_enabled() { print_ascii_1d("1d_large_rule30_2049: initial", &g); }
+    if configs_export_enabled() { export_config_1d("1d_large_rule30_2049", &g); }
     run_benchmark_1d("1d_large_rule30_2049", &g, 1200);
 }
 
@@ -639,10 +703,35 @@ fn stress_2d_three_state_cycle_t4() { set_thread_override(4); stress_2d_three_st
 fn stress_2d_three_state_cycle_t8() { set_thread_override(8); stress_2d_three_state_cycle(); clear_thread_override(); }
 
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 struct BenchStats {
     avg: f64,
     std_dev: f64,
+}
+
+#[test]
+fn bench_stats_serialize_deserialize_roundtrip() {
+    let original = BenchStats { avg: 123.456, std_dev: 7.89 };
+    let json = serde_json::to_string(&original).expect("serialize BenchStats");
+    let restored: BenchStats = serde_json::from_str(&json).expect("deserialize BenchStats");
+    assert_eq!(original, restored);
+}
+
+#[test]
+fn bench_stats_deserialize_known_json() {
+    let json = r#"{"avg":42.0,"std_dev":1.5}"#;
+    let stats: BenchStats = serde_json::from_str(json).expect("deserialize BenchStats from known JSON");
+    assert_eq!(stats.avg, 42.0);
+    assert_eq!(stats.std_dev, 1.5);
+}
+
+#[test]
+fn bench_stats_default_is_zero() {
+    let stats = BenchStats::default();
+    let json = serde_json::to_string(&stats).expect("serialize default BenchStats");
+    let restored: BenchStats = serde_json::from_str(&json).expect("deserialize default BenchStats");
+    assert_eq!(restored.avg, 0.0);
+    assert_eq!(restored.std_dev, 0.0);
 }
 
 // -------- Benchmark persistence helpers --------
