@@ -12,6 +12,36 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use crate::types::CellType;
 
+mod serde_u128 {
+    use serde::{Deserializer, Serializer};
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(val: &u128, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&val.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
+        struct U128Visitor;
+        impl<'de> Visitor<'de> for U128Visitor {
+            type Value = u128;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a u128 as a string or integer")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<u128, E> {
+                v.parse().map_err(de::Error::custom)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<u128, E> {
+                Ok(v as u128)
+            }
+            fn visit_u128<E: de::Error>(self, v: u128) -> Result<u128, E> {
+                Ok(v)
+            }
+        }
+        d.deserialize_any(U128Visitor)
+    }
+}
+
 /// Neighborhood types for 2D rules.
 ///
 /// - `Moore`: all cells in the (2n+1)x(2n+1) square.
@@ -58,6 +88,7 @@ pub enum RuleError {
 pub struct Rule1DSubrule {
     pub current_type: CellType,
     pub criteria_type: CellType,
+    #[serde(with = "serde_u128")]
     pub wolfram_code: u128,
     /// Neighborhood radius (>=1): window size is 2n+1.
     pub n: u8,

@@ -1136,7 +1136,11 @@ impl CellaApp {
                         }
                     }
                 },
-                Err(e) => { eprintln!("Failed to load config: {}", e); }
+                Err(e) => {
+                    let msg = format!("Failed to load config: {}", e);
+                    eprintln!("{}", msg);
+                    self.set_status(msg);
+                }
             }
             // After loading any config, sync the rule editor
             self.refresh_rule_editor_from_current();
