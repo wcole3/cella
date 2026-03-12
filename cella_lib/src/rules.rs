@@ -127,13 +127,6 @@ impl Rule1DSubrule {
     /// A `usize` value that represents the binary pattern of the boolean slice.
     /// The first element in the slice corresponds to the most significant bit, and
     /// the last element to the least significant bit.
-    //
-    /// # Example
-    /// ```rust
-    /// let window = [true, false, true]; // Binary: 101
-    /// let index = pattern_index_1d(&window);
-    /// assert_eq!(index, 5); // Binary 101 is equal to 5 in decimal
-    /// ```
     ///
     /// # Notes
     /// - The function assumes the input slice is not empty. An empty slice would result
