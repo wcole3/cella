@@ -116,6 +116,35 @@ impl Rule1DSubrule {
         Ok(())
     }
 
+    ///
+    /// Converts a slice of booleans into a single integer value representing the binary pattern.
+    ///
+    /// # Parameters
+    /// - `window`: A slice of boolean values, where each `true` represents a binary `1`
+    ///   and each `false` represents a binary `0`.
+    ///
+    /// # Returns
+    /// A `usize` value that represents the binary pattern of the boolean slice.
+    /// The first element in the slice corresponds to the most significant bit, and
+    /// the last element to the least significant bit.
+    //
+    /// # Example
+    /// ```rust
+    /// let window = [true, false, true]; // Binary: 101
+    /// let index = pattern_index_1d(&window);
+    /// assert_eq!(index, 5); // Binary 101 is equal to 5 in decimal
+    /// ```
+    ///
+    /// # Notes
+    /// - The function assumes the input slice is not empty. An empty slice would result
+    ///   in the `idx` remaining `0`.
+    /// - The order of the input slice is significant in forming the binary pattern.
+    ///
+    /// # Complexity
+    /// The function runs in `O(n)` time, where `n` is the length of the `window`, as it iterates
+    /// over the slice once.
+    ///
+    /// fn
     fn pattern_index_1d(window: &[bool]) -> usize {
         let mut idx = 0usize;
         for &b in window { idx = (idx << 1) | (b as usize); }
