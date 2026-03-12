@@ -314,6 +314,7 @@ fn stress_2d_life_like_moore() {
 fn stress_2d_von_neumann_threshold() {
     let a = CellType("A".into());
     let b = CellType("B".into());
+    // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
         Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
@@ -331,6 +332,7 @@ fn stress_2d_von_neumann_threshold() {
 fn stress_2d_straightline_threshold() {
     let a = CellType("A".into());
     let b = CellType("B".into());
+    // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 3, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
         Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
@@ -347,6 +349,7 @@ fn stress_2d_straightline_threshold() {
 fn stress_2d_langdon_diagonals() {
     let a = CellType("A".into());
     let b = CellType("B".into());
+    // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::Langdon, randomness: None, output_type: b.clone() },
     ]};
@@ -378,6 +381,7 @@ fn stress_1d_n2_alternating_code() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
     let code: u128 = 0xAAAAAAAA; // alternating bits over first 32 patterns
+    // TODO make rule more interesting
     let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
     let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: x.clone() };
     let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
@@ -395,6 +399,7 @@ fn stress_1d_n3_custom_code() {
     let inactive = CellType::inactive();
     // n=3 -> 2^(2*3+1)=2^7=128 patterns; pick a code with some structure
     let code: u128 = 0xF0F0_F0F0_F0F0_F0F0;
+    // TODO make rule more interesting
     let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 3, randomness: None, output_type: x.clone() };
     let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: code, n: 3, randomness: None, output_type: x.clone() };
     let rule = Rule1D { subrules: vec![sub_active, sub_inactive] };
@@ -480,6 +485,7 @@ fn stress_2d_large_moore_256() {
 fn stress_2d_large_vn_256() {
     let a = CellType("A".into());
     let b = CellType("B".into());
+    // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
         Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
