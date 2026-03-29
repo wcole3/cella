@@ -106,13 +106,18 @@ impl Rule1DSubrule {
         if self.n < 1 { return Err(RuleError::InvalidN1D(self.n)); }
         if let Some(r) = self.randomness { if !(0.0..=1.0).contains(&r) { return Err(RuleError::InvalidRandomness) } }
         let b: u32 = 2u32 * self.n as u32 + 1; // window bits
-        let patterns: u32 = 1u32 << b; // number of neighborhood patterns = 2^(2n+1)
-        if patterns < 128 {
+        // n=1 -> b=3, patterns=8;   n=2 -> b=5, patterns=32;
+        // n=3 -> b=7, patterns=128 (all u128 values valid);
+        // n>=4 -> patterns > 128, exceeds u128 capacity.
+        if self.n > 3 { return Err(RuleError::TooManyPatterns(self.n)); }
+        if b < 7 {
+            let patterns: u32 = 1u32 << b;
             let max: u128 = 1u128 << patterns;
             if self.wolfram_code >= max {
                 return Err(RuleError::InvalidWolframCode(self.wolfram_code, self.n));
             }
         }
+        // n=3: patterns=128, all u128 values are valid (0..2^128-1)
         Ok(())
     }
 

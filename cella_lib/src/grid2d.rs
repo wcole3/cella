@@ -1,6 +1,4 @@
 //! 2D grid implementation.
-use std::sync::Arc;
-use threadpool::ThreadPool;
 use serde::{Deserialize, Serialize};
 use crate::types::{CellState, CellType};
 use crate::rules::Rule2D;
@@ -51,9 +49,6 @@ pub struct Grid2D {
     pub counts_current: std::collections::HashMap<String, u64>,
     /// Peak (max-so-far) count of cells per type name since start/reset.
     pub peak_counts: std::collections::HashMap<String, u64>,
-    /// Cached thread pool for parallel stepping.
-    #[serde(skip)]
-    pub pool: Option<Arc<ThreadPool>>,
 }
 
 impl std::fmt::Debug for Grid2D {
@@ -81,9 +76,7 @@ impl Grid2D {
         let mut counts_current: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
         for c in &cells { *counts_current.entry(c.current.0.clone()).or_insert(0) += 1; }
         let peak_counts = counts_current.clone();
-        let threads = thread_count();
-        let pool = if threads > 1 { Some(Arc::new(ThreadPool::new(threads))) } else { None };
-        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts, pool }
+        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts }
     }
 
     fn idx(&self, x: isize, y: isize) -> Option<usize> {
@@ -99,7 +92,13 @@ impl Grid2D {
 
     fn recompute_counts_from_cells(cells: &[CellState]) -> std::collections::HashMap<String, u64> {
         let mut map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for c in cells { *map.entry(c.current.0.clone()).or_insert(0) += 1; }
+        for c in cells {
+            if let Some(count) = map.get_mut(c.current.0.as_str()) {
+                *count += 1;
+            } else {
+                map.insert(c.current.0.clone(), 1);
+            }
+        }
         map
     }
 
@@ -114,20 +113,15 @@ impl Grid2D {
         let threads = thread_count();
         let total = self.width * self.height;
 
-        // Ensure pool exists if we want to go parallel
-        if threads > 1 && self.pool.is_none() {
-            self.pool = Some(Arc::new(ThreadPool::new(threads)));
-        }
-
-        if threads <= 1 || total < 4096 || self.pool.is_none() {
+        if threads <= 1 || total < 4096 {
             for y in 0..self.height {
                 for x in 0..self.width {
                     let i = y * self.width + x;
-                    let current_type = self.cells[i].current.clone();
+                    let current_type = &self.cells[i].current;
                     let mut decided: Option<CellType> = None;
                     'sub: for s in &self.rule.subrules {
-                        if &current_type != &s.current_type { continue; }
-                        let out = s.applies_and_output(&current_type, |dx, dy| {
+                        if current_type != &s.current_type { continue; }
+                        let out = s.applies_and_output(current_type, |dx, dy| {
                             self.get_type_or_inactive(x as isize + dx as isize, y as isize + dy as isize)
                         });
                         if let Some(o) = out { decided = Some(o); break 'sub; }
@@ -136,62 +130,54 @@ impl Grid2D {
                     next[i].transition(&new_type);
                 }
             }
-            // Update counts and peaks from next before swapping
-            let counts = Self::recompute_counts_from_cells(&next);
-            self.counts_current = counts.clone();
-            for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
-            self.cells = next;
-            self.step = self.step.saturating_add(1);
-            return;
-        }
+        } else {
+            // Parallel path using scoped threads — borrows cells & rule directly
+            let cells = &self.cells;
+            let rule = &self.rule;
+            let width = self.width;
+            let height = self.height;
+            let chunk = (total + threads - 1) / threads;
 
-        // Parallel path using cached thread pool
-        let pool = self.pool.as_ref().unwrap();
-        let snapshot = Arc::new(self.cells.clone());
-        let rule = Arc::new(self.rule.clone());
-        let width = self.width;
-        let height = self.height;
-        let chunk = (total + threads - 1) / threads;
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        for t in 0..threads {
-            let start = t * chunk;
-            if start >= total { break; }
-            let end = ((t + 1) * chunk).min(total);
-            let tx = tx.clone();
-            let snapshot_t = snapshot.clone();
-            let rule_t = rule.clone();
-
-            pool.execute(move || {
-                let mut out: Vec<(usize, CellType)> = Vec::with_capacity(end - start);
-                for idx in start..end {
-                    let y = idx / width;
-                    let x = idx % width;
-                    let current_type = snapshot_t[idx].current.clone();
-                    let mut decided: Option<CellType> = None;
-                    'sub: for s in &rule_t.subrules {
-                        if &current_type != &s.current_type { continue; }
-                        let out_ty = s.applies_and_output(&current_type, |dx, dy| {
-                            let nx = x as isize + dx as isize;
-                            let ny = y as isize + dy as isize;
-                            if nx < 0 || ny < 0 || (nx as usize) >= width || (ny as usize) >= height {
-                                CellType::inactive()
-                            } else {
-                                snapshot_t[(ny as usize) * width + (nx as usize)].current.clone()
+            let all_results: Vec<Vec<(usize, CellType)>> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..threads)
+                    .filter_map(|t| {
+                        let start = t * chunk;
+                        if start >= total { return None; }
+                        let end = ((t + 1) * chunk).min(total);
+                        Some(s.spawn(move || {
+                            let mut out: Vec<(usize, CellType)> = Vec::with_capacity(end - start);
+                            for idx in start..end {
+                                let y = idx / width;
+                                let x = idx % width;
+                                let current_type = &cells[idx].current;
+                                let mut decided: Option<CellType> = None;
+                                'sub: for sr in &rule.subrules {
+                                    if current_type != &sr.current_type { continue; }
+                                    let out_ty = sr.applies_and_output(current_type, |dx, dy| {
+                                        let nx = x as isize + dx as isize;
+                                        let ny = y as isize + dy as isize;
+                                        if nx < 0 || ny < 0 || (nx as usize) >= width || (ny as usize) >= height {
+                                            CellType::inactive()
+                                        } else {
+                                            cells[(ny as usize) * width + (nx as usize)].current.clone()
+                                        }
+                                    });
+                                    if let Some(o) = out_ty { decided = Some(o); break 'sub; }
+                                }
+                                let new_type = decided.unwrap_or_else(CellType::inactive);
+                                out.push((idx, new_type));
                             }
-                        });
-                        if let Some(o) = out_ty { decided = Some(o); break 'sub; }
-                    }
-                    let new_type = decided.unwrap_or_else(CellType::inactive);
-                    out.push((idx, new_type));
-                }
-                let _ = tx.send(out);
+                            out
+                        }))
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
             });
-        }
-        drop(tx);
-        for received in rx {
-            for (idx, ty) in received {
-                next[idx].transition(&ty);
+
+            for chunk_results in all_results {
+                for (idx, ty) in chunk_results {
+                    next[idx].transition(&ty);
+                }
             }
         }
 

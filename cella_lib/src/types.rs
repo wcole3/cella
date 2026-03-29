@@ -1,5 +1,6 @@
 //! Core types for cella: cell kinds and per-cell state.
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fmt;
 
 /// Name used for the implicit inactive/background cell type.
@@ -54,7 +55,7 @@ pub struct CellState {
     /// Number of consecutive steps the cell has been in `current`.
     pub age_in_state: u32,
     /// FIFO of previous states, bounded by `history_limit`.
-    pub history: Vec<CellType>,
+    pub history: VecDeque<CellType>,
     /// Maximum number of previous states to keep.
     pub history_limit: usize,
 }
@@ -68,7 +69,7 @@ impl CellState {
     /// assert_eq!(st.age_in_state, 0);
     /// ```
     pub fn new(current: CellType, history_limit: usize) -> Self {
-        Self { current, age_in_state: 0, history: Vec::new(), history_limit }
+        Self { current, age_in_state: 0, history: VecDeque::new(), history_limit }
     }
 
     /// Transition the cell to `next`, updating history and age counters.
@@ -90,10 +91,9 @@ impl CellState {
         if &self.current == next {
             self.age_in_state = self.age_in_state.saturating_add(1);
         } else {
-            self.history.push(self.current.clone());
-            if self.history.len() > self.history_limit {
-                let remove_n = self.history.len() - self.history_limit;
-                self.history.drain(0..remove_n);
+            self.history.push_back(self.current.clone());
+            while self.history.len() > self.history_limit {
+                self.history.pop_front();
             }
             self.current = next.clone();
             self.age_in_state = 0;

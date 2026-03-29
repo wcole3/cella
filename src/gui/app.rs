@@ -240,6 +240,14 @@ struct CellaApp {
     // Grid size configuration (editable by user)
     grid_width: usize,
     grid_height: usize,
+
+    // Simulation timer (tracks wall-clock time while playing)
+    /// Accumulated wall-clock duration across all play segments.
+    sim_elapsed: Duration,
+    /// Number of steps taken while the timer was active (for per-step average).
+    sim_timed_steps: u64,
+    /// Instant when the current play segment started (None when paused).
+    sim_play_start: Option<Instant>,
 }
 
 impl CellaApp {
@@ -293,6 +301,9 @@ impl CellaApp {
             show_rule_editor: true,
             grid_width: 50,
             grid_height: 30,
+            sim_elapsed: Duration::ZERO,
+            sim_timed_steps: 0,
+            sim_play_start: None,
         };
         // Start with a default 2D Life-like demo
         app.load_demo_life();
@@ -331,6 +342,11 @@ impl CellaApp {
 
     /// Advance the automaton one step and maintain the 1D history buffer.
     fn step_once(&mut self) {
+        // Snapshot the timer before stepping so we can measure elapsed time
+        if let Some(start) = self.sim_play_start {
+            self.sim_elapsed += start.elapsed();
+            self.sim_play_start = Some(Instant::now());
+        }
         match self.dim {
             Some(Dim::D1) => if let Some(g) = &mut self.d1 {
                 // push current row to history before stepping
@@ -342,6 +358,10 @@ impl CellaApp {
             },
             Some(Dim::D2) => if let Some(g) = &mut self.d2 { g.step(); },
             None => {}
+        }
+        // Count this step for timing average (only when timer is running)
+        if self.sim_play_start.is_some() {
+            self.sim_timed_steps += 1;
         }
         // record stats after a successful step
         self.stats_record_step();
@@ -548,7 +568,17 @@ impl CellaApp {
             if ui.button(if self.playing { "Pause" } else { "Play" }).clicked() {
                 self.playing = !self.playing;
                 self.last_tick = Instant::now();
-                if self.playing { self.set_status("Playing"); } else { self.set_status("Paused"); }
+                if self.playing {
+                    // Start a new play segment for the timer
+                    self.sim_play_start = Some(Instant::now());
+                    self.set_status("Playing");
+                } else {
+                    // Pause: flush the current play segment into accumulated elapsed
+                    if let Some(start) = self.sim_play_start.take() {
+                        self.sim_elapsed += start.elapsed();
+                    }
+                    self.set_status("Paused");
+                }
             }
             if ui.button("Step").clicked() { self.step_once(); self.set_status(format!("Stepped to {}", self.current_step())); }
             ui.add(egui::DragValue::new(&mut self.refresh_ms).range(10..=2000).suffix(" ms"));
@@ -559,6 +589,9 @@ impl CellaApp {
                 let target = self.current_step().saturating_add(self.run_to_steps);
                 self.run_to_target = Some(target);
                 self.playing = true; // ensure stepping
+                if self.sim_play_start.is_none() {
+                    self.sim_play_start = Some(Instant::now());
+                }
                 self.set_status(format!("Running to {}", target));
             }
             ui.separator();
@@ -950,6 +983,10 @@ impl CellaApp {
             if self.current_step() >= target {
                 self.run_to_target = None;
                 self.playing = false;
+                // Stop timer when run-to completes
+                if let Some(start) = self.sim_play_start.take() {
+                    self.sim_elapsed += start.elapsed();
+                }
             }
         }
     }
@@ -1207,6 +1244,10 @@ impl CellaApp {
     fn reset_to_initial(&mut self) {
         self.playing = false;
         self.run_to_target = None;
+        // Reset simulation timer
+        self.sim_elapsed = Duration::ZERO;
+        self.sim_timed_steps = 0;
+        self.sim_play_start = None;
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
@@ -1251,7 +1292,11 @@ impl CellaApp {
     }
 
     /// Internal: clear and initialize statistics history/toggles from current grid.
+    /// Also resets the simulation timer.
     fn stats_clear_and_init(&mut self) {
+        self.sim_elapsed = Duration::ZERO;
+        self.sim_timed_steps = 0;
+        self.sim_play_start = None;
         self.stats_history.clear();
         self.stats_show.clear();
         let (counts, step) = match self.dim {
@@ -1532,6 +1577,20 @@ impl eframe::App for CellaApp {
         egui::TopBottomPanel::bottom("bottom_status").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("Step: {}", self.current_step()));
+                // Show simulation timer when steps have been timed
+                if self.sim_timed_steps > 0 || self.sim_play_start.is_some() {
+                    let total = if let Some(start) = self.sim_play_start {
+                        self.sim_elapsed + start.elapsed()
+                    } else {
+                        self.sim_elapsed
+                    };
+                    let total_secs = total.as_secs_f64();
+                    let steps = self.sim_timed_steps.max(1);
+                    let avg_ms = (total_secs * 1000.0) / steps as f64;
+                    ui.separator();
+                    ui.label(format!("Time: {:.2}s", total_secs));
+                    ui.label(format!("Avg: {:.2} ms/step", avg_ms));
+                }
                 if let Some(msg) = &self.status_message {
                     ui.separator();
                     ui.label(egui::RichText::new(msg.clone()).italics());
