@@ -1,7 +1,28 @@
+//! Cella binary crate — interactive CLI menu and egui-based GUI for cellular
+//! automata simulation.
+//!
+//! # Usage
+//!
+//! ```bash
+//! # Launch the CLI demo menu
+//! cargo run --release
+//!
+//! # Launch the GUI
+//! cargo run --release -- --gui
+//!
+//! # GUI with custom window size
+//! cargo run --release -- --gui --size=1280x720
+//! ```
+//!
+//! Without `--gui` the binary presents a numbered demo menu in the terminal.
+//! With `--gui` it opens an egui window for visual simulation, rule editing,
+//! and GIF export.
+
 mod demos;
 mod gui;
 use std::io::{self, Write};
 
+/// Display the interactive CLI demo menu and dispatch user selections.
 fn menu() {
     loop {
         println!("\nCella demos (CLI):");
@@ -34,6 +55,7 @@ fn menu() {
     }
 }
 
+/// Entry point: dispatches to GUI (`--gui`) or CLI menu.
 fn main() {
     // Choose GUI or CLI via args: pass --gui to launch GUI
     let args: Vec<String> = std::env::args().collect();
@@ -48,6 +70,11 @@ fn main() {
     menu();
 }
 
+/// Parse optional GUI window size from command-line arguments.
+///
+/// Supports `--size=WIDTHxHEIGHT`, `--width=W`, `--height=H`, or
+/// combinations thereof. When only one dimension is given the other
+/// is inferred with a 16∶9 aspect ratio.
 fn parse_gui_size(args: &[String]) -> Option<(f32, f32)> {
     // Supports:
     //   --size=WIDTHxHEIGHT or --size WIDTHxHEIGHT
@@ -95,6 +122,7 @@ fn parse_gui_size(args: &[String]) -> Option<(f32, f32)> {
     }
 }
 
+/// Parse a `"WIDTHxHEIGHT"` or `"WIDTH,HEIGHT"` string into a float pair.
 fn parse_wh(s: &str) -> Option<(f32, f32)> {
     // Accept formats: 1280x720, 1280X720, 1280,720
     let s = s.trim();

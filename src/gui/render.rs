@@ -1,3 +1,8 @@
+//! Rendering utilities for the GUI.
+//!
+//! Currently provides the default color palette used to distinguish active
+//! cell types in the grid viewport and GIF export.
+
 use egui::Color32;
 
 /// Default UI color palette used for active cell types when no explicit

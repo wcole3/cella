@@ -1,8 +1,15 @@
+//! 1D demo builders and interactive CLI runners.
+//!
+//! *Builders* (`build_*`) create a [`Grid1D`] ready for stepping.
+//! *Demo* functions (`demo_*`) run an interactive CLI session.
+
 use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
 use std::collections::BTreeMap;
 
-// ------- Reusable builders (for CLI and GUI) -------
+/// Build a 1D grid pre-seeded for Wolfram Rule 30 (n=1).
+///
+/// A single `X` cell is placed in the centre; the rest are `Inactive`.
 pub fn build_1d_rule30(width: usize, history: usize) -> Grid1D {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -14,6 +21,9 @@ pub fn build_1d_rule30(width: usize, history: usize) -> Grid1D {
     Grid1D::new(width, history, init, rule)
 }
 
+/// Build a 1D grid for an arbitrary Wolfram code and neighbourhood radius.
+///
+/// Returns `Err` if the code/n combination fails validation.
 pub fn build_1d_code_n(wolfram_code: u128, n: u8, width: usize, history: usize) -> Result<Grid1D, RuleError> {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -26,6 +36,7 @@ pub fn build_1d_code_n(wolfram_code: u128, n: u8, width: usize, history: usize) 
     Ok(Grid1D::new(width, history, init, rule))
 }
 
+/// Build a 1D three-state (A→B→C→A) cycling automaton.
 pub fn build_1d_three_state_cycle(width: usize, history: usize) -> Grid1D {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -40,6 +51,7 @@ pub fn build_1d_three_state_cycle(width: usize, history: usize) -> Grid1D {
     Grid1D::new(width, history, init, rule)
 }
 
+/// Print a 1D grid row to stdout using symbol mapping.
 fn print_grid_1d(g: &Grid1D) {
     // Build stable mapping for active states (non-Inactive)
     let mut names: Vec<String> = g
@@ -65,6 +77,7 @@ fn print_grid_1d(g: &Grid1D) {
     println!("{}", line);
 }
 
+/// Interactive CLI demo: Wolfram Rule 30 (n=1, width 41).
 pub fn demo_1d_rule30() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -81,6 +94,7 @@ pub fn demo_1d_rule30() {
     for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
 
+/// Interactive CLI demo: Wolfram n=2 (alternating code, width 41).
 pub fn demo_1d_n2() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -98,6 +112,7 @@ pub fn demo_1d_n2() {
     for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
 
+/// Interactive CLI demo: user-supplied Wolfram code and neighbourhood radius.
 pub fn demo_1d_custom() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -121,6 +136,7 @@ pub fn demo_1d_custom() {
     for _ in 0..steps { g.step(); print_grid_1d(&g); }
 }
 
+/// Interactive CLI demo: three-state cycle (A→B→C→A).
 pub fn demo_1d_three_state_cycle() {
     let _a = CellType("A".into());
     let _b = CellType("B".into());

@@ -1,10 +1,15 @@
+//! 2D demo builders and interactive CLI runners.
+//!
+//! *Builders* (`build_*`) create a [`Grid2D`] ready for stepping.
+//! *Demo* functions (`demo_*`) run an interactive CLI session.
+
 use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
 use std::fs;
 use std::io::{self, Write};
 use std::collections::BTreeMap;
 
-// ------- Reusable builders (for CLI and GUI) -------
+/// Build a 2D Game-of-Life grid with a blinker seed in the centre.
 pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -30,6 +35,7 @@ pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     Grid2D::new(width, height, history, init, rule)
 }
 
+/// Build a 2D three-state cycling automaton (A→B→C→A).
 pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -> Grid2D {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -45,6 +51,7 @@ pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -
     Grid2D::new(width, height, history, init, rule)
 }
 
+/// Print a 2D grid to stdout using symbol mapping.
 fn print_grid_2d(g: &Grid2D) {
     // Build stable mapping for active states (non-Inactive)
     let mut names: Vec<String> = g
@@ -73,6 +80,7 @@ fn print_grid_2d(g: &Grid2D) {
     }
 }
 
+/// Interactive CLI demo: approximate Conway’s Game of Life.
 pub fn demo_life() {
     let alive = CellType("Alive".into());
     let inactive = CellType::inactive();
@@ -106,6 +114,7 @@ pub fn demo_life() {
     let _ = fs::write("snapshot.json", json);
 }
 
+/// Interactive CLI demo: 2D three-state cycle.
 pub fn demo_2d_three_state_cycle() {
     let _a = CellType("A".into());
     let mut g = build_2d_three_state_cycle(24, 12, 3);
@@ -115,6 +124,7 @@ pub fn demo_2d_three_state_cycle() {
     for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }
 }
 
+/// Interactive CLI demo: load and run a JSON configuration file.
 pub fn demo_from_config() {
     use cella_lib::config::CellaConfig;
     print!("Enter path to JSON config: ");
@@ -164,7 +174,7 @@ pub fn demo_from_config() {
 }
 
 
-// StraightLine neighborhood demo and builder
+/// Build a 2D StraightLine-neighbourhood demo grid with a cross seed.
 pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Grid2D {
     let a = CellType("A".into());
     let b = CellType("B".into());
@@ -188,6 +198,7 @@ pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Gri
     Grid2D::new(width, height, history, init, rule)
 }
 
+/// Interactive CLI demo: StraightLine neighbourhood growth.
 pub fn demo_2d_straightline() {
     let mut g = build_2d_straightline(24, 12, 3);
     let steps = ask_steps(8);

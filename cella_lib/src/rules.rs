@@ -141,8 +141,6 @@ impl Rule1DSubrule {
     /// # Complexity
     /// The function runs in `O(n)` time, where `n` is the length of the `window`, as it iterates
     /// over the slice once.
-    ///
-    /// fn
     fn pattern_index_1d(window: &[bool]) -> usize {
         let mut idx = 0usize;
         for &b in window { idx = (idx << 1) | (b as usize); }
@@ -216,10 +214,14 @@ impl Rule1D {
 /// });
 /// assert_eq!(out, Some(b));
 /// ```
+/// Comparison operator for neighbor counts.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CountOp {
+    /// Less than: `neighbor_count < target_count`.
     #[serde(rename = "lt")] Lt,
+    /// Greater than: `neighbor_count > target_count`.
     #[serde(rename = "gt")] Gt,
+    /// Equal to: `neighbor_count == target_count`.
     #[serde(rename = "eq")] Eq,
 }
 

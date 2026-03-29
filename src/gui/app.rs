@@ -1,3 +1,9 @@
+//! Core GUI application built on [`eframe`] / [`egui`].
+//!
+//! [`CellaApp`] is the main application struct that implements `eframe::App`.
+//! It manages simulation state, rule editing, grid rendering, playback
+//! controls, statistics, drawing/painting, and GIF export.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use std::sync::Arc;
