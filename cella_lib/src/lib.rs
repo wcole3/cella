@@ -257,6 +257,111 @@ mod more_tests {
     }
 
     #[test]
+    fn knight_stress() {
+        // --- 1. Symmetry: neighborhood_contains must be symmetric in all 8 reflections ---
+        for range in 1i32..=3 {
+            for dy in -(range * 2)..=(range * 2) {
+                for dx in -(range * 2)..=(range * 2) {
+                    let v = neighborhood_contains(dx, dy, range, Neighborhood2D::Knight);
+                    // All 8 reflections must agree
+                    for (sx, sy) in [(-1i32,1),(-1,-1),(1,-1)] {
+                        assert_eq!(
+                            neighborhood_contains(dx * sx, dy * sy, range, Neighborhood2D::Knight),
+                            v,
+                            "symmetry failure at ({},{}) vs ({},{}) range={}",
+                            dx, dy, dx * sx, dy * sy, range
+                        );
+                    }
+                    // Transpose symmetry: (dx,dy) reachable iff (dy,dx) reachable
+                    assert_eq!(
+                        neighborhood_contains(dy, dx, range, Neighborhood2D::Knight),
+                        v,
+                        "transpose symmetry failure at ({},{}) range={}", dx, dy, range
+                    );
+                }
+            }
+        }
+
+        // --- 2. Exact neighbor counts for range=1 and range=2 ---
+        // range=1: exactly 8 cells
+        let count_r1 = (-4..=4i32).flat_map(|dy| (-4..=4i32).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| neighborhood_contains(dx, dy, 1, Neighborhood2D::Knight))
+            .count();
+        assert_eq!(count_r1, 8, "range=1 must have exactly 8 knight neighbors, got {}", count_r1);
+
+        // range=2 unions all cells reachable in 1 or 2 hops; must be strictly more than 8.
+        let count_r2 = (-8..=8i32).flat_map(|dy| (-8..=8i32).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| neighborhood_contains(dx, dy, 2, Neighborhood2D::Knight))
+            .count();
+        assert!(count_r2 > 8, "range=2 must include more than 8 cells, got {}", count_r2);
+        // Spot-check known 2-hop cells:
+        // (0,4): (0,0)->(1,2)->(0,4) ✓   (4,0): (0,0)->(2,1)->(4,0) ✓
+        // (3,3): (0,0)->(1,2)->(3,3) ✓   (3,-3): (0,0)->(1,-2)->(3,-3) ✓
+        for (dx, dy) in [(0i32,4),(4,0),(0,-4),(-4,0),(3,3),(3,-3),(-3,3),(-3,-3)] {
+            assert!(neighborhood_contains(dx, dy, 2, Neighborhood2D::Knight),
+                "({},{}) must be reachable in 2 knight hops", dx, dy);
+        }
+        // Spot-check cells NOT reachable in 2 hops:
+        // (1,0): two knight moves cannot sum to (1,0) — verified by exhaustion.
+        // (5,5): minimum hops from origin is 4, so unreachable in <=2.
+        for (dx, dy) in [(1i32,0),(0,1),(-1,0),(0,-1),(5,5)] {
+            assert!(!neighborhood_contains(dx, dy, 2, Neighborhood2D::Knight),
+                "({},{}) must NOT be reachable in 2 knight hops", dx, dy);
+        }
+
+        // --- 3. Multi-step grid stress: 20x20 grid, 10 steps, Knight rule, no panic ---
+        let a = CellType("A".into());
+        let b = CellType("B".into());
+        let rule = Rule2D { subrules: vec![
+            // Survival: A with 2..=4 B knight-neighbors stays A
+            Rule2DSubrule {
+                current_type: a.clone(), criteria_type: b.clone(),
+                count: 2, op: CountOp::Gt, limit: Some(4), range: 1,
+                neighborhood: Neighborhood2D::Knight, randomness: None,
+                output_type: a.clone(),
+            },
+            // Birth: B with exactly 3 A knight-neighbors becomes A
+            Rule2DSubrule {
+                current_type: b.clone(), criteria_type: a.clone(),
+                count: 3, op: CountOp::Eq, limit: None, range: 1,
+                neighborhood: Neighborhood2D::Knight, randomness: None,
+                output_type: a.clone(),
+            },
+        ]};
+        let w = 20usize; let h = 20usize;
+        // Seed a glider-like pattern near center
+        let mut init = vec![b.clone(); w * h];
+        for (cx, cy) in [(10usize,10),(11,12),(9,12),(10,8),(12,9)] {
+            init[cy * w + cx] = a.clone();
+        }
+        let mut g = Grid2D::new(w, h, 3, init, rule);
+        for _ in 0..10 {
+            g.step();
+        }
+        assert_eq!(g.step, 10, "grid must have advanced exactly 10 steps");
+        // Grid must still have valid dimensions
+        assert_eq!(g.cells.len(), w * h, "cell count must remain {}x{}={}", w, h, w * h);
+
+        // --- 4. range=3 reachability: (0,0) always excluded, known 3-hop cells included ---
+        assert!(!neighborhood_contains(0, 0, 3, Neighborhood2D::Knight));
+        // (3,3) is reachable in 3 hops: (0,0)->(1,2)->(2,4)->(3,3)? (2,4)+(1,-1) not knight.
+        // (0,0)->(2,1)->(1,3)->(3,4)? No. (0,0)->(1,2)->(3,3)? (1,2)+(2,1)=(3,3). Yes! 2 hops.
+        assert!(neighborhood_contains(3, 3, 2, Neighborhood2D::Knight),
+            "(3,3) should be reachable in 2 hops via (0,0)->(1,2)->(3,3)");
+        // (0,6) reachable in 3 hops: (0,0)->(1,2)->(0,4)->(1,6)? No. (0,0)->(1,2)->(2,4)->(0,5)? No.
+        // (0,0)->(2,1)->(0,2)->(1,4)? No. (0,0)->(1,2)->(0,4)->(2,5)? No.
+        // (0,0)->(2,1)->(1,3)->(0,5)? No. (0,0)->(1,2)->(2,4)->(1,6)? (2,4)+(−1,2)=(1,6)≠(0,6).
+        // (0,0)->(2,1)->(0,2)->(2,3)? No. (0,0)->(1,2)->(0,4)->(−1,6)? No.
+        // (0,6): (0,0)->(2,1)->(1,3)->(2,5)? No. (0,0)->(1,2)->(2,4)->(0,5)? No.
+        // (0,6): (0,0)->(2,1)->(0,2)->(1,4)? No. Let's just verify range=3 count > range=2 count.
+        let count_r3 = (-12..=12i32).flat_map(|dy| (-12..=12i32).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| neighborhood_contains(dx, dy, 3, Neighborhood2D::Knight))
+            .count();
+        assert!(count_r3 > count_r2,
+            "range=3 must cover more cells than range=2: got r3={} r2={}", count_r3, count_r2);
+    }
+
+    #[test]
     fn randomness_bounds() {
         let x = CellType("X".into());
         // 1D invalid randomness

@@ -362,6 +362,28 @@ fn stress_2d_langdon_diagonals() {
     run_benchmark_2d("2d_langdon_diagonals", &g, 180);
 }
 
+fn stress_2d_knight_neighborhood() {
+    let a = CellType("A".into());
+    let b = CellType("B".into());
+    // Conway-style birth/survival using Knight neighborhood (range=1 = 8 classic L-move squares)
+    let rule = Rule2D { subrules: vec![
+        // Overpopulation: A with >4 B knight-neighbors becomes B
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: b.clone() },
+        // Survival: A with 2..=4 B knight-neighbors stays A
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: Some(4), range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: a.clone() },
+        // Birth: B with ==3 A knight-neighbors becomes A
+        Rule2DSubrule { current_type: b.clone(), criteria_type: a.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: a.clone() },
+    ]};
+    let (w, h, hist) = (64usize, 48usize, 3usize);
+    let mut init = vec![b.clone(); w * h];
+    // deterministic seed: scatter A cells in a structured pattern
+    for y in 0..h { for x in 0..w { if (x * 7 + y * 11) % 13 == 0 { init[y * w + x] = a.clone(); } } }
+    let g = Grid2D::new(w, h, hist, init, rule);
+    if ascii_enabled() { print_ascii_2d("2d_knight_neighborhood: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_knight_neighborhood", &g); }
+    run_benchmark_2d("2d_knight_neighborhood", &g, 200);
+}
+
 fn stress_1d_rule30_center_seed() {
     let x = CellType("X".into());
     let inactive = CellType::inactive();
@@ -627,6 +649,16 @@ fn stress_2d_langdon_diagonals_t4() { set_thread_override(4); stress_2d_langdon_
 #[test]
 #[ignore]
 fn stress_2d_langdon_diagonals_t8() { set_thread_override(8); stress_2d_langdon_diagonals(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_knight_neighborhood_t1() { set_thread_override(1); stress_2d_knight_neighborhood(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_knight_neighborhood_t4() { set_thread_override(4); stress_2d_knight_neighborhood(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_knight_neighborhood_t8() { set_thread_override(8); stress_2d_knight_neighborhood(); clear_thread_override(); }
 
 #[test]
 #[ignore]
