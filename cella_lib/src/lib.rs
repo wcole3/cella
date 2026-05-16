@@ -27,7 +27,7 @@ pub mod threads;
 
 // Re-exports for ergonomic public API
 pub use types::{INACTIVE, CellType, CellState};
-pub use rules::{Neighborhood2D, RuleError, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, CountOp};
+pub use rules::{Neighborhood2D, RuleError, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, CountOp, neighborhood_contains};
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
 pub use state::{GridState, grid2d_to_json};
@@ -172,6 +172,88 @@ mod more_tests {
         let mut g = Grid1D::new(5, 3, init, rule);
         g.step();
         assert_eq!(g.cells[2].current, y);
+    }
+
+    #[test]
+    fn knight_range1_classic_squares() {
+        // All 8 classic knight squares must be reachable at range=1
+        let squares = [(1,2),(1,-2),(-1,2),(-1,-2),(2,1),(2,-1),(-2,1),(-2,-1)];
+        for (dx, dy) in squares {
+            assert!(neighborhood_contains(dx, dy, 1, Neighborhood2D::Knight),
+                "({},{}) should be a knight neighbor at range=1", dx, dy);
+        }
+        // Adjacent cells are NOT knight neighbors
+        for (dx, dy) in [(1,0),(0,1),(-1,0),(0,-1),(1,1)] {
+            assert!(!neighborhood_contains(dx, dy, 1, Neighborhood2D::Knight),
+                "({},{}) should NOT be a knight neighbor at range=1", dx, dy);
+        }
+    }
+
+    #[test]
+    fn knight_origin_always_excluded() {
+        for range in [1i32, 2, 3] {
+            assert!(!neighborhood_contains(0, 0, range, Neighborhood2D::Knight),
+                "(0,0) must be excluded at range={}", range);
+        }
+    }
+
+    #[test]
+    fn knight_range2_reachable_cells() {
+        // (2,2) is reachable in 2 hops: (0,0)->(1,2)->(2,0)? No. (0,0)->(2,1)->(0,2)? No.
+        // (0,0)->(1,2)->(2,4)? No. Let's verify: (2,2): hop1=(1,2), hop2=(1,2)+(1,0)? Not a knight move.
+        // Actually (0,0)->(2,1)->(1,3)? No. (0,0)->(1,2)->(2,4)? No.
+        // (2,2): reachable via (0,0)->(1,2)->(2,0)? (2,0)!=(2,2). Try (0,0)->(2,1)->(0,2)? No.
+        // Correct path: (0,0)->(1,2) then (1,2)+(1,0) not knight. (0,0)->(2,1)->(1,3)? (1,3)!=(2,2).
+        // (0,0)->(1,2)->(3,1)? (3,1)!=(2,2). (0,0)->(2,1)->(4,2)? No. (0,0)->(1,2)->(2,4)? No.
+        // Actually (2,2) needs: from (1,2) add (1,0) - not knight. From (2,1) add (0,1) - not knight.
+        // (2,2) is NOT reachable in 2 hops. (0,4) is: (0,0)->(1,2)->(0,4). Yes!
+        assert!(neighborhood_contains(0, 4, 2, Neighborhood2D::Knight),
+            "(0,4) should be reachable in 2 knight hops");
+        assert!(neighborhood_contains(4, 0, 2, Neighborhood2D::Knight),
+            "(4,0) should be reachable in 2 knight hops");
+        // range=1 cells still included at range=2
+        assert!(neighborhood_contains(1, 2, 2, Neighborhood2D::Knight),
+            "(1,2) should be reachable at range=2");
+    }
+
+    #[test]
+    fn knight_serde_roundtrip() {
+        let sub = Rule2DSubrule {
+            current_type: CellType("A".into()), criteria_type: CellType("B".into()),
+            count: 2, op: CountOp::Eq, limit: None, range: 1,
+            neighborhood: Neighborhood2D::Knight, randomness: None,
+            output_type: CellType("A".into()),
+        };
+        let json = serde_json::to_string(&sub).unwrap();
+        assert!(json.contains("\"Knight\""), "serialised JSON must contain \"Knight\"");
+        let sub2: Rule2DSubrule = serde_json::from_str(&json).unwrap();
+        assert_eq!(sub2.neighborhood, Neighborhood2D::Knight);
+    }
+
+    #[test]
+    fn knight_grid_step() {
+        // 7x7 grid; center (3,3) is A; all 8 knight squares are B.
+        // Rule: A with >=1 B knight-neighbor becomes B.
+        let a = CellType("A".into());
+        let b = CellType("B".into());
+        let rule = Rule2D { subrules: vec![Rule2DSubrule {
+            current_type: a.clone(), criteria_type: b.clone(),
+            count: 1, op: CountOp::Gt, limit: None, range: 1,
+            neighborhood: Neighborhood2D::Knight, randomness: None,
+            output_type: b.clone(),
+        }]};
+        let w = 7usize; let h = 7usize;
+        let mut init = vec![a.clone(); w * h];
+        // Place B at all 8 classic knight squares around center (3,3)
+        for (dx, dy) in [(1i32,2),(1,-2),(-1,2),(-1,-2),(2,1),(2,-1),(-2,1),(-2,-1)] {
+            let cx = (3 + dx) as usize;
+            let cy = (3 + dy) as usize;
+            init[cy * w + cx] = b.clone();
+        }
+        let mut g = Grid2D::new(w, h, 2, init, rule);
+        g.step();
+        // Center (3,3) had 8 B knight-neighbors, so it should become B
+        assert_eq!(g.cells[3 * w + 3].current, b, "center should become B after step");
     }
 
     #[test]

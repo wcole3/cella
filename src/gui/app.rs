@@ -886,16 +886,17 @@ impl CellaApp {
                                                 ui.monospace(diag);
                                                 ui.small("Legend: @ center, # counted neighbor, . outside");
                                                 ui.separator();
-                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals; StraightLine = cardinal lines only");
+                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals; StraightLine = cardinal lines only; Knight = chess knight L-moves (range = max hops)");
                                             });
                                         let mut nb = sub.neighborhood;
                                         egui::ComboBox::from_id_salt(format!("d2_nh_{}", i))
-                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon", Neighborhood2D::StraightLine=>"StraightLine" })
+                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon", Neighborhood2D::StraightLine=>"StraightLine", Neighborhood2D::Knight=>"Knight" })
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Moore, "Moore");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::VonNeumann, "VonNeumann");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Langdon, "Langdon");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::StraightLine, "StraightLine");
+                                                ui.selectable_value(&mut nb, Neighborhood2D::Knight, "Knight");
                                             });
                                         sub.neighborhood = nb;
                                     });
@@ -1465,23 +1466,21 @@ impl CellaApp {
             Neighborhood2D::VonNeumann => "VonNeumann",
             Neighborhood2D::Langdon => "Langdon",
             Neighborhood2D::StraightLine => "StraightLine",
+            Neighborhood2D::Knight => "Knight",
         };
         out.push_str(&format!("{} (n={})\n", name, range));
-        for dy in -n..=n {
-            for dx in -n..=n {
+        // Knight moves can reach up to 2*range steps per axis, so widen the window.
+        let half = if kind == Neighborhood2D::Knight { n * 2 } else { n };
+        for dy in -half..=half {
+            for dx in -half..=half {
                 if dx == 0 && dy == 0 {
                     out.push('@');
                 } else {
-                    let inside = match kind {
-                        Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
-                        Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
-                        Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
-                        Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
-                    };
+                    let inside = cella_lib::neighborhood_contains(dx, dy, n, kind);
                     out.push(if inside { '#' } else { '.' });
                 }
             }
-            if dy != n { out.push('\n'); }
+            if dy != half { out.push('\n'); }
         }
         out
     }

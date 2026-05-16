@@ -48,12 +48,16 @@ mod serde_u128 {
 /// - `VonNeumann`: cells with Manhattan distance <= n.
 /// - `Langdon`: diagonal cells where |dx|==|dy|<=n.
 /// - `StraightLine`: cells in straight cardinal lines (up/down/left/right) up to range n.
+/// - `Knight`: cells reachable from the origin in at most `range` chess-knight hops
+///   (each hop is an L-shaped move: ±1/±2 or ±2/±1). `range=1` gives exactly the
+///   8 classic knight squares; `range=N` unions all cells reachable in 1..=N hops.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Neighborhood2D {
     Moore,
     VonNeumann,
     Langdon,
     StraightLine,
+    Knight,
 }
 
 /// Validation errors for rules.
@@ -248,6 +252,47 @@ pub struct Rule2DSubrule {
     pub output_type: CellType,
 }
 
+/// Returns `true` if `(dx, dy)` is reachable from `(0, 0)` in at most `max_moves` knight hops.
+/// Each hop is an L-shaped chess-knight move: (±1, ±2) or (±2, ±1).
+fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
+    use std::collections::VecDeque;
+    if dx == 0 && dy == 0 { return false; }
+    let mut visited = std::collections::HashSet::new();
+    let mut queue: VecDeque<(i32, i32, u8)> = VecDeque::new();
+    queue.push_back((0, 0, 0));
+    visited.insert((0i32, 0i32));
+    const MOVES: [(i32, i32); 8] = [
+        (1, 2), (1, -2), (-1, 2), (-1, -2),
+        (2, 1), (2, -1), (-2, 1), (-2, -1),
+    ];
+    while let Some((x, y, depth)) = queue.pop_front() {
+        if depth >= max_moves { continue; }
+        for (mx, my) in MOVES {
+            let nx = x + mx;
+            let ny = y + my;
+            if nx == dx && ny == dy { return true; }
+            if !visited.contains(&(nx, ny)) {
+                visited.insert((nx, ny));
+                queue.push_back((nx, ny, depth + 1));
+            }
+        }
+    }
+    false
+}
+
+/// Public helper: returns `true` when `(dx, dy)` belongs to the neighborhood of radius `n`
+/// for the given `kind`. `(0, 0)` always returns `false`.
+pub fn neighborhood_contains(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> bool {
+    if dx == 0 && dy == 0 { return false; }
+    match kind {
+        Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
+        Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
+        Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
+        Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
+        Neighborhood2D::Knight => knight_reachable(dx, dy, n as u8),
+    }
+}
+
 impl Rule2DSubrule {
     /// Validate subrule parameters (range>=1 and randomness/limit bounds).
     pub fn validate(&self) -> Result<(), RuleError> {
@@ -268,13 +313,7 @@ impl Rule2DSubrule {
     }
 
     fn within_neighborhood(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> bool {
-        if dx == 0 && dy == 0 { return false; }
-        match kind {
-            Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
-            Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
-            Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
-            Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
-        }
+        neighborhood_contains(dx, dy, n, kind)
     }
 
     /// Evaluate this subrule by counting matching neighbors and applying op/limit.
@@ -282,9 +321,12 @@ impl Rule2DSubrule {
     where F: FnMut(i32, i32) -> CellType {
         if center_current != &self.current_type { return None; }
         let n = self.range as i32;
+        // Knight moves can reach up to 2*range steps per axis (N hops × max 2 per hop),
+        // so we widen the iteration window to 2*n for Knight neighborhoods.
+        let half = if self.neighborhood == Neighborhood2D::Knight { n * 2 } else { n };
         let mut neighbors = 0u32;
-        for dy in -n..=n {
-            for dx in -n..=n {
+        for dy in -half..=half {
+            for dx in -half..=half {
                 if !Self::within_neighborhood(dx, dy, n, self.neighborhood) { continue; }
                 let t = get_neighbor(dx, dy);
                 if t == self.criteria_type { neighbors += 1; }
