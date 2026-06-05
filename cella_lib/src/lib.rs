@@ -38,7 +38,8 @@ mod tests {
 
     #[test]
     fn rule1d_validation() {
-        let s = Rule1DSubrule { current_type: CellType("A".into()), criteria_type: CellType("A".into()), wolfram_code: 30, n: 1, randomness: Some(0.0), output_type: CellType("B".into()) };
+        let s = Rule1DSubrule { current_type: CellType::from("A"), criteria_type: CellType::from("A"),
+            wolfram_code: 30, n: 1, randomness: Some(0.0), output_type: CellType::from("B") };
         assert!(s.validate().is_ok());
         let bad = Rule1DSubrule { n: 0, ..s.clone() };
         assert_eq!(bad.validate(), Err(RuleError::InvalidN1D(0)));
@@ -46,7 +47,9 @@ mod tests {
 
     #[test]
     fn rule2d_validation() {
-        let s = Rule2DSubrule { current_type: CellType("A".into()), criteria_type: CellType("B".into()), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: CellType("B".into()) };
+        let s = Rule2DSubrule { current_type: CellType::from("A"), criteria_type: CellType::from("B"),
+            count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+            randomness: None, output_type: CellType::from("B") };
         assert!(s.validate().is_ok());
         let bad = Rule2DSubrule { range: 0, ..s.clone() };
         assert_eq!(bad.validate(), Err(RuleError::InvalidRange2D));
@@ -54,10 +57,12 @@ mod tests {
 
     #[test]
     fn grid2d_simple_growth() {
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         // Any A with at least 1 B neighbor becomes B
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(),
+            count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+            randomness: None, output_type: b.clone() }] };
         let width = 5; let height = 5; let hist = 3;
         let mut init = vec![a.clone(); width*height];
         // seed one B in center
@@ -72,8 +77,8 @@ mod tests {
 
     #[test]
     fn grid1d_wolfram_smoke() {
-        let x = CellType("X".into());
-        let y = CellType("Y".into());
+        let x = CellType::from("X");
+        let y = CellType::from("Y");
         let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128 << 2, n: 1, randomness: None, output_type: y.clone() };
         let rule = Rule1D { subrules: vec![sub] };
         let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
@@ -84,8 +89,8 @@ mod tests {
 
     #[test]
     fn two_d_von_neumann_neighbors() {
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
@@ -99,8 +104,8 @@ mod tests {
 
     #[test]
     fn two_d_langdon_diagonals() {
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Langdon, randomness: None, output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
@@ -114,8 +119,8 @@ mod tests {
 
     #[test]
     fn two_d_straightline_cardinals() {
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         // Need two straight (cardinal) neighbors to trigger
         let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
@@ -131,7 +136,7 @@ mod tests {
     #[test]
     fn config_roundtrip_build() {
         use crate::config::{CellaConfig, Config2D};
-        let alive = CellType("Alive".into());
+        let alive = CellType::from("Alive");
         let inactive = CellType::inactive();
         let rule = Rule2D { subrules: vec![
             // Overpopulation: Alive with >=4 Alive neighbors becomes Inactive
@@ -142,10 +147,11 @@ mod tests {
             Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
         ]};
         let w=4; let h=4; let hist=3;
-        let mut initial = vec![inactive.0.clone(); w*h];
-        initial[1*w + 1] = alive.0.clone();
-        initial[1*w + 2] = alive.0.clone();
-        initial[1*w + 3.min(w-1)] = alive.0.clone();
+        // TODO consider changing config to Spur Vec
+        let mut initial = vec![inactive.as_str().to_string(); w*h];
+        initial[1*w + 1] = alive.as_str().to_string();
+        initial[1*w + 2] = alive.as_str().to_string();
+        initial[1*w + 3.min(w-1)] = alive.as_str().to_string();
         let cfg = CellaConfig::D2(Config2D { width:w, height:h, history_limit:hist, initial, rule });
         let json = serde_json::to_string(&cfg).unwrap();
         let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
@@ -162,8 +168,8 @@ mod more_tests {
 
     #[test]
     fn grid1d_n2_pattern() {
-        let x = CellType("X".into());
-        let y = CellType("Y".into());
+        let x = CellType::from("X");
+        let y = CellType::from("Y");
         // For n=2, window len=5. Pattern [0,0,1,0,0] -> idx = 4
         let code: u128 = 1u128 << 4;
         let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: y.clone() };
@@ -219,10 +225,10 @@ mod more_tests {
     #[test]
     fn knight_serde_roundtrip() {
         let sub = Rule2DSubrule {
-            current_type: CellType("A".into()), criteria_type: CellType("B".into()),
+            current_type: CellType::from("A"), criteria_type: CellType::from("B"),
             count: 2, op: CountOp::Eq, limit: None, range: 1,
             neighborhood: Neighborhood2D::Knight, randomness: None,
-            output_type: CellType("A".into()),
+            output_type: CellType::from("A"),
         };
         let json = serde_json::to_string(&sub).unwrap();
         assert!(json.contains("\"Knight\""), "serialised JSON must contain \"Knight\"");
@@ -234,8 +240,8 @@ mod more_tests {
     fn knight_grid_step() {
         // 7x7 grid; center (3,3) is A; all 8 knight squares are B.
         // Rule: A with >=1 B knight-neighbor becomes B.
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![Rule2DSubrule {
             current_type: a.clone(), criteria_type: b.clone(),
             count: 1, op: CountOp::Gt, limit: None, range: 1,
@@ -310,8 +316,8 @@ mod more_tests {
         }
 
         // --- 3. Multi-step grid stress: 20x20 grid, 10 steps, Knight rule, no panic ---
-        let a = CellType("A".into());
-        let b = CellType("B".into());
+        let a = CellType::from("A");
+        let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![
             // Survival: A with 2..=4 B knight-neighbors stays A
             Rule2DSubrule {
@@ -363,7 +369,7 @@ mod more_tests {
 
     #[test]
     fn randomness_bounds() {
-        let x = CellType("X".into());
+        let x = CellType::from("X");
         // 1D invalid randomness
         let bad1 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1, n: 1, randomness: Some(1.5), output_type: x.clone() };
         assert_eq!(bad1.validate(), Err(RuleError::InvalidRandomness));

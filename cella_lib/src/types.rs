@@ -1,10 +1,16 @@
 //! Core types for cella: cell kinds and per-cell state.
-use serde::{Deserialize, Serialize};
+use lasso2::{Spur, ThreadedRodeo};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Name used for the implicit inactive/background cell type.
 pub const INACTIVE: &str = "Inactive";
+
+static INTERNER: OnceLock<ThreadedRodeo> = OnceLock::new();
+#[inline]
+pub fn interner() -> &'static ThreadedRodeo { INTERNER.get_or_init(ThreadedRodeo::default) }
 
 /// A semantic label for a cell's type/state.
 ///
@@ -15,34 +21,58 @@ pub const INACTIVE: &str = "Inactive";
 /// Examples
 /// ```rust
 /// use cella_lib::CellType;
-/// let alive = CellType("Alive".into());
+/// let alive = CellType::from("Alive");
 /// let inactive = CellType::inactive();
 /// assert_ne!(alive, inactive);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CellType(pub String);
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CellType(pub Spur);
 
 impl CellType {
     /// Convenience constructor for the inactive/background type.
     ///
     /// ```rust
     /// use cella_lib::{CellType, INACTIVE};
+    /// use cella_lib::types::interner;
     /// let t = CellType::inactive();
-    /// assert_eq!(t.0, INACTIVE);
+    /// assert_eq!(t.0, interner().get_or_intern(INACTIVE));
     ///
-    /// let t2 = CellType("testType".into());
+    /// let t2 = CellType::from("testType");
     /// assert_ne!(t, t2);
-    /// assert_eq!(t2.0, String::from("testType"));
+    /// assert_eq!(t2.as_str(), String::from("testType"));
     /// ```
-    pub fn inactive() -> Self { CellType(INACTIVE.to_string()) }
+    #[inline] pub fn new(name: &str) -> Self{CellType(interner().get_or_intern(name))}
+    #[inline] pub fn as_str(&self) -> &'static str { interner().resolve(&self.0) }
+    pub fn inactive() -> Self { Self::new(INACTIVE) }
 }
+
+// ergo
+impl From<&str> for CellType { fn from(s: &str) -> Self { CellType::new(s) }}
+impl From<String> for CellType { fn from(s: String) -> Self { CellType::new(&s) }}
 
 impl Default for CellType {
     fn default() -> Self { CellType::inactive() }
 }
 
 impl fmt::Display for CellType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.as_str()) }
+}
+
+impl fmt::Debug for CellType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "CellType({:?}", self.as_str()) }
+}
+
+impl Serialize for CellType {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CellType {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(CellType::new(&s))
+    }
 }
 
 /// Per-cell state tracked by a grid.
@@ -65,7 +95,7 @@ impl CellState {
     ///
     /// ```rust
     /// use cella_lib::{CellState, CellType};
-    /// let st = CellState::new(CellType("Alive".into()), 3);
+    /// let st = CellState::new(CellType::from("Alive"), 3);
     /// assert_eq!(st.age_in_state, 0);
     /// ```
     pub fn new(current: CellType, history_limit: usize) -> Self {
@@ -80,22 +110,22 @@ impl CellState {
     ///
     /// ```rust
     /// use cella_lib::{CellState, CellType};
-    /// let mut st = CellState::new(CellType("A".into()), 2);
-    /// st.transition(&CellType("B".into()));
+    /// let mut st = CellState::new(CellType::from("A"), 2);
+    /// st.transition(&CellType::from("B"));
     /// assert_eq!(st.history.len(), 1);
     /// assert_eq!(st.age_in_state, 0);
-    /// st.transition(&CellType("B".into()));
+    /// st.transition(&CellType::from("B"));
     /// assert_eq!(st.age_in_state, 1);
     /// ```
     pub fn transition(&mut self, next: &CellType) {
         if &self.current == next {
             self.age_in_state = self.age_in_state.saturating_add(1);
         } else {
-            self.history.push_back(self.current.clone());
+            self.history.push_back(self.current);
             while self.history.len() > self.history_limit {
                 self.history.pop_front();
             }
-            self.current = next.clone();
+            self.current = *next;
             self.age_in_state = 0;
         }
     }

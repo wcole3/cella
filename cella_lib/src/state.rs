@@ -1,9 +1,13 @@
 //! Grid state snapshots and (de)serialization helpers.
-use serde::{Deserialize, Serialize};
-use crate::types::CellState;
-use crate::rules::{Rule1D, Rule2D};
+
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
+use crate::rules::{Rule1D, Rule2D};
+use crate::types::{interner, CellState};
+use crate::CellType;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use lasso2::Spur;
 
 /// Serializable snapshot of either a 1D or 2D grid.
 ///
@@ -12,7 +16,7 @@ use crate::grid2d::Grid2D;
 /// Example
 /// ```rust
 /// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState, CountOp};
-/// let alive = CellType("Alive".into());
+/// let alive = CellType::from("Alive");
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
@@ -42,8 +46,8 @@ pub enum GridState {
         cells: Vec<CellState>,
         step: u64,
         rule: Rule1D,
-        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
-        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+        #[serde(default)] counts_current: HashMap<String, u64>,
+        #[serde(default)] peak_counts: HashMap<String, u64>,
     },
     D2 {
         width: usize,
@@ -52,16 +56,32 @@ pub enum GridState {
         cells: Vec<CellState>,
         step: u64,
         rule: Rule2D,
-        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
-        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+        #[serde(default)] counts_current: HashMap<String, u64>,
+        #[serde(default)] peak_counts: HashMap<String, u64>,
     },
 }
 
 impl GridState {
     /// Snapshot a 1D grid.
-    pub fn from_grid1d(g: &Grid1D) -> Self { Self::D1 { width: g.width, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
+    pub fn from_grid1d(g: &Grid1D) -> Self {
+        // convert the Spur maps into String keys
+        let (current_count_map, peak_count_map)
+            = convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
+        // build the GridState
+        Self::D1 { width: g.width,
+        history_limit: g.history_limit, cells: g.cells.clone(), step: g.step,
+        rule: g.rule.clone(), counts_current: current_count_map,
+        peak_counts: peak_count_map }
+    }
     /// Snapshot a 2D grid.
-    pub fn from_grid2d(g: &Grid2D) -> Self { Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
+    pub fn from_grid2d(g: &Grid2D) -> Self {
+        let (current_count_map, peak_count_map)
+            = convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
+        // build the GridState
+        Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit,
+            cells: g.cells.clone(), step: g.step, rule: g.rule.clone(),
+            counts_current: current_count_map, peak_counts: peak_count_map }
+    }
 
     /// Serialize to pretty JSON.
     pub fn to_json_pretty(&self) -> String { serde_json::to_string_pretty(self).unwrap() }
@@ -76,14 +96,15 @@ impl Grid1D {
     /// Build a Grid1D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D1 { width, history_limit, cells, step, rule, counts_current, peak_counts } => {
-                let mut counts = counts_current.clone();
-                if counts.is_empty() {
-                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
-                }
-                let mut peaks = peak_counts.clone();
-                if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+            // TODO come back and determine if these clones are really necessary.
+            GridState::D1 { width, history_limit, cells, step,
+                rule, counts_current, peak_counts } => {
+                let (new_counts, new_peak_counts) =
+                    convert_map_string_to_spur(cells, counts_current, peak_counts);
+
+                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(),
+                    step: *step, rule: rule.clone(), counts_current: new_counts, peak_counts: new_peak_counts,
+                    inactive: CellType::inactive() })
             }
             _ => None,
         }
@@ -94,14 +115,14 @@ impl Grid2D {
     /// Build a Grid2D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D2 { width, height, history_limit, cells, step, rule, counts_current, peak_counts } => {
-                let mut counts = counts_current.clone();
-                if counts.is_empty() {
-                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
-                }
-                let mut peaks = peak_counts.clone();
-                if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+            // TODO come back and determine if these clones are really necessary.
+            GridState::D2 { width, height, history_limit, cells,
+                step, rule, counts_current, peak_counts } => {
+                let (new_counts, new_peak_counts) =
+                    convert_map_string_to_spur(cells, counts_current, peak_counts);
+                Some(Self { width: *width, height: *height, history_limit: *history_limit,
+                    cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: new_counts,
+                    peak_counts: new_peak_counts, inactive: CellType::inactive() })
             }
             _ => None,
         }
@@ -112,3 +133,44 @@ impl Grid2D {
 ///
 /// Prefer `GridState::from_grid2d(&g).to_json_pretty()`.
 pub fn grid2d_to_json(g: &Grid2D) -> String { GridState::from_grid2d(g).to_json_pretty() }
+
+
+/// Helper for converting from HashMap<String, u64> to HashMap<Spur, u64>
+fn convert_map_string_to_spur(cells: &Vec<CellState>, counts_current: &HashMap<String, u64>,
+                                  peak_counts: &HashMap<String, u64>) -> (HashMap<Spur, u64>, HashMap<Spur, u64>) {
+    let mut new_counts: HashMap<Spur, u64> = HashMap::new();
+    let mut new_peak_counts: HashMap<Spur, u64> = HashMap::new();
+    if counts_current.is_empty() {
+        // populate with cell counts
+        for c in cells { *new_counts.entry(c.current.0).or_insert(0) += 1; }
+    } else {
+        // copy from existing counts
+        for (k, v) in counts_current.iter() {
+            new_counts.insert(interner().get_or_intern(k), *v);
+        }
+    }
+    // populate with peak counts
+    if peak_counts.is_empty() {
+        // start with current counts
+        new_peak_counts = new_counts.clone();
+    } else {
+        for (k, v) in peak_counts.iter() {
+            new_peak_counts.insert(interner().get_or_intern(k), *v);
+        }
+    }
+    (new_counts, new_peak_counts)
+}
+
+// Helper for converting from HashMap<Spur, u64> to HashMap<String, u64>
+fn convert_map_spur_to_string(counts_current: &HashMap<Spur, u64>, peak_counts: &HashMap<Spur, u64>) -> (HashMap<String, u64>, HashMap<String, u64>) {
+    let mut new_counts: HashMap<String, u64> = HashMap::new();
+    let mut new_peak_counts: HashMap<String, u64> = HashMap::new();
+    for (k, v) in counts_current.iter() {
+        new_counts.insert(interner().resolve(k).to_string(), *v);
+    }
+    for (k, v) in peak_counts.iter() {
+        new_peak_counts.insert(interner().resolve(k).to_string(), *v);
+    }
+    (new_counts, new_peak_counts)
+}
+

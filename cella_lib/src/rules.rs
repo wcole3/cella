@@ -8,13 +8,13 @@
 //! - current=Inactive, criteria=X, wolfram_code=30 => output=X (allow births from Inactive)
 //! Without the second subrule, a single X seed cannot spread because
 //! Inactive cells would never transition to X.
+use crate::types::CellType;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use crate::types::CellType;
 
 mod serde_u128 {
-    use serde::{Deserializer, Serializer};
     use serde::de::{self, Visitor};
+    use serde::{Deserializer, Serializer};
     use std::fmt;
 
     pub fn serialize<S: Serializer>(val: &u128, s: S) -> Result<S::Ok, S::Error> {
@@ -85,7 +85,7 @@ pub enum RuleError {
 /// ```rust
 /// use cella_lib::{CellType, Rule1DSubrule};
 /// // Match only the central cell being X with neighbors not X (pattern 010 => idx=2)
-/// let sub = Rule1DSubrule { current_type: CellType("X".into()), criteria_type: CellType("X".into()), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: CellType("Y".into()) };
+/// let sub = Rule1DSubrule { current_type: CellType::from("X"), criteria_type: CellType::from("X"), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: CellType::from("Y") };
 /// assert!(sub.validate().is_ok());
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -159,14 +159,14 @@ impl Rule1DSubrule {
     ///
     /// ```rust
     /// use cella_lib::{CellType, Rule1DSubrule};
-    /// let x = CellType("X".into());
-    /// let y = CellType("Y".into());
+    /// let x = CellType::from("X");
+    /// let y = CellType::from("Y");
     /// let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: y.clone() };
     /// let window = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     /// let out = sub.applies_and_output(&x, &window);
-    /// assert_eq!(out, Some(y));
+    /// assert_eq!(out, Some(&y));
     /// ```
-    pub fn applies_and_output(&self, center_current: &CellType, neighborhood: &[CellType]) -> Option<CellType> {
+    pub fn applies_and_output(&self, center_current: &CellType, neighborhood: &Vec<CellType>) -> Option<&CellType> {
         if center_current != &self.current_type { return None; }
         let crit = &self.criteria_type;
         let window: Vec<bool> = neighborhood.iter().map(|t| t == crit).collect();
@@ -178,7 +178,7 @@ impl Rule1DSubrule {
                 let v: f64 = rng.r#gen();
                 if v < r { return None; }
             }
-            return Some(self.output_type.clone());
+            return Some(&self.output_type);
         }
         None
     }
@@ -200,8 +200,8 @@ impl Rule1D {
 /// Example
 /// ```rust
 /// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
-/// let a = CellType("A".into());
-/// let b = CellType("B".into());
+/// let a = CellType::from("A");
+/// let b = CellType::from("B");
 /// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
 /// assert!(s.validate().is_ok());
 /// ```
@@ -209,14 +209,14 @@ impl Rule1D {
 /// StraightLine neighborhood example
 /// ```rust
 /// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
-/// let a = CellType("A".into());
-/// let b = CellType("B".into());
+/// let a = CellType::from("A");
+/// let b = CellType::from("B");
 /// let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() };
 /// // Place two B's in cardinal directions: up (0,-1) and right (+1,0)
 /// let out = sub.applies_and_output(&a, |dx, dy| {
 ///     if (dx, dy) == (0, -1) || (dx, dy) == (1, 0) { b.clone() } else { CellType::inactive() }
 /// });
-/// assert_eq!(out, Some(b));
+/// assert_eq!(out, Some(&b));
 /// ```
 /// Comparison operator for neighbor counts.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -317,8 +317,8 @@ impl Rule2DSubrule {
     }
 
     /// Evaluate this subrule by counting matching neighbors and applying op/limit.
-    pub fn applies_and_output<F>(&self, center_current: &CellType, mut get_neighbor: F) -> Option<CellType>
-    where F: FnMut(i32, i32) -> CellType {
+    pub fn applies_and_output<F>(&self, center_current: &CellType, get_neighbor: F) -> Option<&CellType>
+    where F: Fn(i32, i32) -> CellType {
         if center_current != &self.current_type { return None; }
         let n = self.range as i32;
         // Knight moves can reach up to 2*range steps per axis (N hops × max 2 per hop),
@@ -346,7 +346,7 @@ impl Rule2DSubrule {
                 let v: f64 = rng.r#gen();
                 if v < r { return None; }
             }
-            return Some(self.output_type.clone());
+            return Some(&self.output_type);
         }
         None
     }

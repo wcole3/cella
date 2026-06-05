@@ -59,7 +59,8 @@ fn hash_grid1d_state(g: &Grid1D) -> u64 {
     acc ^= fnv1a64(&g.width.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
     for c in &g.cells {
-        acc ^= fnv1a64(c.current.0.as_bytes());
+        // TODO think about this
+        acc ^= fnv1a64(c.current.as_str().as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
     }
     acc
@@ -71,7 +72,7 @@ fn hash_grid2d_state(g: &Grid2D) -> u64 {
     acc ^= fnv1a64(&g.height.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
     for c in &g.cells {
-        acc ^= fnv1a64(c.current.0.as_bytes());
+        acc ^= fnv1a64(c.current.as_str().as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
     }
     acc
@@ -130,7 +131,7 @@ fn run_benchmark_2d(name: &str, g_initial: &Grid2D, steps: usize) {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
-        let elapsed = t0.elapsed().as_millis();
+        let elapsed = t0.elapsed().as_nanos() / 1_000_000;
         record_bench(name, elapsed);
         if i == 0 {
             if ascii_enabled() { print_ascii_2d(&format!("{}: final", name), &g); }
@@ -145,7 +146,7 @@ fn run_benchmark_1d(name: &str, g_initial: &Grid1D, steps: usize) {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
-        let elapsed = t0.elapsed().as_millis();
+        let elapsed = t0.elapsed().as_nanos() / 1_000_000;
         record_bench(name, elapsed);
         if i == 0 {
             if ascii_enabled() { print_ascii_1d(&format!("{}: final", name), &g); }
@@ -173,7 +174,7 @@ fn configs_dir() -> PathBuf {
 
 fn export_config_2d(name: &str, g: &Grid2D) {
     use cella_lib::config::{CellaConfig, Config2D};
-    let initial: Vec<String> = g.cells.iter().map(|c| c.current.0.clone()).collect();
+    let initial: Vec<String> = g.cells.iter().map(|c| c.current.as_str().to_string()).collect();
     let cfg = CellaConfig::D2(Config2D {
         width: g.width,
         height: g.height,
@@ -192,7 +193,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
 
 fn export_config_1d(name: &str, g: &Grid1D) {
     use cella_lib::config::{CellaConfig, Config1D};
-    let initial: Vec<String> = g.cells.iter().map(|c| c.current.0.clone()).collect();
+    let initial: Vec<String> = g.cells.iter().map(|c| c.current.as_str().to_string()).collect();
     let cfg = CellaConfig::D1(Config1D {
         width: g.width,
         history_limit: g.history_limit,
@@ -247,15 +248,15 @@ fn print_ascii_1d(label: &str, g: &Grid1D) {
     let mut names: Vec<String> = g
         .cells
         .iter()
-        .map(|c| c.current.0.clone())
+        .map(|c| c.current.as_str().to_string())
         .filter(|n| n != INACTIVE)
         .collect();
     let map: BTreeMap<String, char> = ascii_symbols_map(&mut names);
     let mut line = String::with_capacity(g.width);
     for i in 0..g.width {
-        let ty = &g.cells[i].current.0;
+        let ty = g.cells[i].current.as_str();
         if ty == INACTIVE { line.push('.'); }
-        else { line.push(*map.get(ty).unwrap_or(&'?')); }
+        else { line.push(*map.get(&ty.to_string()).unwrap_or(&'?')); }
     }
     if let Ok(mut f) = ascii_open_for(label) {
         let _ = writeln!(f, "[ascii] {} (1D w={})", label, g.width);
@@ -269,7 +270,7 @@ fn print_ascii_2d(label: &str, g: &Grid2D) {
     let mut names: Vec<String> = g
         .cells
         .iter()
-        .map(|c| c.current.0.clone())
+        .map(|c| c.current.as_str().to_string())
         .filter(|n| n != INACTIVE)
         .collect();
     let map: BTreeMap<String, char> = ascii_symbols_map(&mut names);
@@ -279,9 +280,9 @@ fn print_ascii_2d(label: &str, g: &Grid2D) {
             let mut line = String::with_capacity(g.width);
             for x in 0..g.width {
                 let i = y * g.width + x;
-                let ty = &g.cells[i].current.0;
+                let ty = g.cells[i].current.as_str();
                 if ty == INACTIVE { line.push('.'); }
-                else { line.push(*map.get(ty).unwrap_or(&'?')); }
+                else { line.push(*map.get(&ty.to_string()).unwrap_or(&'?')); }
             }
             let _ = writeln!(f, "{}", line);
         }
@@ -290,7 +291,7 @@ fn print_ascii_2d(label: &str, g: &Grid2D) {
 }
 
 fn stress_2d_life_like_moore() {
-    let alive = CellType("Alive".into());
+    let alive = CellType::from("Alive");
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with >=4 neighbors becomes Inactive
@@ -312,8 +313,8 @@ fn stress_2d_life_like_moore() {
 }
 
 fn stress_2d_von_neumann_threshold() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
@@ -330,8 +331,8 @@ fn stress_2d_von_neumann_threshold() {
 }
 
 fn stress_2d_straightline_threshold() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 3, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
@@ -347,8 +348,8 @@ fn stress_2d_straightline_threshold() {
 }
 
 fn stress_2d_langdon_diagonals() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::Langdon, randomness: None, output_type: b.clone() },
@@ -363,8 +364,8 @@ fn stress_2d_langdon_diagonals() {
 }
 
 fn stress_2d_knight_neighborhood() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // Conway-style birth/survival using Knight neighborhood (range=1 = 8 classic L-move squares)
     let rule = Rule2D { subrules: vec![
         // Overpopulation: A with >4 B knight-neighbors becomes B
@@ -385,7 +386,7 @@ fn stress_2d_knight_neighborhood() {
 }
 
 fn stress_1d_rule30_center_seed() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
     let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
     let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
@@ -400,7 +401,7 @@ fn stress_1d_rule30_center_seed() {
 }
 
 fn stress_1d_n2_alternating_code() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
     let code: u128 = 0xAAAAAAAA; // alternating bits over first 32 patterns
     // TODO make rule more interesting
@@ -417,7 +418,7 @@ fn stress_1d_n2_alternating_code() {
 }
 
 fn stress_1d_n3_custom_code() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
     // n=3 -> 2^(2*3+1)=2^7=128 patterns; pick a code with some structure
     let code: u128 = 0xF0F0_F0F0_F0F0_F0F0;
@@ -437,9 +438,9 @@ fn stress_1d_n3_custom_code() {
 // -------- Larger stress tests to exercise multithreading --------
 
 fn stress_1d_three_state_cycle() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     let any = 0xFFu128;
     let rule = Rule1D { subrules: vec![
         Rule1DSubrule { current_type: a.clone(), criteria_type: a.clone(), wolfram_code: any, n: 1, randomness: None, output_type: b.clone() },
@@ -455,9 +456,9 @@ fn stress_1d_three_state_cycle() {
 }
 
 fn stress_2d_three_state_cycle() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
         Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: c.clone() },
@@ -475,7 +476,7 @@ fn stress_2d_three_state_cycle() {
 // -------- Larger stress tests to exercise multithreading --------
 
 fn stress_2d_large_moore_256() {
-    let alive = CellType("Alive".into());
+    let alive = CellType::from("Alive");
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with >=4 neighbors becomes Inactive
@@ -505,8 +506,8 @@ fn stress_2d_large_moore_256() {
 }
 
 fn stress_2d_large_vn_256() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
@@ -522,7 +523,7 @@ fn stress_2d_large_vn_256() {
 }
 
 fn stress_1d_large_rule30_2049() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
     let sub_active = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
     let sub_inactive = Rule1DSubrule { current_type: inactive.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() };
@@ -810,16 +811,16 @@ fn stress_config_load_and_run() {
     let a = "Alive".to_string();
     let b = "Inactive".to_string();
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { 
-            current_type: CellType(b.clone()), 
-            criteria_type: CellType(a.clone()), 
-            count: 0, 
-            op: CountOp::Gt, 
-            limit: None, 
-            range: 1, 
-            neighborhood: Neighborhood2D::Moore, 
-            randomness: None, 
-            output_type: CellType(a.clone()) 
+        Rule2DSubrule {
+            current_type: CellType::from(b.as_str()),
+            criteria_type: CellType::from(a.as_str()),
+            count: 0,
+            op: CountOp::Gt,
+            limit: None,
+            range: 1,
+            neighborhood: Neighborhood2D::Moore,
+            randomness: None,
+            output_type: CellType::from(a.as_str()) 
         }
     ]};
     

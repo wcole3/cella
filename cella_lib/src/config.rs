@@ -105,7 +105,7 @@ impl CellaConfig {
         match self {
             CellaConfig::D1(c) => {
                 if c.initial.len() != c.width { return None; }
-                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
                 Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()))
             }
             _ => None,
@@ -119,7 +119,7 @@ impl CellaConfig {
         match self {
             CellaConfig::D2(c) => {
                 if c.initial.len() != c.width * c.height { return None; }
-                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
                 Some(Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone()))
             }
             _ => None,

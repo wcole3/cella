@@ -3,8 +3,8 @@ use cella_lib::*;
 #[test]
 fn one_d_randomness_zero_always_applies() {
     // Pattern: [Inactive, X, Inactive] with n=1 has index 2.
-    let x = CellType("X".into());
-    let y = CellType("Y".into());
+    let x = CellType::from("X");
+    let y = CellType::from("Y");
     let sub = Rule1DSubrule {
         current_type: x.clone(),
         criteria_type: x.clone(),
@@ -23,8 +23,8 @@ fn one_d_randomness_zero_always_applies() {
 #[test]
 fn two_d_randomness_one_never_applies() {
     // Center A has one B neighbor, threshold 1 satisfied, but randomness=1.0 prevents application.
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let sub = Rule2DSubrule {
         current_type: a.clone(),
         criteria_type: b.clone(),

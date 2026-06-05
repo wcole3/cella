@@ -1,18 +1,19 @@
 use cella_lib::*;
 
+// TODO where is this used?
 fn center_apply(sub: &Rule2DSubrule, current: &CellType, crit: &CellType, points: &[(i32,i32)]) -> Option<CellType> {
     // Build a small neighbor set from a list of relative offsets
     use std::collections::HashSet;
     let set: HashSet<(i32,i32)> = points.iter().copied().collect();
     sub.applies_and_output(current, |dx, dy| {
         if set.contains(&(dx, dy)) { crit.clone() } else { CellType::inactive() }
-    })
+    }).map(|ct| ct.clone())
 }
 
 #[test]
 fn countop_validation_success_variants() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // eq only valid without limit
     let eq_ok = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
     assert!(eq_ok.validate().is_ok());
@@ -36,8 +37,8 @@ fn countop_validation_success_variants() {
 
 #[test]
 fn countop_validation_failure_variants() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // eq with limit is invalid
     let eq_bad = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Eq, limit: Some(3), range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
     assert_eq!(eq_bad.validate(), Err(RuleError::InvalidRange2D));
@@ -61,9 +62,9 @@ fn countop_validation_failure_variants() {
 
 #[test]
 fn countop_applies_eq_exact() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let out = CellType("O".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let out = CellType::from("O");
     let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: out.clone() };
     // Provide exactly three neighbors
     let res = center_apply(&sub, &a, &b, &[(-1,0),(1,0),(0,1)]);
@@ -75,10 +76,10 @@ fn countop_applies_eq_exact() {
 
 #[test]
 fn countop_applies_gt_and_lt() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let outg = CellType("OG".into());
-    let outl = CellType("OL".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let outg = CellType::from("OG");
+    let outl = CellType::from("OL");
     let gt = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: outg.clone() };
     let lt = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Lt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: outl.clone() };
     // gt: 2 neighbors should pass, 1 should not
@@ -96,9 +97,9 @@ fn countop_applies_gt_and_lt() {
 #[test]
 fn countop_applies_between_gt() {
     // between via Gt: count..=limit
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let out = CellType("OB".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let out = CellType::from("OB");
     let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: Some(3), range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: out.clone() };
     // 2 neighbors -> pass
     assert_eq!(center_apply(&sub, &a, &b, &[(-1,0),(1,0)]), Some(out.clone()));
@@ -113,9 +114,9 @@ fn countop_applies_between_gt() {
 #[test]
 fn countop_applies_between_lt() {
     // between via Lt: limit..=count
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let out = CellType("OC".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let out = CellType::from("OC");
     let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Lt, limit: Some(2), range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: out.clone() };
     // 2 neighbors -> pass (>=2 and <=3)
     assert_eq!(center_apply(&sub, &a, &b, &[(-1,0),(1,0)]), Some(out.clone()));

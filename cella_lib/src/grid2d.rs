@@ -1,8 +1,10 @@
 //! 2D grid implementation.
-use serde::{Deserialize, Serialize};
-use crate::types::{CellState, CellType};
+
 use crate::rules::Rule2D;
 use crate::threads::thread_count;
+use crate::types::{CellState, CellType};
+use lasso2::Spur;
+use serde::{Deserialize, Serialize};
 
 /// 2D grid containing cells and a 2D rule.
 ///
@@ -12,7 +14,7 @@ use crate::threads::thread_count;
 /// Example
 /// ```rust
 /// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, CountOp};
-/// let alive = CellType("Alive".into());
+/// let alive = CellType::from("Alive");
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
@@ -46,9 +48,11 @@ pub struct Grid2D {
     /// Rule used for updates.
     pub rule: Rule2D,
     /// Current count of cells per type name.
-    pub counts_current: std::collections::HashMap<String, u64>,
+    pub counts_current: std::collections::HashMap<Spur, u64>,
     /// Peak (max-so-far) count of cells per type name since start/reset.
-    pub peak_counts: std::collections::HashMap<String, u64>,
+    pub peak_counts: std::collections::HashMap<Spur, u64>,
+    /// Reference to inactive cell type.
+    pub inactive: CellType,
 }
 
 impl std::fmt::Debug for Grid2D {
@@ -73,10 +77,11 @@ impl Grid2D {
     pub fn new(width: usize, height: usize, history_limit: usize, initial: Vec<CellType>, rule: Rule2D) -> Self {
         assert_eq!(initial.len(), width * height, "initial types len must equal width*height");
         let cells: Vec<CellState> = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
-        let mut counts_current: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for c in &cells { *counts_current.entry(c.current.0.clone()).or_insert(0) += 1; }
+        let mut counts_current: std::collections::HashMap<Spur, u64> = std::collections::HashMap::new();
+        for c in &cells { *counts_current.entry(c.current.0).or_insert(0) += 1; }
         let peak_counts = counts_current.clone();
-        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts }
+        let inactive = CellType::inactive();
+        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts, inactive }
     }
 
     fn idx(&self, x: isize, y: isize) -> Option<usize> {
@@ -86,20 +91,17 @@ impl Grid2D {
         Some(yu * self.width + xu)
     }
 
-    fn get_type_or_inactive(&self, x: isize, y: isize) -> CellType {
-        match self.idx(x, y) { Some(i) => self.cells[i].current.clone(), None => CellType::inactive() }
+    fn get_type_or_inactive(&self, x: isize, y: isize) -> &CellType {
+        match self.idx(x, y) { Some(i) => &self.cells[i].current, None => &self.inactive }
     }
 
-    fn recompute_counts_from_cells(cells: &[CellState]) -> std::collections::HashMap<String, u64> {
-        let mut map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for c in cells {
-            if let Some(count) = map.get_mut(c.current.0.as_str()) {
-                *count += 1;
-            } else {
-                map.insert(c.current.0.clone(), 1);
-            }
+    fn recompute_counts_from_cells(&mut self) {
+        // clear the current counts
+        self.counts_current.clear();
+        for c in &self.cells {
+            *self.counts_current.entry(c.current.0).or_insert(0) += 1;
+            *self.peak_counts.entry(c.current.0).or_insert(0) += 1;
         }
-        map
     }
 
     /// Advance the automaton by one step using double-buffering.
@@ -109,7 +111,7 @@ impl Grid2D {
     /// May run in parallel depending on the `threads` setting in
     /// `cella.properties` at the repository root.
     pub fn step(&mut self) {
-        let mut next = self.cells.clone();
+        let mut next: Vec<&CellType> = Vec::with_capacity(self.width * self.height);
         let threads = thread_count();
         let total = self.width * self.height;
 
@@ -118,17 +120,20 @@ impl Grid2D {
                 for x in 0..self.width {
                     let i = y * self.width + x;
                     let current_type = &self.cells[i].current;
-                    let mut decided: Option<CellType> = None;
+                    let mut decided: Option<&CellType> = None;
                     'sub: for s in &self.rule.subrules {
                         if current_type != &s.current_type { continue; }
                         let out = s.applies_and_output(current_type, |dx, dy| {
-                            self.get_type_or_inactive(x as isize + dx as isize, y as isize + dy as isize)
+                            *self.get_type_or_inactive(x as isize + dx as isize, y as isize + dy as isize)
                         });
                         if let Some(o) = out { decided = Some(o); break 'sub; }
                     }
-                    let new_type = decided.unwrap_or_else(CellType::inactive);
-                    next[i].transition(&new_type);
+                    let new_type = decided.unwrap_or_else(|| &self.inactive);
+                    next.push(new_type);
                 }
+            }
+            for (i, ty) in next.drain(..).enumerate() {
+                self.cells[i].transition(&ty);
             }
         } else {
             // Parallel path using scoped threads — borrows cells & rule directly
@@ -137,34 +142,35 @@ impl Grid2D {
             let width = self.width;
             let height = self.height;
             let chunk = (total + threads - 1) / threads;
+            let inactive = &self.inactive;
 
-            let all_results: Vec<Vec<(usize, CellType)>> = std::thread::scope(|s| {
+            let all_results: Vec<Vec<(usize, &CellType)>> = std::thread::scope(|s| {
                 let handles: Vec<_> = (0..threads)
                     .filter_map(|t| {
                         let start = t * chunk;
                         if start >= total { return None; }
                         let end = ((t + 1) * chunk).min(total);
                         Some(s.spawn(move || {
-                            let mut out: Vec<(usize, CellType)> = Vec::with_capacity(end - start);
+                            let mut out: Vec<(usize, &CellType)> = Vec::with_capacity(end - start);
                             for idx in start..end {
                                 let y = idx / width;
                                 let x = idx % width;
                                 let current_type = &cells[idx].current;
-                                let mut decided: Option<CellType> = None;
+                                let mut decided: Option<&CellType> = None;
                                 'sub: for sr in &rule.subrules {
                                     if current_type != &sr.current_type { continue; }
                                     let out_ty = sr.applies_and_output(current_type, |dx, dy| {
                                         let nx = x as isize + dx as isize;
                                         let ny = y as isize + dy as isize;
                                         if nx < 0 || ny < 0 || (nx as usize) >= width || (ny as usize) >= height {
-                                            CellType::inactive()
+                                            *inactive
                                         } else {
-                                            cells[(ny as usize) * width + (nx as usize)].current.clone()
+                                            cells[(ny as usize) * width + (nx as usize)].current
                                         }
                                     });
                                     if let Some(o) = out_ty { decided = Some(o); break 'sub; }
                                 }
-                                let new_type = decided.unwrap_or_else(CellType::inactive);
+                                let new_type = decided.unwrap_or_else(|| &inactive);
                                 out.push((idx, new_type));
                             }
                             out
@@ -176,16 +182,13 @@ impl Grid2D {
 
             for chunk_results in all_results {
                 for (idx, ty) in chunk_results {
-                    next[idx].transition(&ty);
+                    self.cells[idx].transition(&ty);
                 }
             }
         }
 
         // Update counts and peaks
-        let counts = Self::recompute_counts_from_cells(&next);
-        self.counts_current = counts.clone();
-        for (k, v) in counts { let e = self.peak_counts.entry(k).or_insert(0); if *e < v { *e = v; } }
-        self.cells = next;
+        Self::recompute_counts_from_cells(self);
         self.step = self.step.saturating_add(1);
     }
 }

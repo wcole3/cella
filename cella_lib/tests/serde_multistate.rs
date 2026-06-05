@@ -3,9 +3,9 @@ use cella_lib::config::{CellaConfig, Config2D};
 
 #[test]
 fn serde_rule1d_roundtrip_multistate() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     // n=1, match any window by setting all 8 bits
     let any = 0xFFu128;
     let rule = Rule1D { subrules: vec![
@@ -21,9 +21,9 @@ fn serde_rule1d_roundtrip_multistate() {
 
 #[test]
 fn serde_rule2d_roundtrip_multistate() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     // Transition when at least 0 neighbors (always true). This exercises serde, not behavior.
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
@@ -38,9 +38,9 @@ fn serde_rule2d_roundtrip_multistate() {
 
 #[test]
 fn serde_gridstate_roundtrip_1d_three_state() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     let any = 0xFFu128;
     let rule = Rule1D { subrules: vec![
         Rule1DSubrule { current_type: a.clone(), criteria_type: a.clone(), wolfram_code: any, n: 1, randomness: None, output_type: b.clone() },
@@ -62,9 +62,9 @@ fn serde_gridstate_roundtrip_1d_three_state() {
 
 #[test]
 fn serde_gridstate_roundtrip_2d_three_state() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     let rule = Rule2D { subrules: vec![
         // Rotate states based on always-true threshold (count>=0)
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
@@ -88,11 +88,11 @@ fn serde_gridstate_roundtrip_2d_three_state() {
 
 #[test]
 fn serde_config_roundtrip_multistate_2d() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
     let (w,h,hist) = (5usize, 4usize, 3usize);
-    let init = (0..w*h).map(|i| match i % 3 { 0 => a.0.clone(), 1 => b.0.clone(), _ => c.0.clone() }).collect::<Vec<_>>();
+    let init = (0..w*h).map(|i| match i % 3 { 0 => a.as_str().to_string(), 1 => b.as_str().to_string(), _ => c.as_str().to_string() }).collect::<Vec<_>>();
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
         Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: c.clone() },
@@ -117,10 +117,10 @@ fn serde_config_roundtrip_multistate_2d() {
 
 #[test]
 fn multistate_1d_rotation_behavior_4_states() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let c = CellType("C".into());
-    let d = CellType("D".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let c = CellType::from("C");
+    let d = CellType::from("D");
     let any = 0xFFu128;
     let rule = Rule1D { subrules: vec![
         Rule1DSubrule { current_type: a.clone(), criteria_type: a.clone(), wolfram_code: any, n: 1, randomness: None, output_type: b.clone() },

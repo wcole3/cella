@@ -88,7 +88,7 @@ fn test_build_grid1d_success() {
     
     let g = cfg.build_grid1d().expect("Should build Grid1D");
     assert_eq!(g.width, 2);
-    assert_eq!(g.cells[0].current.0, "A");
+    assert_eq!(g.cells[0].current.as_str(), "A");
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn test_build_grid2d_success() {
     let g = cfg.build_grid2d().expect("Should build Grid2D");
     assert_eq!(g.width, 2);
     assert_eq!(g.height, 2);
-    assert_eq!(g.cells[3].current.0, "D");
+    assert_eq!(g.cells[3].current.as_str(), "D");
 }
 
 #[test]

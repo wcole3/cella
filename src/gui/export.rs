@@ -28,19 +28,19 @@ fn build_palette_map(
     let mut map: BTreeMap<String, u8> = BTreeMap::new();
     let mut next_index: u8 = 1;
     for ty in types {
-        if ty.0 == INACTIVE { continue; }
-        if map.contains_key(&ty.0) { continue; }
-        let col = if let Some(c) = colors.get(&ty.0) { *c } else {
+        if ty.as_str() == INACTIVE { continue; }
+        if map.contains_key(&ty.as_str().to_string()) { continue; }
+        let col = if let Some(c) = colors.get(&ty.as_str().to_string()) { *c } else {
             // fallback by hashing name into palette slot
             let mut h: u64 = 0xcbf29ce484222325; let prime: u64 = 0x00000100000001B3;
-            for &b in ty.0.as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
+            for &b in ty.as_str().as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
             let idx = (h as usize) % fallback_palette.len().max(1);
             fallback_palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
         };
         color_table.push(col.r());
         color_table.push(col.g());
         color_table.push(col.b());
-        map.insert(ty.0.clone(), next_index);
+        map.insert(ty.as_str().to_string().clone(), next_index);
         next_index = next_index.saturating_add(1);
         if next_index == 0 { break; } // avoid overflow; unlikely with few types
     }
@@ -76,7 +76,7 @@ pub fn export_gif_2d(
 
     // Gather current distinct types
     let mut set: BTreeMap<String, CellType> = BTreeMap::new();
-    for c in &grid.cells { set.entry(c.current.0.clone()).or_insert(c.current.clone()); }
+    for c in &grid.cells { set.entry(c.current.as_str().to_string().clone()).or_insert(c.current.clone()); }
     let types: Vec<CellType> = set.values().cloned().collect();
 
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
@@ -91,7 +91,7 @@ pub fn export_gif_2d(
             for x in 0..grid.width {
                 let idx = y * grid.width + x;
                 let ty = &grid.cells[idx].current;
-                let pal_index = if ty.0 == INACTIVE { 0u8 } else { *index_map.get(&ty.0).unwrap_or(&1u8) };
+                let pal_index = if ty.as_str() == INACTIVE { 0u8 } else { *index_map.get(&ty.as_str().to_string()).unwrap_or(&1u8) };
                 for dy in 0..scale as usize {
                     for dx in 0..scale as usize {
                         let px = (x) * (scale as usize) + dx;
@@ -133,7 +133,7 @@ pub fn export_gif_1d(
 
     // Gather current distinct types
     let mut set: BTreeMap<String, CellType> = BTreeMap::new();
-    for c in &grid.cells { set.entry(c.current.0.clone()).or_insert(c.current.clone()); }
+    for c in &grid.cells { set.entry(c.current.as_str().to_string().clone()).or_insert(c.current.clone()); }
     let types: Vec<CellType> = set.values().cloned().collect();
 
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
@@ -158,7 +158,7 @@ pub fn export_gif_1d(
             let row = &history[start + j];
             for x in 0..grid.width.min(row.len()) {
                 let ty = &row[x];
-                let pal_index = if ty.0 == INACTIVE { 0u8 } else { *index_map.get(&ty.0).unwrap_or(&1u8) };
+                let pal_index = if ty.as_str() == INACTIVE { 0u8 } else { *index_map.get(&ty.as_str().to_string()).unwrap_or(&1u8) };
                 for dy in 0..scale as usize {
                     for dx in 0..scale as usize {
                         let px = (x) * (scale as usize) + dx;
@@ -173,7 +173,7 @@ pub fn export_gif_1d(
         let cur_y = hist_to_show;
         for x in 0..grid.width {
             let ty = &grid.cells[x].current;
-            let pal_index = if ty.0 == INACTIVE { 0u8 } else { *index_map.get(&ty.0).unwrap_or(&1u8) };
+            let pal_index = if ty.as_str() == INACTIVE { 0u8 } else { *index_map.get(&ty.as_str().to_string()).unwrap_or(&1u8) };
             for dy in 0..scale as usize {
                 for dx in 0..scale as usize {
                     let px = (x) * (scale as usize) + dx;

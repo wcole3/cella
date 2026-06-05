@@ -4,42 +4,42 @@ use cella_lib::*;
 
 #[test]
 fn history_bounded_by_limit() {
-    let mut st = CellState::new(CellType("A".into()), 2);
-    st.transition(&CellType("B".into()));
-    st.transition(&CellType("C".into()));
-    st.transition(&CellType("D".into()));
+    let mut st = CellState::new(CellType::from("A"), 2);
+    st.transition(&CellType::from("B"));
+    st.transition(&CellType::from("C"));
+    st.transition(&CellType::from("D"));
     // limit=2, so only the two most recent previous states are kept
     assert_eq!(st.history.len(), 2);
-    assert_eq!(st.history[0], CellType("B".into()));
-    assert_eq!(st.history[1], CellType("C".into()));
-    assert_eq!(st.current, CellType("D".into()));
+    assert_eq!(st.history[0], CellType::from("B"));
+    assert_eq!(st.history[1], CellType::from("C"));
+    assert_eq!(st.current, CellType::from("D"));
 }
 
 #[test]
 fn history_zero_limit_keeps_nothing() {
-    let mut st = CellState::new(CellType("A".into()), 0);
-    st.transition(&CellType("B".into()));
-    st.transition(&CellType("C".into()));
+    let mut st = CellState::new(CellType::from("A"), 0);
+    st.transition(&CellType::from("B"));
+    st.transition(&CellType::from("C"));
     assert_eq!(st.history.len(), 0);
-    assert_eq!(st.current, CellType("C".into()));
+    assert_eq!(st.current, CellType::from("C"));
 }
 
 #[test]
 fn history_same_type_no_push() {
-    let mut st = CellState::new(CellType("A".into()), 3);
-    st.transition(&CellType("A".into()));
-    st.transition(&CellType("A".into()));
+    let mut st = CellState::new(CellType::from("A"), 3);
+    st.transition(&CellType::from("A"));
+    st.transition(&CellType::from("A"));
     assert_eq!(st.history.len(), 0);
     assert_eq!(st.age_in_state, 2);
 }
 
 #[test]
 fn age_saturates_at_u32_max() {
-    let mut st = CellState::new(CellType("A".into()), 1);
+    let mut st = CellState::new(CellType::from("A"), 1);
     st.age_in_state = u32::MAX - 1;
-    st.transition(&CellType("A".into())); // -> MAX
+    st.transition(&CellType::from("A")); // -> MAX
     assert_eq!(st.age_in_state, u32::MAX);
-    st.transition(&CellType("A".into())); // saturating, stays MAX
+    st.transition(&CellType::from("A")); // saturating, stays MAX
     assert_eq!(st.age_in_state, u32::MAX);
 }
 
@@ -48,12 +48,12 @@ fn age_saturates_at_u32_max() {
 #[test]
 fn validate_1d_n0_rejected() {
     let sub = Rule1DSubrule {
-        current_type: CellType("X".into()),
-        criteria_type: CellType("X".into()),
+        current_type: CellType::from("X"),
+        criteria_type: CellType::from("X"),
         wolfram_code: 0,
         n: 0,
         randomness: None,
-        output_type: CellType("Y".into()),
+        output_type: CellType::from("Y"),
     };
     assert_eq!(sub.validate(), Err(RuleError::InvalidN1D(0)));
 }
@@ -61,12 +61,12 @@ fn validate_1d_n0_rejected() {
 #[test]
 fn validate_1d_n4_too_many_patterns() {
     let sub = Rule1DSubrule {
-        current_type: CellType("X".into()),
-        criteria_type: CellType("X".into()),
+        current_type: CellType::from("X"),
+        criteria_type: CellType::from("X"),
         wolfram_code: 0,
         n: 4,
         randomness: None,
-        output_type: CellType("Y".into()),
+        output_type: CellType::from("Y"),
     };
     assert_eq!(sub.validate(), Err(RuleError::TooManyPatterns(4)));
 }
@@ -74,12 +74,12 @@ fn validate_1d_n4_too_many_patterns() {
 #[test]
 fn validate_1d_n3_accepts_max_u128() {
     let sub = Rule1DSubrule {
-        current_type: CellType("X".into()),
-        criteria_type: CellType("X".into()),
+        current_type: CellType::from("X"),
+        criteria_type: CellType::from("X"),
         wolfram_code: u128::MAX,
         n: 3,
         randomness: None,
-        output_type: CellType("Y".into()),
+        output_type: CellType::from("Y"),
     };
     assert!(sub.validate().is_ok());
 }
@@ -88,29 +88,29 @@ fn validate_1d_n3_accepts_max_u128() {
 fn validate_1d_wolfram_code_at_exact_max_n1() {
     // n=1 -> 8 patterns -> max code = 2^8 - 1 = 255
     let ok = Rule1DSubrule {
-        current_type: CellType("X".into()),
-        criteria_type: CellType("X".into()),
+        current_type: CellType::from("X"),
+        criteria_type: CellType::from("X"),
         wolfram_code: 255,
         n: 1,
         randomness: None,
-        output_type: CellType("Y".into()),
+        output_type: CellType::from("Y"),
     };
     assert!(ok.validate().is_ok());
 
     let bad = Rule1DSubrule {
-        current_type: CellType("X".into()),
-        criteria_type: CellType("X".into()),
+        current_type: CellType::from("X"),
+        criteria_type: CellType::from("X"),
         wolfram_code: 256,
         n: 1,
         randomness: None,
-        output_type: CellType("Y".into()),
+        output_type: CellType::from("Y"),
     };
     assert_eq!(bad.validate(), Err(RuleError::InvalidWolframCode(256, 1)));
 }
 
 #[test]
 fn validate_1d_randomness_boundary() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     // randomness at exact boundaries should be valid
     let r0 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 0, n: 1, randomness: Some(0.0), output_type: x.clone() };
     assert!(r0.validate().is_ok());
@@ -127,8 +127,8 @@ fn validate_1d_randomness_boundary() {
 
 #[test]
 fn validate_2d_eq_with_limit_rejected() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let sub = Rule2DSubrule {
         current_type: a.clone(), criteria_type: b.clone(),
         count: 3, op: CountOp::Eq, limit: Some(5),
@@ -140,8 +140,8 @@ fn validate_2d_eq_with_limit_rejected() {
 
 #[test]
 fn validate_2d_range_zero_rejected() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let sub = Rule2DSubrule {
         current_type: a.clone(), criteria_type: b.clone(),
         count: 1, op: CountOp::Gt, limit: None,
@@ -177,7 +177,7 @@ fn all_inactive_grid_2d_stays_inactive() {
 
 #[test]
 fn grid_1d_width_1_steps_without_panic() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let rule = Rule1D { subrules: vec![
         Rule1DSubrule {
             current_type: x.clone(), criteria_type: x.clone(),
@@ -193,7 +193,7 @@ fn grid_1d_width_1_steps_without_panic() {
 
 #[test]
 fn grid_2d_1x1_steps_without_panic() {
-    let a = CellType("A".into());
+    let a = CellType::from("A");
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule {
             current_type: a.clone(), criteria_type: a.clone(),
@@ -211,8 +211,8 @@ fn grid_2d_1x1_steps_without_panic() {
 #[test]
 fn grid_1d_no_matching_subrule_becomes_inactive() {
     // Cell type "X" with a rule that only matches "Y" -> becomes Inactive
-    let x = CellType("X".into());
-    let y = CellType("Y".into());
+    let x = CellType::from("X");
+    let y = CellType::from("Y");
     let rule = Rule1D { subrules: vec![
         Rule1DSubrule {
             current_type: y.clone(), criteria_type: y.clone(),
@@ -228,8 +228,8 @@ fn grid_1d_no_matching_subrule_becomes_inactive() {
 
 #[test]
 fn grid_2d_no_matching_subrule_becomes_inactive() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     // Rule only matches B, but grid is all A
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule {
@@ -253,8 +253,8 @@ fn grid_2d_no_matching_subrule_becomes_inactive() {
 #[test]
 fn countop_lt_zero_always_fails() {
     // Lt with count=0 means "less than 0 neighbors" which is impossible
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let sub = Rule2DSubrule {
         current_type: a.clone(), criteria_type: b.clone(),
         count: 0, op: CountOp::Lt, limit: None,
@@ -273,9 +273,9 @@ fn countop_lt_zero_always_fails() {
 #[test]
 fn countop_eq_zero_matches_no_neighbors() {
     // Eq with count=0 means "exactly 0 neighbors of criteria_type"
-    let a = CellType("A".into());
-    let b = CellType("B".into());
-    let out = CellType("O".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let out = CellType::from("O");
     let sub = Rule2DSubrule {
         current_type: a.clone(), criteria_type: b.clone(),
         count: 0, op: CountOp::Eq, limit: None,
@@ -321,8 +321,8 @@ fn grid_2d_step_counter_increments() {
 
 #[test]
 fn all_neighborhood_types_2d_step_without_panic() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let neighborhoods = [
         Neighborhood2D::Moore,
         Neighborhood2D::VonNeumann,
@@ -352,12 +352,12 @@ fn all_neighborhood_types_2d_step_without_panic() {
 fn cell_type_inactive_default() {
     let ct: CellType = Default::default();
     assert_eq!(ct, CellType::inactive());
-    assert_eq!(ct.0, "Inactive");
+    assert_eq!(ct.as_str(), "Inactive");
 }
 
 #[test]
 fn cell_type_display() {
-    let ct = CellType("MyType".into());
+    let ct = CellType::from("MyType");
     assert_eq!(format!("{}", ct), "MyType");
 }
 
@@ -365,7 +365,7 @@ fn cell_type_display() {
 
 #[test]
 fn grid_state_1d_roundtrip_counts_and_peaks() {
-    let x = CellType("X".into());
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
     let sub = Rule1DSubrule {
         current_type: x.clone(), criteria_type: x.clone(),
@@ -388,8 +388,8 @@ fn grid_state_1d_roundtrip_counts_and_peaks() {
 
 #[test]
 fn grid_state_2d_roundtrip_counts_and_peaks() {
-    let a = CellType("A".into());
-    let b = CellType("B".into());
+    let a = CellType::from("A");
+    let b = CellType::from("B");
     let rule = Rule2D { subrules: vec![
         Rule2DSubrule {
             current_type: a.clone(), criteria_type: b.clone(),
