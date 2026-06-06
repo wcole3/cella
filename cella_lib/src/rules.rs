@@ -8,6 +8,8 @@
 //! - current=Inactive, criteria=X, wolfram_code=30 => output=X (allow births from Inactive)
 //! Without the second subrule, a single X seed cannot spread because
 //! Inactive cells would never transition to X.
+
+use std::collections::HashSet;
 use crate::types::CellType;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,48 @@ pub enum Neighborhood2D {
     Langdon,
     StraightLine,
     Knight,
+}
+
+/// For Neighborhoods, we want to save the offsets so that we can
+/// loop over them during stepping
+pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> HashSet<(i32, i32)> {
+    let mut offsets = HashSet::new();
+    match neighborhood {
+        Neighborhood2D::Moore | Neighborhood2D::VonNeumann | Neighborhood2D::Langdon => {
+            for dx in -n..=n {
+                for dy in -n..=n {
+                    if dx == 0 && dy == 0 { continue; }
+                    match neighborhood {
+                        Neighborhood2D::Moore => {offsets.insert((dx, dy));}
+                        Neighborhood2D::VonNeumann => {if dx.abs() + dy.abs() <= n { offsets.insert((dx, dy)); }}
+                        Neighborhood2D::Langdon => {if dx.abs() == dy.abs() && dx.abs() <= n { offsets.insert((dx, dy)); }}
+                        _ => {}
+                    }
+
+                }
+            }
+            offsets
+        },
+        Neighborhood2D::StraightLine => {
+            for i in -n..=n {
+                if i != 0 {
+                    offsets.insert((i, 0));
+                    offsets.insert((0, i));
+                }
+            }
+            offsets
+        },
+        Neighborhood2D::Knight => {
+            // naive search for knight since we compute this once at start
+            // must double range to cover all cells reachable in 1..=N hops
+            for dx in -2*n..=2*n {
+                for dy in -2*n..=2*n {
+                    if knight_reachable(dx, dy, n as u8) { offsets.insert((dx, dy)); }
+                }
+            }
+            offsets
+        }
+    }
 }
 
 /// Validation errors for rules.
@@ -234,6 +278,9 @@ pub enum CountOp {
 pub struct Rule2DSubrule {
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
+    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
+    /// between-range inclusive clause (see `validate`).
+    pub op: CountOp,
     /// Optional bound for "between":
     /// - If op=Gt, `limit` is an inclusive upper bound (count..=limit).
     /// - If op=Lt, `limit` is an inclusive lower bound (limit..=count).
@@ -244,9 +291,6 @@ pub struct Rule2DSubrule {
     /// Range n >= 1 defines (2n+1)^2 window.
     pub range: u8,
     pub neighborhood: Neighborhood2D,
-    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
-    /// between-range inclusive clause (see `validate`).
-    pub op: CountOp,
     pub output_type: CellType,
     pub current_type: CellType,
     pub criteria_type: CellType,
@@ -257,7 +301,7 @@ pub struct Rule2DSubrule {
 fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
     use std::collections::VecDeque;
     if dx == 0 && dy == 0 { return false; }
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = HashSet::new();
     let mut queue: VecDeque<(i32, i32, u8)> = VecDeque::new();
     queue.push_back((0, 0, 0));
     visited.insert((0i32, 0i32));
