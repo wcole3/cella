@@ -90,15 +90,15 @@ pub enum RuleError {
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule1DSubrule {
-    pub current_type: CellType,
-    pub criteria_type: CellType,
     #[serde(with = "serde_u128")]
     pub wolfram_code: u128,
-    /// Neighborhood radius (>=1): window size is 2n+1.
-    pub n: u8,
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
+    /// Neighborhood radius (>=1): window size is 2n+1.
+    pub n: u8,
     pub output_type: CellType,
+    pub current_type: CellType,
+    pub criteria_type: CellType,
 }
 
 impl Rule1DSubrule {
@@ -232,24 +232,24 @@ pub enum CountOp {
 /// One subrule for a 2D automaton using neighbor-count comparisons.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule2DSubrule {
-    pub current_type: CellType,
-    pub criteria_type: CellType,
-    /// Comparison baseline value.
-    pub count: u32,
-    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
-    /// between-range inclusive clause (see `validate`).
-    pub op: CountOp,
+    /// Optional randomness in (0-1); pass only if random >= value.
+    pub randomness: Option<f64>,
     /// Optional bound for "between":
     /// - If op=Gt, `limit` is an inclusive upper bound (count..=limit).
     /// - If op=Lt, `limit` is an inclusive lower bound (limit..=count).
     /// - If op=Eq, `limit` must be None.
     pub limit: Option<u32>,
+    /// Comparison baseline value.
+    pub count: u32,
     /// Range n >= 1 defines (2n+1)^2 window.
     pub range: u8,
     pub neighborhood: Neighborhood2D,
-    /// Optional randomness in (0-1); pass only if random >= value.
-    pub randomness: Option<f64>,
+    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
+    /// between-range inclusive clause (see `validate`).
+    pub op: CountOp,
     pub output_type: CellType,
+    pub current_type: CellType,
+    pub criteria_type: CellType,
 }
 
 /// Returns `true` if `(dx, dy)` is reachable from `(0, 0)` in at most `max_moves` knight hops.

@@ -81,13 +81,14 @@ impl<'de> Deserialize<'de> for CellType {
 /// that state, and a bounded history of previous states.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CellState {
-    pub current: CellType,
-    /// Number of consecutive steps the cell has been in `current`.
-    pub age_in_state: u32,
     /// FIFO of previous states, bounded by `history_limit`.
     pub history: VecDeque<CellType>,
+    /// Number of consecutive steps the cell has been in `current`.
+    pub age_in_state: u32,
     /// Maximum number of previous states to keep.
     pub history_limit: usize,
+    /// Current cell type.
+    pub current: CellType,
 }
 
 impl CellState {

@@ -25,12 +25,12 @@ pub mod state;
 pub mod config;
 pub mod threads;
 
-// Re-exports for ergonomic public API
-pub use types::{INACTIVE, CellType, CellState};
-pub use rules::{Neighborhood2D, RuleError, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, CountOp, neighborhood_contains};
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
-pub use state::{GridState, grid2d_to_json};
+pub use rules::{neighborhood_contains, CountOp, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError};
+pub use state::{grid2d_to_json, GridState};
+// Re-exports for ergonomic public API
+pub use types::{CellState, CellType, INACTIVE};
 
 #[cfg(test)]
 mod tests {
@@ -79,7 +79,8 @@ mod tests {
     fn grid1d_wolfram_smoke() {
         let x = CellType::from("X");
         let y = CellType::from("Y");
-        let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128 << 2, n: 1, randomness: None, output_type: y.clone() };
+        let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(),
+            wolfram_code: 1u128 << 2, n: 1, randomness: None, output_type: y.clone() };
         let rule = Rule1D { subrules: vec![sub] };
         let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
         let mut g = Grid1D::new(3, 3, init, rule);
@@ -91,7 +92,10 @@ mod tests {
     fn two_d_von_neumann_neighbors() {
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
+            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
+            range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None,
+            output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // place B at (1,0) and (0,1) around center (1,1) -> two cardinal neighbors
@@ -106,7 +110,10 @@ mod tests {
     fn two_d_langdon_diagonals() {
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Langdon, randomness: None, output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
+            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
+            range: 1, neighborhood: Neighborhood2D::Langdon, randomness: None,
+            output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // diagonal neighbors at (0,0) and (2,2) relative to center (1,1)
@@ -122,7 +129,10 @@ mod tests {
         let a = CellType::from("A");
         let b = CellType::from("B");
         // Need two straight (cardinal) neighbors to trigger
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
+            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
+            range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None,
+            output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // cardinal neighbors at (1,0) and (2,1) relative to center (1,1)
@@ -140,11 +150,17 @@ mod tests {
         let inactive = CellType::inactive();
         let rule = Rule2D { subrules: vec![
             // Overpopulation: Alive with >=4 Alive neighbors becomes Inactive
-            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4,
+                op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+                randomness: None, output_type: inactive.clone() },
             // Survival: Alive stays Alive with >=2 Alive neighbors (checked after overpop)
-            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2,
+                op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+                randomness: None, output_type: alive.clone() },
             // Birth: Inactive becomes Alive with ==3 Alive neighbors
-            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3,
+                op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+                randomness: None, output_type: alive.clone() },
         ]};
         let w=4; let h=4; let hist=3;
         // TODO consider changing config to Spur Vec
@@ -172,7 +188,8 @@ mod more_tests {
         let y = CellType::from("Y");
         // For n=2, window len=5. Pattern [0,0,1,0,0] -> idx = 4
         let code: u128 = 1u128 << 4;
-        let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: code, n: 2, randomness: None, output_type: y.clone() };
+        let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(),
+            wolfram_code: code, n: 2, randomness: None, output_type: y.clone() };
         let rule = Rule1D { subrules: vec![sub] };
         let init = vec![CellType::inactive(), CellType::inactive(), x.clone(), CellType::inactive(), CellType::inactive()];
         let mut g = Grid1D::new(5, 3, init, rule);
@@ -371,10 +388,31 @@ mod more_tests {
     fn randomness_bounds() {
         let x = CellType::from("X");
         // 1D invalid randomness
-        let bad1 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1, n: 1, randomness: Some(1.5), output_type: x.clone() };
+        let bad1 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(),
+            wolfram_code: 1, n: 1, randomness: Some(1.5), output_type: x.clone() };
         assert_eq!(bad1.validate(), Err(RuleError::InvalidRandomness));
         // 2D invalid randomness
-        let bad2 = Rule2DSubrule { current_type: x.clone(), criteria_type: x.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: Some(-0.1), output_type: x.clone() };
+        let bad2 = Rule2DSubrule { current_type: x.clone(), criteria_type: x.clone(), count: 1,
+            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
+            randomness: Some(-0.1), output_type: x.clone() };
         assert_eq!(bad2.validate(), Err(RuleError::InvalidRandomness));
+    }
+
+    /// trivial test to print out all our struct memory packing
+    #[test]
+    #[ignore = "just for reference, not a test"]
+    fn print_struct_sizes() {
+        // CellType
+        println!("CellType: {}", size_of::<CellType>());
+        // CellState
+        println!("CellState: {}", size_of::<CellState>());
+        // Rule1D
+        println!("Rule1D: {}", size_of::<Rule1D>());
+        // SubRule1D
+        println!("Rule1dSubRule: {}", size_of::<Rule1DSubrule>());
+        // Rule2D
+        println!("Rule2D: {}", size_of::<Rule2D>());
+        // Rule2DSubRule
+        println!("Rule2dSubRule: {}", size_of::<Rule2DSubrule>());
     }
 }
