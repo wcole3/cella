@@ -41,12 +41,12 @@ For `n=1` (radius 1), the window is 3 cells. There are 8 ($2^3$) possible patter
 - `count`: The threshold value.
 - `op`: The comparison operator (`Lt`, `Gt`, `Eq`).
 - `range`: The radius of the neighborhood.
-- `neighborhood`: The shape of the neighborhood (`Moore`, `VonNeumann`, `Langdon`, `StraightLine`).
+- `neighborhood`: The shape of the neighborhood (`Moore`, `VonNeumann`, `Langton`, `StraightLine`).
 
 #### Neighborhood Shapes
 - **Moore**: A square area around the cell (e.g., $3 \times 3$ for range 1).
 - **Von Neumann**: A diamond shape (cardinal neighbors only).
-- **Langdon**: Diagonal neighbors only ($|dx| = |dy|$).
+- **Langton**: Diagonal neighbors only ($|dx| = |dy|$).
 - **StraightLine**: Cardinal lines extending out to `range` distance.
 
 ---

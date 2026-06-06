@@ -79,7 +79,7 @@
     "avg": 53.0,
     "std_dev": 6.723094525588644
   },
-  "2d_langdon_diagonals_t8": {
+  "2d_langton_diagonals_t8": {
     "avg": 11.0,
     "std_dev": 0.0
   },
@@ -107,11 +107,11 @@
     "avg": 348.2,
     "std_dev": 2.6381811916545836
   },
-  "2d_langdon_diagonals_t4": {
+  "2d_langton_diagonals_t4": {
     "avg": 11.0,
     "std_dev": 0.0
   },
-  "2d_langdon_diagonals_t1": {
+  "2d_langton_diagonals_t1": {
     "avg": 11.0,
     "std_dev": 0.0
   },

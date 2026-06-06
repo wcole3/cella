@@ -107,12 +107,12 @@ mod tests {
     }
 
     #[test]
-    fn two_d_langdon_diagonals() {
+    fn two_d_langton_diagonals() {
         let a = CellType::from("A");
         let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
             criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
-            range: 1, neighborhood: Neighborhood2D::Langdon, randomness: None,
+            range: 1, neighborhood: Neighborhood2D::Langton, randomness: None,
             output_type: b.clone() }] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];

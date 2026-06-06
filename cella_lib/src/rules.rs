@@ -48,7 +48,7 @@ mod serde_u128 {
 ///
 /// - `Moore`: all cells in the (2n+1)x(2n+1) square.
 /// - `VonNeumann`: cells with Manhattan distance <= n.
-/// - `Langdon`: diagonal cells where |dx|==|dy|<=n.
+/// - `Langton`: diagonal cells where |dx|==|dy|<=n.
 /// - `StraightLine`: cells in straight cardinal lines (up/down/left/right) up to range n.
 /// - `Knight`: cells reachable from the origin in at most `range` chess-knight hops
 ///   (each hop is an L-shaped move: ±1/±2 or ±2/±1). `range=1` gives exactly the
@@ -57,7 +57,7 @@ mod serde_u128 {
 pub enum Neighborhood2D {
     Moore,
     VonNeumann,
-    Langdon,
+    Langton,
     StraightLine,
     Knight,
 }
@@ -67,14 +67,14 @@ pub enum Neighborhood2D {
 pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> HashSet<(i32, i32)> {
     let mut offsets = HashSet::new();
     match neighborhood {
-        Neighborhood2D::Moore | Neighborhood2D::VonNeumann | Neighborhood2D::Langdon => {
+        Neighborhood2D::Moore | Neighborhood2D::VonNeumann | Neighborhood2D::Langton => {
             for dx in -n..=n {
                 for dy in -n..=n {
                     if dx == 0 && dy == 0 { continue; }
                     match neighborhood {
                         Neighborhood2D::Moore => {offsets.insert((dx, dy));}
                         Neighborhood2D::VonNeumann => {if dx.abs() + dy.abs() <= n { offsets.insert((dx, dy)); }}
-                        Neighborhood2D::Langdon => {if dx.abs() == dy.abs() && dx.abs() <= n { offsets.insert((dx, dy)); }}
+                        Neighborhood2D::Langton => {if dx.abs() == dy.abs() && dx.abs() <= n { offsets.insert((dx, dy)); }}
                         _ => {}
                     }
 
@@ -102,6 +102,34 @@ pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> HashSet<(i3
             offsets
         }
     }
+}
+
+/// Returns `true` if `(dx, dy)` is reachable from `(0, 0)` in at most `max_moves` knight hops.
+/// Each hop is an L-shaped chess-knight move: (±1, ±2) or (±2, ±1).
+fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
+    use std::collections::VecDeque;
+    if dx == 0 && dy == 0 { return false; }
+    let mut visited = HashSet::new();
+    let mut queue: VecDeque<(i32, i32, u8)> = VecDeque::new();
+    queue.push_back((0, 0, 0));
+    visited.insert((0i32, 0i32));
+    const MOVES: [(i32, i32); 8] = [
+        (1, 2), (1, -2), (-1, 2), (-1, -2),
+        (2, 1), (2, -1), (-2, 1), (-2, -1),
+    ];
+    while let Some((x, y, depth)) = queue.pop_front() {
+        if depth >= max_moves { continue; }
+        for (mx, my) in MOVES {
+            let nx = x + mx;
+            let ny = y + my;
+            if nx == dx && ny == dy { return true; }
+            if !visited.contains(&(nx, ny)) {
+                visited.insert((nx, ny));
+                queue.push_back((nx, ny, depth + 1));
+            }
+        }
+    }
+    false
 }
 
 /// Validation errors for rules.
@@ -296,34 +324,6 @@ pub struct Rule2DSubrule {
     pub criteria_type: CellType,
 }
 
-/// Returns `true` if `(dx, dy)` is reachable from `(0, 0)` in at most `max_moves` knight hops.
-/// Each hop is an L-shaped chess-knight move: (±1, ±2) or (±2, ±1).
-fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
-    use std::collections::VecDeque;
-    if dx == 0 && dy == 0 { return false; }
-    let mut visited = HashSet::new();
-    let mut queue: VecDeque<(i32, i32, u8)> = VecDeque::new();
-    queue.push_back((0, 0, 0));
-    visited.insert((0i32, 0i32));
-    const MOVES: [(i32, i32); 8] = [
-        (1, 2), (1, -2), (-1, 2), (-1, -2),
-        (2, 1), (2, -1), (-2, 1), (-2, -1),
-    ];
-    while let Some((x, y, depth)) = queue.pop_front() {
-        if depth >= max_moves { continue; }
-        for (mx, my) in MOVES {
-            let nx = x + mx;
-            let ny = y + my;
-            if nx == dx && ny == dy { return true; }
-            if !visited.contains(&(nx, ny)) {
-                visited.insert((nx, ny));
-                queue.push_back((nx, ny, depth + 1));
-            }
-        }
-    }
-    false
-}
-
 /// Public helper: returns `true` when `(dx, dy)` belongs to the neighborhood of radius `n`
 /// for the given `kind`. `(0, 0)` always returns `false`.
 pub fn neighborhood_contains(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> bool {
@@ -331,7 +331,7 @@ pub fn neighborhood_contains(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> 
     match kind {
         Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
         Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
-        Neighborhood2D::Langdon => dx.abs() == dy.abs() && dx.abs() <= n,
+        Neighborhood2D::Langton => dx.abs() == dy.abs() && dx.abs() <= n,
         Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
         Neighborhood2D::Knight => knight_reachable(dx, dy, n as u8),
     }

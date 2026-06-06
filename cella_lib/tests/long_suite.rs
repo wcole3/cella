@@ -347,20 +347,20 @@ fn stress_2d_straightline_threshold() {
     run_benchmark_2d("2d_straightline_threshold", &g, 200);
 }
 
-fn stress_2d_langdon_diagonals() {
+fn stress_2d_langton_diagonals() {
     let a = CellType::from("A");
     let b = CellType::from("B");
     // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::Langdon, randomness: None, output_type: b.clone() },
+        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::Langton, randomness: None, output_type: b.clone() },
     ]};
     let (w,h,hist) = (48usize, 48usize, 2usize);
     let mut init = vec![a.clone(); w*h];
     for i in 0..w.min(h) { init[i*w + i] = b.clone(); }
     let g = Grid2D::new(w,h,hist,init,rule);
-    if ascii_enabled() { print_ascii_2d("2d_langdon_diagonals: initial", &g); }
-    if configs_export_enabled() { export_config_2d("2d_langdon_diagonals", &g); }
-    run_benchmark_2d("2d_langdon_diagonals", &g, 180);
+    if ascii_enabled() { print_ascii_2d("2d_langton_diagonals: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_langton_diagonals", &g); }
+    run_benchmark_2d("2d_langton_diagonals", &g, 180);
 }
 
 fn stress_2d_knight_neighborhood() {
@@ -643,13 +643,13 @@ fn stress_2d_straightline_threshold_t8() { set_thread_override(8); stress_2d_str
 
 #[test]
 #[ignore]
-fn stress_2d_langdon_diagonals_t1() { set_thread_override(1); stress_2d_langdon_diagonals(); clear_thread_override(); }
+fn stress_2d_langton_diagonals_t1() { set_thread_override(1); stress_2d_langton_diagonals(); clear_thread_override(); }
 #[test]
 #[ignore]
-fn stress_2d_langdon_diagonals_t4() { set_thread_override(4); stress_2d_langdon_diagonals(); clear_thread_override(); }
+fn stress_2d_langton_diagonals_t4() { set_thread_override(4); stress_2d_langton_diagonals(); clear_thread_override(); }
 #[test]
 #[ignore]
-fn stress_2d_langdon_diagonals_t8() { set_thread_override(8); stress_2d_langdon_diagonals(); clear_thread_override(); }
+fn stress_2d_langton_diagonals_t8() { set_thread_override(8); stress_2d_langton_diagonals(); clear_thread_override(); }
 
 #[test]
 #[ignore]

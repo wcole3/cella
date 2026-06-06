@@ -886,15 +886,15 @@ impl CellaApp {
                                                 ui.monospace(diag);
                                                 ui.small("Legend: @ center, # counted neighbor, . outside");
                                                 ui.separator();
-                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langdon = diagonals; StraightLine = cardinal lines only; Knight = chess knight L-moves (range = max hops)");
+                                                ui.label("Moore = square; VonNeumann = Manhattan distance; Langton = diagonals; StraightLine = cardinal lines only; Knight = chess knight L-moves (range = max hops)");
                                             });
                                         let mut nb = sub.neighborhood;
                                         egui::ComboBox::from_id_salt(format!("d2_nh_{}", i))
-                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langdon=>"Langdon", Neighborhood2D::StraightLine=>"StraightLine", Neighborhood2D::Knight=>"Knight" })
+                                            .selected_text(match nb { Neighborhood2D::Moore=>"Moore", Neighborhood2D::VonNeumann=>"VonNeumann", Neighborhood2D::Langton =>"Langton", Neighborhood2D::StraightLine=>"StraightLine", Neighborhood2D::Knight=>"Knight" })
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Moore, "Moore");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::VonNeumann, "VonNeumann");
-                                                ui.selectable_value(&mut nb, Neighborhood2D::Langdon, "Langdon");
+                                                ui.selectable_value(&mut nb, Neighborhood2D::Langton, "Langton");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::StraightLine, "StraightLine");
                                                 ui.selectable_value(&mut nb, Neighborhood2D::Knight, "Knight");
                                             });
@@ -1464,7 +1464,7 @@ impl CellaApp {
         let name = match kind {
             Neighborhood2D::Moore => "Moore",
             Neighborhood2D::VonNeumann => "VonNeumann",
-            Neighborhood2D::Langdon => "Langdon",
+            Neighborhood2D::Langton => "Langton",
             Neighborhood2D::StraightLine => "StraightLine",
             Neighborhood2D::Knight => "Knight",
         };

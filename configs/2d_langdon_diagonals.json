@@ -2318,7 +2318,7 @@
         "op": "gt",
         "limit": null,
         "range": 2,
-        "neighborhood": "Langdon",
+        "neighborhood": "Langton",
         "randomness": null,
         "output_type": "B"
       }

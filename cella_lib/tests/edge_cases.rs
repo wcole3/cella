@@ -326,7 +326,7 @@ fn all_neighborhood_types_2d_step_without_panic() {
     let neighborhoods = [
         Neighborhood2D::Moore,
         Neighborhood2D::VonNeumann,
-        Neighborhood2D::Langdon,
+        Neighborhood2D::Langton,
         Neighborhood2D::StraightLine,
     ];
     for nh in &neighborhoods {
