@@ -116,13 +116,13 @@ fn bench_runs() -> usize {
 fn bench_store() -> &'static Mutex<Vec<(String, u128)>> {
     BENCH_DATA.get_or_init(|| Mutex::new(Vec::new()))
 }
-fn record_bench(name: &str, ms: u128) {
+fn record_bench(name: &str, nanos: u128) {
     let suffix = format!("_t{}", thread_count());
     let full = format!("{}{}", name, suffix);
     let mut v = bench_store().lock().unwrap();
-    v.push((full.clone(), ms));
+    v.push((full.clone(), nanos));
     if std::env::var("CELLA_BENCH").ok().as_deref() == Some("1") {
-        println!("[bench] {:>28}: {} ms", full, ms);
+        println!("[bench] {:>28}: {:.6} ms", full, nanos as f64 / 1_000_000f64);
     }
 }
 
@@ -131,7 +131,7 @@ fn run_benchmark_2d(name: &str, g_initial: &Grid2D, steps: usize) {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
-        let elapsed = t0.elapsed().as_nanos() / 1_000_000;
+        let elapsed = t0.elapsed().as_nanos();
         record_bench(name, elapsed);
         if i == 0 {
             if ascii_enabled() { print_ascii_2d(&format!("{}: final", name), &g); }
@@ -146,7 +146,7 @@ fn run_benchmark_1d(name: &str, g_initial: &Grid1D, steps: usize) {
         let mut g = g_initial.clone();
         let t0 = Instant::now();
         for _ in 0..steps { g.step(); }
-        let elapsed = t0.elapsed().as_nanos() / 1_000_000;
+        let elapsed = t0.elapsed().as_nanos();
         record_bench(name, elapsed);
         if i == 0 {
             if ascii_enabled() { print_ascii_1d(&format!("{}: final", name), &g); }
@@ -547,9 +547,9 @@ fn zzz_benchmark_summary() {
         return;
     }
     // Group by name
-    let mut groups: HashMap<String, Vec<u128>> = HashMap::new();
-    for (name, ms) in data.iter() {
-        groups.entry(name.clone()).or_default().push(*ms);
+    let mut groups: HashMap<String, Vec<f64>> = HashMap::new();
+    for (name, ns) in data.iter() {
+        groups.entry(name.clone()).or_default().push(*ns as f64 / 1_000_000f64); // convert to ms
     }
 
     // Load previous results if any
@@ -565,12 +565,12 @@ fn zzz_benchmark_summary() {
     for name in names {
         let times = &groups[&name];
         let n = times.len() as f64;
-        let sum: u128 = times.iter().sum();
-        let avg = sum as f64 / n;
+        let sum: f64 = times.iter().sum();
+        let avg = sum / n;
         
         let variance = if n > 1.0 {
             times.iter().map(|&t| {
-                let diff = t as f64 - avg;
+                let diff = t - avg;
                 diff * diff
             }).sum::<f64>() / n
         } else {
@@ -586,16 +586,16 @@ fn zzz_benchmark_summary() {
                 let diff = avg - old.avg;
                 let pct = (diff * 100.0) / old.avg;
                 let sign = if diff >= 0.0 { "+" } else { "" };
-                println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (Δ {}{:7.2} ms, {:+.2}%)", 
+                println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (Δ {}{:7.6} ms, {:+.2}%)",
                          name, avg, std_dev, sign, diff, pct);
             } else {
-                println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (Δ n/a)", name, avg, std_dev);
+                println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (Δ n/a)", name, avg, std_dev);
             }
         } else {
-            println!("[bench] {:>28}: {:7.2} ms (±{:5.2} ms) (new)", name, avg, std_dev);
+            println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (new)", name, avg, std_dev);
         }
     }
-    println!("[bench] {:>28}: {:7.2} ms (sum of averages)", "TOTAL", total_avg);
+    println!("[bench] {:>28}: {:7.6} ms (sum of averages)", "TOTAL", total_avg);
 
     let update = std::env::var("CELLA_UPDATE_BENCH").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
     if update {
@@ -783,14 +783,6 @@ fn load_previous_benchmarks() -> HashMap<String, BenchStats> {
     if let Ok(s) = fs::read_to_string(&path) {
         if let Ok(map) = serde_json::from_str::<HashMap<String, BenchStats>>(&s) {
             return map;
-        }
-        // Fallback to old format
-        if let Ok(map) = serde_json::from_str::<HashMap<String, u128>>(&s) {
-            let mut fallback = HashMap::new();
-            for (name, ms) in map {
-                fallback.insert(name, BenchStats { avg: ms as f64, std_dev: 0.0 });
-            }
-            return fallback;
         }
     }
     HashMap::new()
