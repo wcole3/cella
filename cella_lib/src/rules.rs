@@ -379,7 +379,8 @@ impl Rule2DSubrule {
         for (dx, dy) in &self.offsets {
             let t = get_neighbor(*dx, *dy);
             if t == self.criteria_type { neighbors += 1; }
-            // TODO consider an early exit here based on op type and limit
+            // TODO consider an early exit here based on op type and limit; THERE ARE MORE
+            if self.op == CountOp::Gt && !self.limit.is_some() && neighbors >= self.count { break }
         }
         let pass = match (self.op, self.limit) {
             (CountOp::Eq, None) => neighbors == self.count,
