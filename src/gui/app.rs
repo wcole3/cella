@@ -14,7 +14,7 @@ use egui::{Color32, Context, Key, TextEdit};
 use egui::scroll_area::ScrollSource;
 use egui_plot::{Plot, Line, PlotPoints, Legend};
 use rfd::FileDialog;
-
+use cella_lib::rules::neighborhood_offsets;
 use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle, build_2d_straightline};
 
 use super::export::{export_gif_1d, export_gif_2d};
@@ -1476,7 +1476,7 @@ impl CellaApp {
                 if dx == 0 && dy == 0 {
                     out.push('@');
                 } else {
-                    let inside = cella_lib::neighborhood_contains(dx, dy, n, kind);
+                    let inside = neighborhood_contains(dx, dy, n, kind);
                     out.push(if inside { '#' } else { '.' });
                 }
             }

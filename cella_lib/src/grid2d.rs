@@ -18,11 +18,11 @@ use serde::{Deserialize, Serialize};
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+///   Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
 ///   // Survival: Alive stays Alive if at least 2 Alive neighbors (after overpop check)
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
 ///   // Birth: Inactive becomes Alive if exactly 3 Alive neighbors
-///   Rule2DSubrule { current_type: inactive.clone(),  criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
 /// ]};
 /// let (w,h) = (6usize, 5usize);
 /// let mut init = vec![CellType::inactive(); w*h];

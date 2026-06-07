@@ -25,17 +25,7 @@ fn two_d_randomness_one_never_applies() {
     // Center A has one B neighbor, threshold 1 satisfied, but randomness=1.0 prevents application.
     let a = CellType::from("A");
     let b = CellType::from("B");
-    let sub = Rule2DSubrule {
-        current_type: a.clone(),
-        criteria_type: b.clone(),
-        count: 1,
-        op: CountOp::Gt,
-        limit: None,
-        range: 1,
-        neighborhood: Neighborhood2D::Moore,
-        randomness: Some(1.0), // should never pass
-        output_type: b.clone(),
-    };
+    let sub = Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), Some(1.0), None);
     let rule = Rule2D { subrules: vec![sub] };
     let w = 3usize; let h = 3usize; let hist = 2usize;
     let mut init = vec![a.clone(); w*h];

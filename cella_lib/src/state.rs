@@ -20,11 +20,11 @@ use lasso2::Spur;
 /// let inactive = CellType::inactive();
 /// let rule = Rule2D { subrules: vec![
 ///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+///   Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
 ///   // Survival: Alive stays Alive if at least 2 Alive neighbors (after overpop check)
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
 ///   // Birth: Inactive becomes Alive if exactly 3 Alive neighbors
-///   Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+///   Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
 /// ]};
 /// let (w,h) = (4usize, 4usize);
 /// let mut init = vec![CellType::inactive(); w*h];
@@ -96,7 +96,6 @@ impl Grid1D {
     /// Build a Grid1D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            // TODO come back and determine if these clones are really necessary.
             GridState::D1 { width, history_limit, cells, step,
                 rule, counts_current, peak_counts } => {
                 let (new_counts, new_peak_counts) =
@@ -115,7 +114,6 @@ impl Grid2D {
     /// Build a Grid2D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            // TODO come back and determine if these clones are really necessary.
             GridState::D2 { width, height, history_limit, cells,
                 step, rule, counts_current, peak_counts } => {
                 let (new_counts, new_peak_counts) =
@@ -162,7 +160,8 @@ fn convert_map_string_to_spur(cells: &Vec<CellState>, counts_current: &HashMap<S
 }
 
 // Helper for converting from HashMap<Spur, u64> to HashMap<String, u64>
-fn convert_map_spur_to_string(counts_current: &HashMap<Spur, u64>, peak_counts: &HashMap<Spur, u64>) -> (HashMap<String, u64>, HashMap<String, u64>) {
+fn convert_map_spur_to_string(counts_current: &HashMap<Spur, u64>, peak_counts: &HashMap<Spur, u64>)
+    -> (HashMap<String, u64>, HashMap<String, u64>) {
     let mut new_counts: HashMap<String, u64> = HashMap::new();
     let mut new_peak_counts: HashMap<String, u64> = HashMap::new();
     for (k, v) in counts_current.iter() {

@@ -295,11 +295,11 @@ fn stress_2d_life_like_moore() {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with >=4 neighbors becomes Inactive
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
         // Survival: Alive stays Alive with >=2 neighbors
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
         // Birth: Inactive becomes Alive with ==3 neighbors
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
     ]};
     let (w,h,hist) = (50usize, 30usize, 5usize);
     let mut init = vec![CellType::inactive(); w*h];
@@ -317,8 +317,8 @@ fn stress_2d_von_neumann_threshold() {
     let b = CellType::from("B");
     // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
-        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 2, Neighborhood2D::VonNeumann, b.clone(), None, None),
+        Rule2DSubrule::new(b.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::VonNeumann, b.clone(), None, None),
     ]};
     let (w,h,hist) = (64usize, 32usize, 3usize);
     let mut init = vec![a.clone(); w*h];
@@ -335,8 +335,8 @@ fn stress_2d_straightline_threshold() {
     let b = CellType::from("B");
     // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 3, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
-        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 3, Neighborhood2D::StraightLine, b.clone(), None, None),
+        Rule2DSubrule::new(b.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::StraightLine, b.clone(), None, None),
     ]};
     let (w,h,hist) = (64usize, 32usize, 3usize);
     let mut init = vec![a.clone(); w*h];
@@ -352,7 +352,7 @@ fn stress_2d_langton_diagonals() {
     let b = CellType::from("B");
     // TODO need to make this rule more interesting
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 3, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::Langton, randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 3, CountOp::Gt, 2, Neighborhood2D::Langton, b.clone(), None, None),
     ]};
     let (w,h,hist) = (48usize, 48usize, 2usize);
     let mut init = vec![a.clone(); w*h];
@@ -369,11 +369,11 @@ fn stress_2d_knight_neighborhood() {
     // Conway-style birth/survival using Knight neighborhood (range=1 = 8 classic L-move squares)
     let rule = Rule2D { subrules: vec![
         // Overpopulation: A with >4 B knight-neighbors becomes B
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Knight, b.clone(), None, None),
         // Survival: A with 2..=4 B knight-neighbors stays A
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: Some(4), range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: a.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Knight, a.clone(), None, Some(4)),
         // Birth: B with ==3 A knight-neighbors becomes A
-        Rule2DSubrule { current_type: b.clone(), criteria_type: a.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Knight, randomness: None, output_type: a.clone() },
+        Rule2DSubrule::new(b.clone(), a.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Knight, a.clone(), None, None),
     ]};
     let (w, h, hist) = (64usize, 48usize, 3usize);
     let mut init = vec![b.clone(); w * h];
@@ -460,9 +460,9 @@ fn stress_2d_three_state_cycle() {
     let b = CellType::from("B");
     let c = CellType::from("C");
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() },
-        Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: c.clone() },
-        Rule2DSubrule { current_type: c.clone(), criteria_type: a.clone(), count: 0, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: a.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None),
+        Rule2DSubrule::new(b.clone(), c.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, c.clone(), None, None),
+        Rule2DSubrule::new(c.clone(), a.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, a.clone(), None, None),
     ]};
     let (w,h,hist) = (192usize, 128usize, 3usize);
     let mut init = Vec::with_capacity(w*h);
@@ -480,11 +480,11 @@ fn stress_2d_large_moore_256() {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with >=4 neighbors becomes Inactive
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
         // Survival: Alive stays Alive with >=2 neighbors
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
         // Birth: Inactive becomes Alive with ==3 neighbors
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
     ]};
     let (w,h,hist) = (256usize, 256usize, 4usize);
     let mut init = vec![inactive.clone(); w*h];
@@ -510,8 +510,8 @@ fn stress_2d_large_vn_256() {
     let b = CellType::from("B");
     // TODO make rule more interesting
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
-        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 2, Neighborhood2D::VonNeumann, b.clone(), None, None),
+        Rule2DSubrule::new(b.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::VonNeumann, b.clone(), None, None),
     ]};
     let (w,h,hist) = (256usize, 256usize, 3usize);
     let mut init = vec![a.clone(); w*h];
@@ -803,17 +803,7 @@ fn stress_config_load_and_run() {
     let a = "Alive".to_string();
     let b = "Inactive".to_string();
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule {
-            current_type: CellType::from(b.as_str()),
-            criteria_type: CellType::from(a.as_str()),
-            count: 0,
-            op: CountOp::Gt,
-            limit: None,
-            range: 1,
-            neighborhood: Neighborhood2D::Moore,
-            randomness: None,
-            output_type: CellType::from(a.as_str()) 
-        }
+        Rule2DSubrule::new(CellType::from(b.as_str()), CellType::from(a.as_str()), 0, CountOp::Gt, 1, Neighborhood2D::Moore, CellType::from(a.as_str()), None, None)
     ]};
     
     let w = 100usize;

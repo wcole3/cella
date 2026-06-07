@@ -27,7 +27,7 @@ pub mod threads;
 
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
-pub use rules::{neighborhood_contains, CountOp, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError};
+pub use rules::{CountOp, neighborhood_contains, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError};
 pub use state::{grid2d_to_json, GridState};
 // Re-exports for ergonomic public API
 pub use types::{CellState, CellType, INACTIVE};
@@ -47,9 +47,9 @@ mod tests {
 
     #[test]
     fn rule2d_validation() {
-        let s = Rule2DSubrule { current_type: CellType::from("A"), criteria_type: CellType::from("B"),
-            count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: CellType::from("B") };
+        let s = Rule2DSubrule::new( CellType::from("A"), CellType::from("B"),
+                        2, CountOp::Gt, 1, Neighborhood2D::Moore,
+                            CellType::from("B"), None, None );
         assert!(s.validate().is_ok());
         let bad = Rule2DSubrule { range: 0, ..s.clone() };
         assert_eq!(bad.validate(), Err(RuleError::InvalidRange2D));
@@ -60,9 +60,7 @@ mod tests {
         let a = CellType::from("A");
         let b = CellType::from("B");
         // Any A with at least 1 B neighbor becomes B
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(),
-            count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None)] };
         let width = 5; let height = 5; let hist = 3;
         let mut init = vec![a.clone(); width*height];
         // seed one B in center
@@ -92,10 +90,7 @@ mod tests {
     fn two_d_von_neumann_neighbors() {
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
-            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
-            range: 1, neighborhood: Neighborhood2D::VonNeumann, randomness: None,
-            output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::VonNeumann, b.clone(), None, None)] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // place B at (1,0) and (0,1) around center (1,1) -> two cardinal neighbors
@@ -110,10 +105,7 @@ mod tests {
     fn two_d_langton_diagonals() {
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
-            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
-            range: 1, neighborhood: Neighborhood2D::Langton, randomness: None,
-            output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Langton, b.clone(), None, None)] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // diagonal neighbors at (0,0) and (2,2) relative to center (1,1)
@@ -129,10 +121,7 @@ mod tests {
         let a = CellType::from("A");
         let b = CellType::from("B");
         // Need two straight (cardinal) neighbors to trigger
-        let rule = Rule2D { subrules: vec![Rule2DSubrule { current_type: a.clone(),
-            criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None,
-            range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None,
-            output_type: b.clone() }] };
+        let rule = Rule2D { subrules: vec![Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::StraightLine, b.clone(), None, None)] };
         let w=3; let h=3; let hist=2;
         let mut init = vec![a.clone(); w*h];
         // cardinal neighbors at (1,0) and (2,1) relative to center (1,1)
@@ -150,17 +139,11 @@ mod tests {
         let inactive = CellType::inactive();
         let rule = Rule2D { subrules: vec![
             // Overpopulation: Alive with >=4 Alive neighbors becomes Inactive
-            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4,
-                op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-                randomness: None, output_type: inactive.clone() },
+            Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
             // Survival: Alive stays Alive with >=2 Alive neighbors (checked after overpop)
-            Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2,
-                op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-                randomness: None, output_type: alive.clone() },
+            Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
             // Birth: Inactive becomes Alive with ==3 Alive neighbors
-            Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3,
-                op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-                randomness: None, output_type: alive.clone() },
+            Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
         ]};
         let w=4; let h=4; let hist=3;
         // TODO consider changing config to Spur Vec
@@ -241,12 +224,7 @@ mod more_tests {
 
     #[test]
     fn knight_serde_roundtrip() {
-        let sub = Rule2DSubrule {
-            current_type: CellType::from("A"), criteria_type: CellType::from("B"),
-            count: 2, op: CountOp::Eq, limit: None, range: 1,
-            neighborhood: Neighborhood2D::Knight, randomness: None,
-            output_type: CellType::from("A"),
-        };
+        let sub = Rule2DSubrule::new(CellType::from("A"), CellType::from("B"), 2, CountOp::Eq, 1, Neighborhood2D::Knight, CellType::from("A"), None, None);
         let json = serde_json::to_string(&sub).unwrap();
         assert!(json.contains("\"Knight\""), "serialised JSON must contain \"Knight\"");
         let sub2: Rule2DSubrule = serde_json::from_str(&json).unwrap();
@@ -259,12 +237,7 @@ mod more_tests {
         // Rule: A with >=1 B knight-neighbor becomes B.
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let rule = Rule2D { subrules: vec![Rule2DSubrule {
-            current_type: a.clone(), criteria_type: b.clone(),
-            count: 1, op: CountOp::Gt, limit: None, range: 1,
-            neighborhood: Neighborhood2D::Knight, randomness: None,
-            output_type: b.clone(),
-        }]};
+        let rule = Rule2D { subrules: vec![Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::Knight, b.clone(), None, None)]};
         let w = 7usize; let h = 7usize;
         let mut init = vec![a.clone(); w * h];
         // Place B at all 8 classic knight squares around center (3,3)
@@ -337,19 +310,9 @@ mod more_tests {
         let b = CellType::from("B");
         let rule = Rule2D { subrules: vec![
             // Survival: A with 2..=4 B knight-neighbors stays A
-            Rule2DSubrule {
-                current_type: a.clone(), criteria_type: b.clone(),
-                count: 2, op: CountOp::Gt, limit: Some(4), range: 1,
-                neighborhood: Neighborhood2D::Knight, randomness: None,
-                output_type: a.clone(),
-            },
+            Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Knight, a.clone(), None, Some(4)),
             // Birth: B with exactly 3 A knight-neighbors becomes A
-            Rule2DSubrule {
-                current_type: b.clone(), criteria_type: a.clone(),
-                count: 3, op: CountOp::Eq, limit: None, range: 1,
-                neighborhood: Neighborhood2D::Knight, randomness: None,
-                output_type: a.clone(),
-            },
+            Rule2DSubrule::new(b.clone(), a.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Knight, a.clone(), None, None),
         ]};
         let w = 20usize; let h = 20usize;
         // Seed a glider-like pattern near center
@@ -392,9 +355,7 @@ mod more_tests {
             wolfram_code: 1, n: 1, randomness: Some(1.5), output_type: x.clone() };
         assert_eq!(bad1.validate(), Err(RuleError::InvalidRandomness));
         // 2D invalid randomness
-        let bad2 = Rule2DSubrule { current_type: x.clone(), criteria_type: x.clone(), count: 1,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: Some(-0.1), output_type: x.clone() };
+        let bad2 = Rule2DSubrule::new(x.clone(), x.clone(), 1, CountOp::Gt, 1, Neighborhood2D::Moore, x.clone(), Some(-0.1), None);
         assert_eq!(bad2.validate(), Err(RuleError::InvalidRandomness));
     }
 

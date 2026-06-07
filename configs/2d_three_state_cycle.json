@@ -24584,37 +24584,37 @@
   "rule": {
     "subrules": [
       {
+        "randomness": null,
+        "op": "gt",
+        "limit": null,
+        "count": 0,
+        "range": 1,
+        "neighborhood": "Moore",
+        "output_type": "B",
         "current_type": "A",
-        "criteria_type": "B",
-        "count": 0,
-        "op": "gt",
-        "limit": null,
-        "range": 1,
-        "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "B"
+        "criteria_type": "B"
       },
       {
+        "randomness": null,
+        "op": "gt",
+        "limit": null,
+        "count": 0,
+        "range": 1,
+        "neighborhood": "Moore",
+        "output_type": "C",
         "current_type": "B",
-        "criteria_type": "C",
-        "count": 0,
-        "op": "gt",
-        "limit": null,
-        "range": 1,
-        "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "C"
+        "criteria_type": "C"
       },
       {
-        "current_type": "C",
-        "criteria_type": "A",
-        "count": 0,
+        "randomness": null,
         "op": "gt",
         "limit": null,
+        "count": 0,
         "range": 1,
         "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "A"
+        "output_type": "A",
+        "current_type": "C",
+        "criteria_type": "A"
       }
     ]
   }

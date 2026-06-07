@@ -10,9 +10,10 @@
 //! Inactive cells would never transition to X.
 
 use std::collections::HashSet;
+use memoize::memoize;
 use crate::types::CellType;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 mod serde_u128 {
     use serde::de::{self, Visitor};
@@ -53,7 +54,7 @@ mod serde_u128 {
 /// - `Knight`: cells reachable from the origin in at most `range` chess-knight hops
 ///   (each hop is an L-shaped move: ±1/±2 or ±2/±1). `range=1` gives exactly the
 ///   8 classic knight squares; `range=N` unions all cells reachable in 1..=N hops.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Neighborhood2D {
     Moore,
     VonNeumann,
@@ -62,6 +63,15 @@ pub enum Neighborhood2D {
     Knight,
 }
 
+#[memoize(SharedCache)]
+/// Check if a given (dx, dy) offset is in the neighborhood for a given range.
+/// This is purely used for tests, do NOT use in hotpath
+pub fn neighborhood_contains(dx: i32, dy: i32, range: i32, neighborhood: Neighborhood2D) -> bool {
+    neighborhood_offsets(neighborhood, range).contains(&(dx, dy))
+}
+
+
+#[memoize(SharedCache)]
 /// For Neighborhoods, we want to save the offsets so that we can
 /// loop over them during stepping
 pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> HashSet<(i32, i32)> {
@@ -274,7 +284,9 @@ impl Rule1D {
 /// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
 /// let a = CellType::from("A");
 /// let b = CellType::from("B");
-/// let s = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: b.clone() };
+/// let s = Rule2DSubrule::new(a.clone(), b.clone(), 1,
+///  CountOp::Gt, 1, Neighborhood2D::Moore,
+///  b.clone(), None, None );
 /// assert!(s.validate().is_ok());
 /// ```
 ///
@@ -283,7 +295,9 @@ impl Rule1D {
 /// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
 /// let a = CellType::from("A");
 /// let b = CellType::from("B");
-/// let sub = Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine, randomness: None, output_type: b.clone() };
+/// let sub = Rule2DSubrule::new( a.clone(), b.clone(), 2,
+/// CountOp::Gt, 1, Neighborhood2D::StraightLine,
+/// b.clone(), None, None );
 /// // Place two B's in cardinal directions: up (0,-1) and right (+1,0)
 /// let out = sub.applies_and_output(&a, |dx, dy| {
 ///     if (dx, dy) == (0, -1) || (dx, dy) == (1, 0) { b.clone() } else { CellType::inactive() }
@@ -302,8 +316,11 @@ pub enum CountOp {
 }
 
 /// One subrule for a 2D automaton using neighbor-count comparisons.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Rule2DSubrule {
+    /// hold a map of the offsets associated with the neighborhood/range
+    #[serde(skip)]
+    pub offsets: HashSet<(i32, i32)>,
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
@@ -324,20 +341,18 @@ pub struct Rule2DSubrule {
     pub criteria_type: CellType,
 }
 
-/// Public helper: returns `true` when `(dx, dy)` belongs to the neighborhood of radius `n`
-/// for the given `kind`. `(0, 0)` always returns `false`.
-pub fn neighborhood_contains(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> bool {
-    if dx == 0 && dy == 0 { return false; }
-    match kind {
-        Neighborhood2D::Moore => dx.abs() <= n && dy.abs() <= n,
-        Neighborhood2D::VonNeumann => dx.abs() + dy.abs() <= n,
-        Neighborhood2D::Langton => dx.abs() == dy.abs() && dx.abs() <= n,
-        Neighborhood2D::StraightLine => (dx == 0 && dy.abs() <= n) || (dy == 0 && dx.abs() <= n),
-        Neighborhood2D::Knight => knight_reachable(dx, dy, n as u8),
-    }
-}
-
 impl Rule2DSubrule {
+
+    pub fn new(current_type: CellType, criteria_type: CellType, count: u32, op: CountOp,
+               range: u8, neighborhood: Neighborhood2D, output_type: CellType,
+               randomness: Option<f64>, limit: Option<u32>) -> Self {
+        // compute the offsets for the neighborhood
+        let offsets = neighborhood_offsets(neighborhood, range as i32);
+        // make the struct
+        Self { current_type, criteria_type, count, op, limit, range,
+            neighborhood, randomness, output_type, offsets }
+    }
+
     /// Validate subrule parameters (range>=1 and randomness/limit bounds).
     pub fn validate(&self) -> Result<(), RuleError> {
         if self.range < 1 { return Err(RuleError::InvalidRange2D); }
@@ -356,25 +371,15 @@ impl Rule2DSubrule {
         Ok(())
     }
 
-    fn within_neighborhood(dx: i32, dy: i32, n: i32, kind: Neighborhood2D) -> bool {
-        neighborhood_contains(dx, dy, n, kind)
-    }
-
     /// Evaluate this subrule by counting matching neighbors and applying op/limit.
     pub fn applies_and_output<F>(&self, center_current: &CellType, get_neighbor: F) -> Option<&CellType>
     where F: Fn(i32, i32) -> CellType {
         if center_current != &self.current_type { return None; }
-        let n = self.range as i32;
-        // Knight moves can reach up to 2*range steps per axis (N hops × max 2 per hop),
-        // so we widen the iteration window to 2*n for Knight neighborhoods.
-        let half = if self.neighborhood == Neighborhood2D::Knight { n * 2 } else { n };
         let mut neighbors = 0u32;
-        for dy in -half..=half {
-            for dx in -half..=half {
-                if !Self::within_neighborhood(dx, dy, n, self.neighborhood) { continue; }
-                let t = get_neighbor(dx, dy);
-                if t == self.criteria_type { neighbors += 1; }
-            }
+        for (dx, dy) in &self.offsets {
+            let t = get_neighbor(*dx, *dy);
+            if t == self.criteria_type { neighbors += 1; }
+            // TODO consider an early exit here based on op type and limit
         }
         let pass = match (self.op, self.limit) {
             (CountOp::Eq, None) => neighbors == self.count,
@@ -393,6 +398,28 @@ impl Rule2DSubrule {
             return Some(&self.output_type);
         }
         None
+    }
+}
+
+impl<'de> Deserialize<'de> for Rule2DSubrule {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // deserialize the helper so that we can rederive the offsets via `new`
+        #[derive(Deserialize)]
+        struct Helper {
+            current_type: CellType,
+            criteria_type: CellType,
+            count: u32,
+            op: CountOp,
+            limit: Option<u32>,
+            range: u8,
+            neighborhood: Neighborhood2D,
+            output_type: CellType,
+            randomness: Option<f64>,
+        }
+        let h = Helper::deserialize(d)?;
+        Ok(Self::new(h.current_type, h.criteria_type, h.count, h.op, h.range, h.neighborhood,
+                     h.output_type, h.randomness, h.limit))
+
     }
 }
 

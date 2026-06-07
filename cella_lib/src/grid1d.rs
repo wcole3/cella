@@ -14,7 +14,8 @@ use crate::threads::thread_count;
 /// ```rust
 /// use cella_lib::{Grid1D, Rule1D, Rule1DSubrule, CellType};
 /// let x = CellType::from("X");
-/// let rule = Rule1D { subrules: vec![Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() }]};
+/// let rule = Rule1D { subrules: vec![Rule1DSubrule { current_type: x.clone(),
+/// criteria_type: x.clone(), wolfram_code: 30, n: 1, randomness: None, output_type: x.clone() }]};
 /// let width = 5usize;
 /// let mut init = vec![CellType::inactive(); width];
 /// init[width/2] = x.clone();
