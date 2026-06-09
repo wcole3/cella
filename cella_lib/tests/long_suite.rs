@@ -585,17 +585,17 @@ fn zzz_benchmark_summary() {
             if old.avg > 0.0 {
                 let diff = avg - old.avg;
                 let pct = (diff * 100.0) / old.avg;
-                let sign = if diff >= 0.0 { "+" } else { "" };
-                println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (Δ {}{:7.6} ms, {:+.2}%)",
-                         name, avg, std_dev, sign, diff, pct);
+                let sign = if diff >= 0.0 { "+" } else { "-" };
+                println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (Δ {:<}{:>12.6} ms, {:+>6.2}%)",
+                         name, avg, std_dev, sign, diff.abs(), pct);
             } else {
-                println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (Δ n/a)", name, avg, std_dev);
+                println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (Δ n/a)", name, avg, std_dev);
             }
         } else {
-            println!("[bench] {:>28}: {:7.6} ms (±{:5.6} ms) (new)", name, avg, std_dev);
+            println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (new)", name, avg, std_dev);
         }
     }
-    println!("[bench] {:>28}: {:7.6} ms (sum of averages)", "TOTAL", total_avg);
+    println!("[bench] {:>28}: {:>12.6} ms (sum of averages)", "TOTAL", total_avg);
 
     let update = std::env::var("CELLA_UPDATE_BENCH").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
     if update {

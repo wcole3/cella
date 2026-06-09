@@ -100,6 +100,7 @@ impl Grid2D {
         self.counts_current.clear();
         for c in &self.cells {
             *self.counts_current.entry(c.current.0).or_insert(0) += 1;
+            // TODO below this is not correct
             *self.peak_counts.entry(c.current.0).or_insert(0) += 1;
         }
     }
