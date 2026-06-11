@@ -5,18 +5,18 @@
 //! controls, statistics, drawing/painting, and GIF export.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline, build_2d_three_state_cycle};
 use cella_lib::*;
-use egui::{Color32, Context, Key, TextEdit};
 use egui::scroll_area::ScrollSource;
-use egui_plot::{Plot, Line, PlotPoints, Legend};
+use egui::{Color32, Context, Key, TextEdit};
+use egui_plot::{Legend, Line, Plot, PlotPoints};
+use lasso2::{Interner, Resolver, Spur};
 use rfd::FileDialog;
-use cella_lib::rules::neighborhood_offsets;
-use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_three_state_cycle, build_2d_straightline};
-
+use cella_lib::types::interner;
 use super::export::{export_gif_1d, export_gif_2d};
 use super::render::default_palette;
 
@@ -44,13 +44,13 @@ struct Rule1DEdit { subrules: Vec<Rule1DSubruleEdit> }
 impl Rule1DEdit {
     fn from_rule(rule: &Rule1D) -> Self {
         let subs = rule.subrules.iter().map(|s| Rule1DSubruleEdit {
-            current: s.current_type.0.clone(),
-            criteria: s.criteria_type.0.clone(),
+            current: s.current_type.as_str().to_string(),
+            criteria: s.criteria_type.as_str().to_string(),
             wolfram_code: s.wolfram_code.to_string(),
             n: s.n,
             randomness_enabled: s.randomness.is_some(),
             randomness_value: s.randomness.unwrap_or(0.0),
-            output: s.output_type.0.clone(),
+            output: s.output_type.as_str().to_string(),
         }).collect();
         Self { subrules: subs }
     }
@@ -60,12 +60,12 @@ impl Rule1DEdit {
             let code = s.wolfram_code.trim().parse::<u128>().map_err(|e| format!("wolfram_code parse error: {}", e))?;
             let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
             let sub = Rule1DSubrule {
-                current_type: CellType(s.current.clone()),
-                criteria_type: CellType(s.criteria.clone()),
+                current_type: CellType::from(s.current.clone()),
+                criteria_type: CellType::from(s.criteria.clone()),
                 wolfram_code: code,
                 n: s.n,
                 randomness,
-                output_type: CellType(s.output.clone()),
+                output_type: CellType::from(s.output.clone()),
             };
             if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
             subs.push(sub);
@@ -95,8 +95,8 @@ struct Rule2DEdit { subrules: Vec<Rule2DSubruleEdit> }
 impl Rule2DEdit {
     fn from_rule(rule: &Rule2D) -> Self {
         let subs = rule.subrules.iter().map(|s| Rule2DSubruleEdit {
-            current: s.current_type.0.clone(),
-            criteria: s.criteria_type.0.clone(),
+            current: s.current_type.as_str().to_string(),
+            criteria: s.criteria_type.as_str().to_string(),
             count: s.count,
             op: s.op,
             limit_enabled: s.limit.is_some(),
@@ -105,7 +105,7 @@ impl Rule2DEdit {
             neighborhood: s.neighborhood,
             randomness_enabled: s.randomness.is_some(),
             randomness_value: s.randomness.unwrap_or(0.0),
-            output: s.output_type.0.clone(),
+            output: s.output_type.as_str().to_string(),
         }).collect();
         Self { subrules: subs }
     }
@@ -114,17 +114,17 @@ impl Rule2DEdit {
         for s in &self.subrules {
             let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
             let limit = if s.limit_enabled { Some(s.limit_value) } else { None };
-            let sub = Rule2DSubrule {
-                current_type: CellType(s.current.clone()),
-                criteria_type: CellType(s.criteria.clone()),
-                count: s.count,
-                op: s.op,
-                limit,
-                range: s.range,
-                neighborhood: s.neighborhood,
+            let sub = Rule2DSubrule::new(
+                CellType::from(s.current.clone()),
+                CellType::from(s.criteria.clone()),
+                s.count,
+                s.op,
+                s.range,
+                s.neighborhood,
+                CellType::from(s.output.clone()),
                 randomness,
-                output_type: CellType(s.output.clone()),
-            };
+                limit
+            );
             if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
             subs.push(sub);
         }
@@ -226,6 +226,7 @@ struct CellaApp {
     base_text_styles: BTreeMap<egui::TextStyle, egui::FontId>,
 
     // Statistics history for per-type counts (sliding window)
+    // TODO need to save with Spurs instead of strings
     stats_history: BTreeMap<String, Vec<(u64, u64)>>,
     stats_show: BTreeMap<String, bool>,
     stats_window_len: usize,
@@ -320,17 +321,17 @@ impl CellaApp {
     fn inactive_color(&self) -> Color32 { self.inactive_color }
 
     fn set_color_for(&mut self, ty: &CellType, color: Color32) {
-        if ty.0 == INACTIVE { self.inactive_color = color; return; }
-        self.colors.insert(ty.0.clone(), color);
+        if ty.as_str() == INACTIVE { self.inactive_color = color; return; }
+        self.colors.insert(ty.as_str().to_string(), color);
     }
 
     fn color_of(&self, ty: &CellType) -> Color32 {
-        if ty.0 == INACTIVE { return self.inactive_color(); }
-        if let Some(&c) = self.colors.get(&ty.0) { return c; }
+        if ty.as_str() == INACTIVE { return self.inactive_color(); }
+        if let Some(&c) = self.colors.get(&ty.as_str().to_string()) { return c; }
         // fallback: hash name into palette index deterministically (no mutation)
         let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
         let prime: u64 = 0x00000100000001B3; // FNV prime
-        for &b in ty.0.as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
+        for &b in ty.as_str().to_string().as_bytes() { h ^= b as u64; h = h.wrapping_mul(prime); }
         let idx = (h as usize) % self.palette.len().max(1);
         self.palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
     }
@@ -384,17 +385,17 @@ impl CellaApp {
 
     /// Collect the distinct types currently visible in the grid.
     fn collect_types(&mut self) -> Vec<CellType> {
-        let mut set: HashSet<String> = HashSet::new();
+        let mut set: HashSet<Spur> = HashSet::new();
         let mut result: Vec<CellType> = Vec::new();
         match self.dim {
             Some(Dim::D1) => {
                 if let Some(g) = &self.d1 {
-                    for c in &g.cells { if set.insert(c.current.0.clone()) { result.push(c.current.clone()); } }
+                    for c in &g.cells { if set.insert(c.current.0) { result.push(c.current.clone()); } }
                 }
             }
             Some(Dim::D2) => {
                 if let Some(g) = &self.d2 {
-                    for c in &g.cells { if set.insert(c.current.0.clone()) { result.push(c.current.clone()); } }
+                    for c in &g.cells { if set.insert(c.current.0) { result.push(c.current.clone()); } }
                 }
             }
             None => {}
@@ -406,36 +407,36 @@ impl CellaApp {
     /// including Inactive, regardless of whether they are currently present on the grid.
     fn declared_types(&self) -> Vec<CellType> {
         use std::collections::BTreeSet;
-        let mut set: BTreeSet<String> = BTreeSet::new();
-        set.insert(INACTIVE.to_string());
+        let mut set: BTreeSet<Spur> = BTreeSet::new();
+        set.insert(CellType::inactive().0);
         match self.dim {
             Some(Dim::D1) => {
                 if let Some(g) = &self.d1 {
                     for s in &g.rule.subrules {
-                        set.insert(s.current_type.0.clone());
-                        set.insert(s.criteria_type.0.clone());
-                        set.insert(s.output_type.0.clone());
+                        set.insert(s.current_type.0);
+                        set.insert(s.criteria_type.0);
+                        set.insert(s.output_type.0);
                     }
                 }
             }
             Some(Dim::D2) => {
                 if let Some(g) = &self.d2 {
                     for s in &g.rule.subrules {
-                        set.insert(s.current_type.0.clone());
-                        set.insert(s.criteria_type.0.clone());
-                        set.insert(s.output_type.0.clone());
+                        set.insert(s.current_type.0);
+                        set.insert(s.criteria_type.0);
+                        set.insert(s.output_type.0);
                     }
                 }
             }
             None => {}
         }
         // Include any extra types added via the editor
-        for t in &self.custom_types { set.insert(t.clone()); }
+        for t in &self.custom_types { set.insert(interner().get_or_intern(t)); }
         // Order with Inactive first, then alphabetical for readability
-        let mut names: Vec<String> = set.into_iter().collect();
+        let mut names: Vec<String> = set.into_iter().map(|s| interner().resolve(&s).to_string()).collect();
         names.sort();
         names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
-        names.into_iter().map(CellType).collect()
+        names.into_iter().map(|s| CellType::from(s)).collect()
     }
 
     /// Paint the grid directly using egui's Painter API with viewport culling.
@@ -687,7 +688,7 @@ impl CellaApp {
                 }
             });
             // Show current list
-            let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.0).collect();
+            let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.as_str().to_string()).collect();
             names.sort(); names.sort_by(|a,b| (a != INACTIVE).cmp(&(b != INACTIVE)));
             ui.horizontal_wrapped(|ui| {
                 for n in &names { ui.label(egui::RichText::new(n.clone()).monospace()); }
@@ -958,9 +959,9 @@ impl CellaApp {
             // Colors for all declared types (from rules/config), not just those currently present
             let tys = self.declared_types();
             for ty in tys {
-                if ty.0 == INACTIVE { continue; }
+                if ty == CellType::inactive() { continue; }
                 let mut col = self.color_of(&ty);
-                let label = format!("{}", ty.0);
+                let label = format!("{}", ty.as_str());
                 if ui.color_edit_button_srgba(&mut col).changed() {
                     self.set_color_for(&ty, col);
                 }
@@ -1288,10 +1289,10 @@ impl CellaApp {
         let mut pick: Option<CellType> = None;
         match self.dim {
             Some(Dim::D1) => if let Some(g) = &self.d1 {
-                for c in &g.cells { if c.current.0 != INACTIVE { pick = Some(c.current.clone()); break; } }
+                for c in &g.cells { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
             },
             Some(Dim::D2) => if let Some(g) = &self.d2 {
-                for c in &g.cells { if c.current.0 != INACTIVE { pick = Some(c.current.clone()); break; } }
+                for c in &g.cells { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
             },
             None => {}
         }
@@ -1316,7 +1317,7 @@ impl CellaApp {
             None => return,
         };
         // Build ordered keys: Inactive first, then by name
-        let mut keys: Vec<String> = counts.keys().cloned().collect();
+        let mut keys: Vec<String> = counts.keys().map(|s| interner().resolve(&s).to_string()).collect();
         if !keys.iter().any(|k| k == INACTIVE) { keys.push(INACTIVE.to_string()); }
         keys.sort();
         keys.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
@@ -1325,7 +1326,7 @@ impl CellaApp {
         for k in keys {
             let show = if k == INACTIVE { false } else if shown_left > 0 { shown_left -= 1; true } else { false };
             self.stats_show.insert(k.clone(), show);
-            let c = *counts.get(&k).unwrap_or(&0);
+            let c = *counts.get(&interner().get_or_intern(&k)).unwrap_or(&0);
             self.stats_history.insert(k, vec![(step, c)]);
         }
     }
@@ -1358,8 +1359,8 @@ impl CellaApp {
             None => return,
         };
         // Ensure entries for any newly seen types (default hidden, including Inactive)
-        for (k, _) in counts.iter() {
-            if !self.stats_history.contains_key(k) {
+        for k in counts.iter().map(|(k, _)| interner().resolve(&k).to_string()) {
+            if !self.stats_history.contains_key(&k) {
                 self.stats_history.insert(k.clone(), Vec::new());
                 self.stats_show.entry(k.clone()).or_insert(false);
             }
@@ -1373,7 +1374,7 @@ impl CellaApp {
         keys.sort();
         keys.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
         for k in keys {
-            let v = counts.get(&k).copied().unwrap_or(0);
+            let v = counts.get(&interner().get_or_intern(&k)).copied().unwrap_or(0);
             if let Some(list) = self.stats_history.get_mut(&k) {
                 list.push((step, v));
                 if list.len() > self.stats_window_len { let drop = list.len() - self.stats_window_len; list.drain(0..drop); }
@@ -1389,23 +1390,23 @@ impl CellaApp {
             let mut entries: Vec<(String, u64, u64)> = Vec::new();
             match self.dim {
                 Some(Dim::D1) => if let Some(g) = &self.d1 {
-                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    let mut keys: std::collections::BTreeSet<Spur> = std::collections::BTreeSet::new();
                     for k in g.counts_current.keys() { keys.insert(k.clone()); }
                     for k in g.peak_counts.keys() { keys.insert(k.clone()); }
                     for k in keys {
                         let cur = *g.counts_current.get(&k).unwrap_or(&0);
                         let peak = *g.peak_counts.get(&k).unwrap_or(&0);
-                        entries.push((k, cur, peak));
+                        entries.push((interner().resolve(&k).to_string(), cur, peak));
                     }
                 },
                 Some(Dim::D2) => if let Some(g) = &self.d2 {
-                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    let mut keys: std::collections::BTreeSet<Spur> = std::collections::BTreeSet::new();
                     for k in g.counts_current.keys() { keys.insert(k.clone()); }
                     for k in g.peak_counts.keys() { keys.insert(k.clone()); }
                     for k in keys {
                         let cur = *g.counts_current.get(&k).unwrap_or(&0);
                         let peak = *g.peak_counts.get(&k).unwrap_or(&0);
-                        entries.push((k, cur, peak));
+                        entries.push((interner().resolve(&k).to_string(), cur, peak));
                     }
                 },
                 None => {}
@@ -1433,7 +1434,7 @@ impl CellaApp {
             ui.horizontal_wrapped(|ui| {
                 for n in &names {
                     let mut show = *self.stats_show.get(n).unwrap_or(&false);
-                    let color = self.color_of(&CellType(n.clone()));
+                    let color = self.color_of(&CellType::from(n.clone()));
                     let label = egui::RichText::new(n.clone()).color(color);
                     if ui.checkbox(&mut show, label).changed() {
                         self.stats_show.insert(n.clone(), show);
@@ -1449,7 +1450,7 @@ impl CellaApp {
                     if let Some(list) = self.stats_history.get(&n) {
                         if list.is_empty() { continue; }
                         let pts: PlotPoints = list.iter().map(|(s, v)| [*s as f64, *v as f64]).collect::<Vec<_>>().into();
-                        let color = self.color_of(&CellType(n.clone()));
+                        let color = self.color_of(&CellType::from(n.clone()));
                         let line = Line::new(n.clone(), pts).color(color);
                         plot_ui.line(line);
                     }
@@ -1515,18 +1516,18 @@ impl eframe::App for CellaApp {
                     ui.horizontal(|ui| {
                         ui.label("Paint type:");
                         // Build a type list from rule/config declared types (not just currently present)
-                        let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.0).collect();
+                        let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.as_str().to_string()).collect();
                         // Ensure ordering with Inactive first
                         names.sort();
                         names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
-                        let current_name = self.selected_draw_type.as_ref().map(|t| t.0.clone()).unwrap_or_else(|| INACTIVE.to_string());
+                        let current_name = self.selected_draw_type.as_ref().map(|t| t.as_str()).unwrap_or_else(|| INACTIVE);
                         let mut sel = current_name.clone();
                         egui::ComboBox::from_label("")
                             .selected_text(sel.clone())
                             .show_ui(ui, |ui| {
-                                for n in &names { ui.selectable_value(&mut sel, n.clone(), n); }
+                                for n in &names { ui.selectable_value(&mut sel, n.as_str(), n); }
                             });
-                        if sel != current_name { self.selected_draw_type = Some(CellType(sel)); }
+                        if sel != current_name { self.selected_draw_type = Some(CellType::from(sel)); }
                     });
                     ui.label("Hold and drag on the grid while paused to paint.");
                 });
@@ -1711,12 +1712,12 @@ impl eframe::App for CellaApp {
                                         if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
                                             let current = g.cells[cell_x].current.clone();
                                             // Build type list locally to avoid borrowing self
-                                            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-                                            for c in &g.cells { set.insert(c.current.0.clone()); }
+                                            let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
+                                            for c in &g.cells { set.insert(&c.current); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
-                                            for n in set { if n != INACTIVE { names.push(n); } }
-                                            let tys: Vec<CellType> = names.iter().map(|s| CellType(s.clone())).collect();
+                                            for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
+                                            let tys: Vec<CellType> = names.iter().map(|s| CellType::from(s.clone())).collect();
                                             let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
                                             idx = (idx + 1) % tys.len();
                                             let next = tys[idx].clone();
@@ -1732,12 +1733,12 @@ impl eframe::App for CellaApp {
                                             let i = cell_y * g.width + cell_x;
                                             let current = g.cells[i].current.clone();
                                             // Build type list locally to avoid borrowing self
-                                            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-                                            for c in &g.cells { set.insert(c.current.0.clone()); }
+                                            let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
+                                            for c in &g.cells { set.insert(&c.current); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
-                                            for n in set { if n != INACTIVE { names.push(n); } }
-                                            let tys: Vec<CellType> = names.iter().map(|s| CellType(s.clone())).collect();
+                                            for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
+                                            let tys: Vec<CellType> = names.iter().map(|s| CellType::from(s.clone())).collect();
                                             let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
                                             idx = (idx + 1) % tys.len();
                                             let next = tys[idx].clone();

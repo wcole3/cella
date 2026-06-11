@@ -11,3 +11,4 @@ egui_plot = "0.34"
 rfd = "0.17"
 gif = "0.14"
 serde_json = "1"
+lasso2 = { version = "0.8.2", features = ["multi-threaded", "serialize"] }

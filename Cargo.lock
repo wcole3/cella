@@ -594,6 +594,7 @@ dependencies = [
  "egui",
  "egui_plot",
  "gif",
+ "lasso2",
  "rfd",
  "serde_json",
 ]

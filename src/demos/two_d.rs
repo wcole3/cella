@@ -15,21 +15,20 @@ pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule::new( alive.clone(), alive.clone(), 4,
+            CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(),
+            None, None),
         // Survival: Alive stays Alive (>=2 Alive neighbors), after overpopulation check
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new( alive.clone(), alive.clone(), 2,
+            CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None ),
         // Prevent birth unless exactly 3 Alive neighbors
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 4,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule::new( inactive.clone(), alive.clone(), 4,
+            CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(),
+            None, None),
         // Birth (exactly 3)
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3,
-            op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new( inactive.clone(), alive.clone(), 3,
+            CountOp::Eq,  1, Neighborhood2D::Moore, alive.clone(),
+            None, None),
     ]};
     let mut init = vec![CellType::inactive(); width*height];
     // seed a blinker in the middle-ish
@@ -50,15 +49,9 @@ pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -
     let c = CellType::from("C");
     // Rotate when condition always passes (count >= 0). Order matters: transition before survival.
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 0,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: b.clone() },
-        Rule2DSubrule { current_type: b.clone(), criteria_type: c.clone(), count: 0,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: c.clone() },
-        Rule2DSubrule { current_type: c.clone(), criteria_type: a.clone(), count: 0,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: a.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None),
+        Rule2DSubrule::new(b.clone(), c.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, c.clone(), None, None),
+        Rule2DSubrule::new(c.clone(), a.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, a.clone(), None, None),
     ]};
     let mut init = vec![CellType::inactive(); width*height];
     for y in 0..height { for x in 0..width { let idx = (x + y) % 3; init[y*width + x] = match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }; } }
@@ -100,17 +93,11 @@ pub fn demo_life() {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: inactive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
         // Survival
-        Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
         // Birth (exactly 3)
-        Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3,
-            op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore,
-            randomness: None, output_type: alive.clone() },
+        Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
     ]};
 
     let width = 20usize; let height = 10usize; let hist = 5usize;
@@ -201,13 +188,9 @@ pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Gri
     let b = CellType::from("B");
     let rule = Rule2D { subrules: vec![
         // Any A with at least 1 B in straight cardinal directions within range 2 becomes B
-        Rule2DSubrule { current_type: a.clone(), criteria_type: b.clone(), count: 1,
-            op: CountOp::Gt, limit: None, range: 2, neighborhood: Neighborhood2D::StraightLine,
-            randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 2, Neighborhood2D::StraightLine, b.clone(), None, None),
         // Persistence: B stays B with at least 1 B straight neighbor (range 1)
-        Rule2DSubrule { current_type: b.clone(), criteria_type: b.clone(), count: 1,
-            op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::StraightLine,
-            randomness: None, output_type: b.clone() },
+        Rule2DSubrule::new(b.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::StraightLine, b.clone(), None, None),
     ]};
     let mut init = vec![a.clone(); width*height];
     // Seed a small cross of B near the center

@@ -25,7 +25,7 @@ pub fn interner() -> &'static ThreadedRodeo { INTERNER.get_or_init(ThreadedRodeo
 /// let inactive = CellType::inactive();
 /// assert_ne!(alive, inactive);
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct CellType(pub Spur);
 
 impl CellType {
