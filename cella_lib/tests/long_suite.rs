@@ -586,8 +586,8 @@ fn zzz_benchmark_summary() {
                 let diff = avg - old.avg;
                 let pct = (diff * 100.0) / old.avg;
                 let sign = if diff >= 0.0 { "+" } else { "-" };
-                println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (Δ {:<}{:>12.6} ms, {:+>6.2}%)",
-                         name, avg, std_dev, sign, diff.abs(), pct);
+                println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (Δ {:<}{:>12.6} ms, {:>6.2}%)",
+                         name, avg, std_dev, sign, diff.abs(), pct.abs());
             } else {
                 println!("[bench] {:>28}: {:>12.6} ms (±{:>10.6} ms) (Δ n/a)", name, avg, std_dev);
             }
