@@ -97,11 +97,13 @@ impl Grid2D {
 
     fn recompute_counts_from_cells(&mut self) {
         // clear the current counts
+        // TODO profiling shows that entry hashing actually takes up a significant amount of time
+        // maybe instead of clearing we reset the counts and only hash on new states?
         self.counts_current.clear();
         for c in &self.cells {
-            *self.counts_current.entry(c.current.0).or_insert(0) += 1;
+            self.counts_current.entry(c.current.0).and_modify(|count| *count += 1).or_insert(0);
             // TODO below this is not correct
-            *self.peak_counts.entry(c.current.0).or_insert(0) += 1;
+            self.peak_counts.entry(c.current.0).and_modify(|count| *count += 1).or_insert(0);
         }
     }
 
@@ -133,6 +135,8 @@ impl Grid2D {
                     next.push(new_type);
                 }
             }
+            // TODO I think we could do this a bit more efficiently if we actually kept
+            // two cell buffers and a pointer to the current one instead of recomputing counts and peaks after the fact, but this is simpler for now
             for (i, ty) in next.drain(..).enumerate() {
                 self.cells[i].transition(&ty);
             }
@@ -189,6 +193,7 @@ impl Grid2D {
         }
 
         // Update counts and peaks
+        // TODO what if we get rid of this entirely and move it to the transtions calls above?
         Self::recompute_counts_from_cells(self);
         self.step = self.step.saturating_add(1);
     }
