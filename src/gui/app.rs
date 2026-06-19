@@ -9,16 +9,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::export::{export_gif_1d, export_gif_2d};
+use super::render::default_palette;
 use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline, build_2d_three_state_cycle};
+use cella_lib::types::interner;
 use cella_lib::*;
 use egui::scroll_area::ScrollSource;
 use egui::{Color32, Context, Key, TextEdit};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use lasso2::{Interner, Resolver, Spur};
 use rfd::FileDialog;
-use cella_lib::types::interner;
-use super::export::{export_gif_1d, export_gif_2d};
-use super::render::default_palette;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Dim { D1, D2 }
@@ -1521,9 +1521,9 @@ impl eframe::App for CellaApp {
                         names.sort();
                         names.sort_by(|a, b| (a != INACTIVE).cmp(&(b != INACTIVE)));
                         let current_name = self.selected_draw_type.as_ref().map(|t| t.as_str()).unwrap_or_else(|| INACTIVE);
-                        let mut sel = current_name.clone();
+                        let mut sel = current_name;
                         egui::ComboBox::from_label("")
-                            .selected_text(sel.clone())
+                            .selected_text(sel)
                             .show_ui(ui, |ui| {
                                 for n in &names { ui.selectable_value(&mut sel, n.as_str(), n); }
                             });
