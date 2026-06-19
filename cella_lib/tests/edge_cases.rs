@@ -149,7 +149,7 @@ fn all_inactive_grid_1d_stays_inactive() {
     let init = vec![CellType::inactive(); 5];
     let mut g = Grid1D::new(5, 2, init, rule);
     g.step();
-    for c in &g.cells {
+    for c in &g.cell_states {
         assert_eq!(c.current, CellType::inactive());
     }
 }
@@ -208,7 +208,7 @@ fn grid_1d_no_matching_subrule_becomes_inactive() {
     let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     let mut g = Grid1D::new(3, 2, init, rule);
     g.step();
-    assert_eq!(g.cells[1].current, CellType::inactive());
+    assert_eq!(g.cell_states[1].current, CellType::inactive());
 }
 
 #[test]

@@ -69,7 +69,7 @@ impl GridState {
             = convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
         // build the GridState
         Self::D1 { width: g.width,
-        history_limit: g.history_limit, cell_states: g.cells.clone(), step: g.step,
+        history_limit: g.history_limit, cell_states: g.cell_states.clone(), step: g.step,
         rule: g.rule.clone(), counts_current: current_count_map,
         peak_counts: peak_count_map }
     }
@@ -100,8 +100,10 @@ impl Grid1D {
                 rule, counts_current, peak_counts } => {
                 let (new_counts, new_peak_counts) =
                     convert_map_string_to_spur(cell_states, counts_current, peak_counts);
-
-                Some(Self { width: *width, history_limit: *history_limit, cells: cell_states.clone(),
+                let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
+                let next_cells: Vec<CellType> = vec![CellType::inactive(); *width];
+                Some(Self { width: *width, history_limit: *history_limit,
+                    cell_states: cell_states.clone(), cells, next_cells,
                     step: *step, rule: rule.clone(), counts_current: new_counts, peak_counts: new_peak_counts,
                     inactive: CellType::inactive() })
             }

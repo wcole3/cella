@@ -58,8 +58,7 @@ fn hash_grid1d_state(g: &Grid1D) -> u64 {
     // include dims and step
     acc ^= fnv1a64(&g.width.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
-    for c in &g.cells {
-        // TODO think about this
+    for c in &g.cell_states {
         acc ^= fnv1a64(c.current.as_str().as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
     }
@@ -193,7 +192,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
 
 fn export_config_1d(name: &str, g: &Grid1D) {
     use cella_lib::config::{CellaConfig, Config1D};
-    let initial: Vec<String> = g.cells.iter().map(|c| c.current.as_str().to_string()).collect();
+    let initial: Vec<String> = g.cell_states.iter().map(|c| c.current.as_str().to_string()).collect();
     let cfg = CellaConfig::D1(Config1D {
         width: g.width,
         history_limit: g.history_limit,
@@ -246,7 +245,7 @@ fn ascii_symbols_map(names: &mut Vec<String>) -> std::collections::BTreeMap<Stri
 fn print_ascii_1d(label: &str, g: &Grid1D) {
     use std::collections::BTreeMap;
     let mut names: Vec<String> = g
-        .cells
+        .cell_states
         .iter()
         .map(|c| c.current.as_str().to_string())
         .filter(|n| n != INACTIVE)
@@ -254,7 +253,7 @@ fn print_ascii_1d(label: &str, g: &Grid1D) {
     let map: BTreeMap<String, char> = ascii_symbols_map(&mut names);
     let mut line = String::with_capacity(g.width);
     for i in 0..g.width {
-        let ty = g.cells[i].current.as_str();
+        let ty = g.cell_states[i].current.as_str();
         if ty == INACTIVE { line.push('.'); }
         else { line.push(*map.get(&ty.to_string()).unwrap_or(&'?')); }
     }

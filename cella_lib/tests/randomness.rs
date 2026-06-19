@@ -17,7 +17,7 @@ fn one_d_randomness_zero_always_applies() {
     let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     let mut g = Grid1D::new(3, 2, init, rule);
     g.step();
-    assert_eq!(g.cells[1].current, y);
+    assert_eq!(g.cell_states[1].current, y);
 }
 
 #[test]

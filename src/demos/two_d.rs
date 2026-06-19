@@ -62,7 +62,7 @@ pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -
 fn print_grid_2d(g: &Grid2D) {
     // Build stable mapping for active states (non-Inactive)
     let mut names: Vec<String> = g
-        .cells
+        .cell_states
         .iter()
         .map(|c| c.current.as_str().to_string())
         .filter(|n| n != INACTIVE)
@@ -79,7 +79,7 @@ fn print_grid_2d(g: &Grid2D) {
         let mut line = String::with_capacity(g.width);
         for x in 0..g.width {
             let i = y * g.width + x;
-            let ty = &g.cells[i].current.as_str().to_string();
+            let ty = &g.cell_states[i].current.as_str().to_string();
             if ty == INACTIVE { line.push('.'); }
             else { line.push(*map.get(ty).unwrap_or(&'?')); }
         }
@@ -146,7 +146,7 @@ pub fn demo_from_config() {
                         for _ in 0..steps { g.step(); }
                         // Build symbol map for final state
                         let mut names: Vec<String> = g
-                            .cells
+                            .cell_states
                             .iter()
                             .map(|c| c.current.as_str().to_string())
                             .filter(|n| n != INACTIVE)
@@ -157,7 +157,7 @@ pub fn demo_from_config() {
                         for (i, n) in names.iter().enumerate() { map.insert(n.clone(), symbol_pool.get(i).copied().unwrap_or('?')); }
                         let mut line = String::with_capacity(g.width);
                         for i in 0..g.width {
-                            let ty = &g.cells[i].current.as_str().to_string();
+                            let ty = &g.cell_states[i].current.as_str().to_string();
                             if ty == INACTIVE { line.push('.'); }
                             else { line.push(*map.get(ty).unwrap_or(&'?')); }
                         }
@@ -167,7 +167,7 @@ pub fn demo_from_config() {
                 }
                 CellaConfig::D2(_) => {
                     if let Some(mut g) = cfg.build_grid2d() {
-                        let _active = g.cells.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType::from("Alive"));
+                        let _active = g.cell_states.iter().find(|c| c.current != CellType::inactive()).map(|c| c.current.clone()).unwrap_or(CellType::from("Alive"));
                         let steps = ask_steps(10);
                         print_grid_2d(&g);
                         for _ in 0..steps { g.step(); println!("\nstep {}:", g.step); print_grid_2d(&g); }

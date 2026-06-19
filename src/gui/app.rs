@@ -17,7 +17,7 @@ use cella_lib::*;
 use egui::scroll_area::ScrollSource;
 use egui::{Color32, Context, Key, TextEdit};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
-use lasso2::{Interner, Resolver, Spur};
+use lasso2::Spur;
 use rfd::FileDialog;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -355,10 +355,11 @@ impl CellaApp {
             self.sim_play_start = Some(Instant::now());
         }
         match self.dim {
+            // TODO why does dim1 keep a seperate history?
             Some(Dim::D1) => if let Some(g) = &mut self.d1 {
                 // push current row to history before stepping
                 let mut row: Vec<CellType> = Vec::with_capacity(g.width);
-                for x in 0..g.width { row.push(g.cells[x].current.clone()); }
+                for x in 0..g.width { row.push(g.cell_states[x].current.clone()); }
                 self.history_1d.push(row);
                 if self.history_1d.len() > self.history_limit_1d { let overflow = self.history_1d.len() - self.history_limit_1d; self.history_1d.drain(0..overflow); }
                 g.step();
@@ -390,12 +391,12 @@ impl CellaApp {
         match self.dim {
             Some(Dim::D1) => {
                 if let Some(g) = &self.d1 {
-                    for c in &g.cells { if set.insert(c.current.0) { result.push(c.current.clone()); } }
+                    for c in &g.cell_states { if set.insert(c.current.0) { result.push(c.current.clone()); } }
                 }
             }
             Some(Dim::D2) => {
                 if let Some(g) = &self.d2 {
-                    for c in &g.cells { if set.insert(c.current.0) { result.push(c.current.clone()); } }
+                    for c in &g.cell_states { if set.insert(c.current.0) { result.push(c.current.clone()); } }
                 }
             }
             None => {}
@@ -511,7 +512,7 @@ impl CellaApp {
                     // Current row at y = history_len
                     if cell_y_end > history_len && cell_y_start <= history_len {
                         for x in cell_x_start..cell_x_end.min(g.width) {
-                            let col = self.color_of(&g.cells[x].current);
+                            let col = self.color_of(&g.cell_states[x].current);
                             if col != bg {
                                 let rect = egui::Rect::from_min_size(
                                     full_rect.min + egui::vec2(x as f32 * scale, history_len as f32 * scale),
@@ -529,7 +530,7 @@ impl CellaApp {
                     for y in cell_y_start..cell_y_end.min(g.height) {
                         for x in cell_x_start..cell_x_end.min(w) {
                             let idx = y * w + x;
-                            let col = self.color_of(&g.cells[idx].current);
+                            let col = self.color_of(&g.cell_states[idx].current);
                             if col != bg {
                                 let rect = egui::Rect::from_min_size(
                                     full_rect.min + egui::vec2(x as f32 * scale, y as f32 * scale),
@@ -1012,7 +1013,7 @@ impl CellaApp {
                     let hist = g.history_limit;
                     let mut init: Vec<CellType> = vec![CellType::inactive(); new_w];
                     for x in 0..new_w.min(old_w) {
-                        init[x] = g.cells[x].current.clone();
+                        init[x] = g.cell_states[x].current.clone();
                     }
                     self.d1 = Some(Grid1D::new(new_w, hist, init, rule));
                     self.initial_state = self.d1.as_ref().map(GridState::from_grid1d);
@@ -1032,7 +1033,7 @@ impl CellaApp {
                     let mut init: Vec<CellType> = vec![CellType::inactive(); new_w * new_h];
                     for y in 0..new_h.min(old_h) {
                         for x in 0..new_w.min(old_w) {
-                            init[y * new_w + x] = g.cells[y * old_w + x].current.clone();
+                            init[y * new_w + x] = g.cell_states[y * old_w + x].current.clone();
                         }
                     }
                     self.d2 = Some(Grid2D::new(new_w, new_h, hist, init, rule));
@@ -1289,10 +1290,10 @@ impl CellaApp {
         let mut pick: Option<CellType> = None;
         match self.dim {
             Some(Dim::D1) => if let Some(g) = &self.d1 {
-                for c in &g.cells { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
+                for c in &g.cell_states { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
             },
             Some(Dim::D2) => if let Some(g) = &self.d2 {
-                for c in &g.cells { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
+                for c in &g.cell_states { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
             },
             None => {}
         }
@@ -1610,10 +1611,40 @@ impl eframe::App for CellaApp {
                 ui.input(|i| {
                     if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(Key::Z) {
                         if let Some(batch) = self.undo_stack.pop() {
-                            match self.dim {
-                                Some(Dim::D1) => if let Some(g) = &mut self.d1 { for (idx, prev) in batch { if idx < g.width { g.cells[idx].transition(&prev); } } },
-                                Some(Dim::D2) => if let Some(g) = &mut self.d2 { for (idx, prev) in batch { if idx < g.cells.len() { g.cells[idx].transition(&prev); } } },
-                                None => {}
+                            let undo_error = match self.dim {
+                                Some(Dim::D1) => {
+                                    let mut err = None;
+                                    if let Some(g) = &mut self.d1 {
+                                        for (idx, prev) in batch {
+                                            if idx < g.width {
+                                                if let Some(e) = g.transition_state_and_buffer(idx, &prev){
+                                                    err = Some(e);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    err
+                                }
+                                Some(Dim::D2) => {
+                                    let mut err = None;
+                                    if let Some(g) = &mut self.d2 {
+                                        for (idx, prev) in batch {
+                                            if idx < g.cell_states.len() {
+                                               if let Some(e) = g.transition_state_and_buffer(idx, &prev){
+                                                    err = Some(e);
+                                                    break;
+                                               }
+                                            }
+                                        }
+                                    }
+                                    err
+                                }
+                                None => None,
+                            };
+                            if let Some(err) = undo_error {
+                                eprintln!("Undo error: {}", err);
+                                self.set_status(format!("Undo error: {}", err));
                             }
                         }
                     }
@@ -1662,13 +1693,16 @@ impl eframe::App for CellaApp {
                                                 let total_rows = self.history_1d.len() + 1;
                                                 if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
                                                     let idx = cell_x;
-                                                    let prev = g.cells[idx].current.clone();
+                                                    let prev = g.cell_states[idx].current.clone();
                                                     if prev != paint_ty {
                                                         if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
                                                         if let Some(batch) = &mut self.current_paint_batch {
                                                             if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
                                                         }
-                                                        g.cells[idx].transition(&paint_ty);
+                                                        if let Some(err) = g.transition_state_and_buffer(idx, &paint_ty) {
+                                                            eprintln!("Paint error: {}", err);
+                                                            self.set_status(format!("Paint error: {}", err));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1677,13 +1711,16 @@ impl eframe::App for CellaApp {
                                             if let Some(g) = &mut self.d2 {
                                                 if cell_x < g.width && cell_y < g.height {
                                                     let idx = cell_y * g.width + cell_x;
-                                                    let prev = g.cells[idx].current.clone();
+                                                    let prev = g.cell_states[idx].current.clone();
                                                     if prev != paint_ty {
                                                         if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
                                                         if let Some(batch) = &mut self.current_paint_batch {
                                                             if !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev.clone())); }
                                                         }
-                                                        g.cells[idx].transition(&paint_ty);
+                                                        if let Some(err) = g.transition_state_and_buffer(idx, &paint_ty) {
+                                                            eprintln!("Paint error: {}", err);
+                                                            self.set_status(format!("Paint error: {}", err));
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1710,10 +1747,10 @@ impl eframe::App for CellaApp {
                                     if let Some(g) = &mut self.d1 {
                                         let total_rows = self.history_1d.len() + 1;
                                         if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
-                                            let current = g.cells[cell_x].current.clone();
+                                            let current = g.cell_states[cell_x].current.clone();
                                             // Build type list locally to avoid borrowing self
                                             let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
-                                            for c in &g.cells { set.insert(&c.current); }
+                                            for c in &g.cell_states { set.insert(&c.current); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
                                             for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
@@ -1723,7 +1760,10 @@ impl eframe::App for CellaApp {
                                             let next = tys[idx].clone();
                                             // push undo batch of one cell
                                             self.undo_stack.push(vec![(cell_x, current.clone())]);
-                                            g.cells[cell_x].transition(&next);
+                                            if let Some(err) = g.transition_state_and_buffer(idx, &next) {
+                                                eprintln!("Cycle edit error: {}", err);
+                                                self.set_status(format!("Cycle edit error: {}", err));
+                                            }
                                         }
                                     }
                                 }
@@ -1731,10 +1771,10 @@ impl eframe::App for CellaApp {
                                     if let Some(g) = &mut self.d2 {
                                         if cell_x < g.width && cell_y < g.height {
                                             let i = cell_y * g.width + cell_x;
-                                            let current = g.cells[i].current.clone();
+                                            let current = g.cell_states[i].current.clone();
                                             // Build type list locally to avoid borrowing self
                                             let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
-                                            for c in &g.cells { set.insert(&c.current); }
+                                            for c in &g.cell_states { set.insert(&c.current); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
                                             for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
@@ -1743,7 +1783,10 @@ impl eframe::App for CellaApp {
                                             idx = (idx + 1) % tys.len();
                                             let next = tys[idx].clone();
                                             self.undo_stack.push(vec![(i, current.clone())]);
-                                            g.cells[i].transition(&next);
+                                            if let Some(err) = g.transition_state_and_buffer(idx, &next) {
+                                                eprintln!("Cycle edit error: {}", err);
+                                                self.set_status(format!("Cycle edit error: {}", err));
+                                            }
                                         }
                                     }
                                 }

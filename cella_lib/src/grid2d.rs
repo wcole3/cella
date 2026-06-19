@@ -1,5 +1,6 @@
 //! 2D grid implementation.
 
+use std::io::Error;
 use crate::rules::Rule2D;
 use crate::threads::thread_count;
 use crate::types::{CellState, CellType};
@@ -45,8 +46,8 @@ pub struct Grid2D {
     pub cell_states: Vec<CellState>,
     /// double buffer of celltype TODO there might be a more efficient way to combine these with
     /// the CellState array
-    #[serde(skip)] pub cells: Vec<CellType>,
-    #[serde(skip)] pub next_cells: Vec<CellType>,
+    #[serde(skip)] pub(crate) cells: Vec<CellType>,
+    #[serde(skip)] pub(crate) next_cells: Vec<CellType>,
     /// Current simulation step.
     pub step: u64,
     /// Rule used for updates.
@@ -124,6 +125,21 @@ impl Grid2D {
         let inactive = CellType::inactive();
         Self { width, height, history_limit, cell_states, cells,
             next_cells, step: 0, rule, counts_current, peak_counts, inactive }
+    }
+
+    /// Transitions the given CellState and current buffer cell type
+    /// Used by interactive or programatic routines that change grid
+    /// state outside of stepping (i.e. grid painting)
+    pub fn transition_state_and_buffer(&mut self, idx: usize, new_type: &CellType) -> Option<Error> {
+        // validate the idx if outside return error
+        if idx > (self.width * self.height) {
+            Some(Error::new(std::io::ErrorKind::InvalidInput, "Index out of bounds"))
+        }
+        else {
+            self.cell_states[idx].transition(new_type);
+            self.cells[idx] = *new_type;
+            None
+        }
     }
 
     fn recompute_counts_from_cells(&mut self) {
