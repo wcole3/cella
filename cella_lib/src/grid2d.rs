@@ -4,7 +4,7 @@ use crate::rules::Rule2D;
 use crate::threads::thread_count;
 use crate::types::{CellState, CellType};
 use lasso2::Spur;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// 2D grid containing cells and a 2D rule.
 ///
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// g.step();
 /// assert!(g.step >= 1);
 /// ```
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 pub struct Grid2D {
     /// Grid width in cells.
     pub width: usize,
@@ -42,7 +42,11 @@ pub struct Grid2D {
     /// Max number of past states retained for each cell.
     pub history_limit: usize,
     /// Row-major length width*height
-    pub cells: Vec<CellState>,
+    pub cell_states: Vec<CellState>,
+    /// double buffer of celltype TODO there might be a more efficient way to combine these with
+    /// the CellState array
+    #[serde(skip)] pub cells: Vec<CellType>,
+    #[serde(skip)] pub next_cells: Vec<CellType>,
     /// Current simulation step.
     pub step: u64,
     /// Rule used for updates.
@@ -53,6 +57,41 @@ pub struct Grid2D {
     pub peak_counts: std::collections::HashMap<Spur, u64>,
     /// Reference to inactive cell type.
     pub inactive: CellType,
+}
+
+impl<'de> Deserialize<'de> for Grid2D {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // deserialize into an intermediate struct without the skipped fields
+        #[derive(Deserialize)]
+        struct Grid2DIntermediate {
+            width: usize,
+            height: usize,
+            history_limit: usize,
+            cell_states: Vec<CellState>,
+            step: u64,
+            rule: Rule2D,
+            counts_current: std::collections::HashMap<Spur, u64>,
+            peak_counts: std::collections::HashMap<Spur, u64>,
+            inactive: CellType,
+        }
+        let intermediate = Grid2DIntermediate::deserialize(d)?;
+        // reconstruct the skipped fields
+        let cells: Vec<CellType> = intermediate.cell_states.iter().map(|cs| cs.current).collect();
+        let next_cells: Vec<CellType> = vec![intermediate.inactive.clone(); intermediate.width * intermediate.height];
+        Ok(Grid2D {
+            width: intermediate.width,
+            height: intermediate.height,
+            history_limit: intermediate.history_limit,
+            cell_states: intermediate.cell_states,
+            cells,
+            next_cells,
+            step: intermediate.step,
+            rule: intermediate.rule,
+            counts_current: intermediate.counts_current,
+            peak_counts: intermediate.peak_counts,
+            inactive: intermediate.inactive,
+        })
+    }
 }
 
 impl std::fmt::Debug for Grid2D {
@@ -76,23 +115,15 @@ impl Grid2D {
     /// `initial.len()` must equal `width*height`.
     pub fn new(width: usize, height: usize, history_limit: usize, initial: Vec<CellType>, rule: Rule2D) -> Self {
         assert_eq!(initial.len(), width * height, "initial types len must equal width*height");
-        let cells: Vec<CellState> = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
+        let cell_states: Vec<CellState> = initial.into_iter().map(|t| CellState::new(t, history_limit)).collect();
+        let next_cells: Vec<CellType> = vec![CellType::inactive(); width * height];
+        let cells: Vec<CellType> = cell_states.iter().map(|cs| cs.current).collect();
         let mut counts_current: std::collections::HashMap<Spur, u64> = std::collections::HashMap::new();
-        for c in &cells { *counts_current.entry(c.current.0).or_insert(0) += 1; }
+        for c in &cells { *counts_current.entry(c.0).or_insert(0) += 1; }
         let peak_counts = counts_current.clone();
         let inactive = CellType::inactive();
-        Self { width, height, history_limit, cells, step: 0, rule, counts_current, peak_counts, inactive }
-    }
-
-    fn idx(&self, x: isize, y: isize) -> Option<usize> {
-        if x < 0 || y < 0 { return None; }
-        let (xu, yu) = (x as usize, y as usize);
-        if xu >= self.width || yu >= self.height { return None; }
-        Some(yu * self.width + xu)
-    }
-
-    fn get_type_or_inactive(&self, x: isize, y: isize) -> &CellType {
-        match self.idx(x, y) { Some(i) => &self.cells[i].current, None => &self.inactive }
+        Self { width, height, history_limit, cell_states, cells,
+            next_cells, step: 0, rule, counts_current, peak_counts, inactive }
     }
 
     fn recompute_counts_from_cells(&mut self) {
@@ -101,9 +132,56 @@ impl Grid2D {
         // maybe instead of clearing we reset the counts and only hash on new states?
         self.counts_current.clear();
         for c in &self.cells {
-            self.counts_current.entry(c.current.0).and_modify(|count| *count += 1).or_insert(0);
+            self.counts_current.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
             // TODO below this is not correct
-            self.peak_counts.entry(c.current.0).and_modify(|count| *count += 1).or_insert(0);
+            self.peak_counts.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
+        }
+    }
+
+    /// Type at `(x, y)`, or [`inactive`](Self::inactive) when out of bounds.
+    ///
+    /// Reads from the `cells` slice directly so it can be shared by the serial
+    /// and parallel paths (which cannot borrow `&self`).
+    #[inline]
+    fn neighbor(cells: &[CellType], inactive: &CellType, width: usize, height: usize, x: isize, y: isize) -> CellType {
+        if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
+            *inactive
+        } else {
+            cells[y as usize * width + x as usize]
+        }
+    }
+
+    /// Evaluate subrules in order for the cell at `idx`, returning its next type.
+    ///
+    /// Subrules are tried in order; the first that applies wins. If none trigger
+    /// the cell becomes [`inactive`](Self::inactive).
+    #[inline]
+    fn next_type<'a>(cells: &'a [CellType], rule: &'a Rule2D, inactive: &'a CellType,
+                     width: usize, height: usize, idx: usize) -> &'a CellType {
+        let y = (idx / width) as isize;
+        let x = (idx % width) as isize;
+        let current_type = &cells[idx];
+        for sr in &rule.subrules {
+            if current_type != &sr.current_type { continue; }
+            let out = sr.applies_and_output(current_type, |dx, dy| {
+                Self::neighbor(cells, inactive, width, height, x + dx as isize, y + dy as isize)
+            });
+            if let Some(o) = out { return o; }
+        }
+        inactive
+    }
+
+    /// Compute the next state for global indices `start..start + next_cells.len()`,
+    /// writing into the chunk-local `next_cells` / `cell_states` slices.
+    ///
+    /// `cells` is the full current grid (neighbor lookups span chunk boundaries);
+    /// `next_cells` and `cell_states` are this chunk's disjoint output slices.
+    fn step_chunk(cells: &[CellType], next_cells: &mut [CellType], cell_states: &mut [CellState],
+                  rule: &Rule2D, inactive: &CellType, width: usize, height: usize, start: usize) {
+        for local in 0..next_cells.len() {
+            let new_type = *Self::next_type(cells, rule, inactive, width, height, start + local);
+            next_cells[local] = new_type;
+            cell_states[local].transition(&new_type);
         }
     }
 
@@ -114,86 +192,44 @@ impl Grid2D {
     /// May run in parallel depending on the `threads` setting in
     /// `cella.properties` at the repository root.
     pub fn step(&mut self) {
-        let mut next: Vec<&CellType> = Vec::with_capacity(self.width * self.height);
         let threads = thread_count();
-        let total = self.width * self.height;
+        let width = self.width;
+        let height = self.height;
+        let total = width * height;
+
+        // Disjoint field borrows shared by both paths; threads can't borrow `&self`.
+        let cells = &self.cells;
+        let next_cells = &mut self.next_cells;
+        let cell_states = &mut self.cell_states;
+        let rule = &self.rule;
+        let inactive = &self.inactive;
 
         if threads <= 1 || total < 4096 {
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    let i = y * self.width + x;
-                    let current_type = &self.cells[i].current;
-                    let mut decided: Option<&CellType> = None;
-                    'sub: for s in &self.rule.subrules {
-                        if current_type != &s.current_type { continue; }
-                        let out = s.applies_and_output(current_type, |dx, dy| {
-                            *self.get_type_or_inactive(x as isize + dx as isize, y as isize + dy as isize)
-                        });
-                        if let Some(o) = out { decided = Some(o); break 'sub; }
-                    }
-                    let new_type = decided.unwrap_or_else(|| &self.inactive);
-                    next.push(new_type);
-                }
-            }
-            // TODO I think we could do this a bit more efficiently if we actually kept
-            // two cell buffers and a pointer to the current one instead of recomputing counts and peaks after the fact, but this is simpler for now
-            for (i, ty) in next.drain(..).enumerate() {
-                self.cells[i].transition(&ty);
-            }
+            Self::step_chunk(cells, next_cells, cell_states, rule, inactive, width, height, 0);
         } else {
-            // Parallel path using scoped threads — borrows cells & rule directly
-            let cells = &self.cells;
-            let rule = &self.rule;
-            let width = self.width;
-            let height = self.height;
+            // One thread per chunk; `chunks_mut` hands each thread a disjoint
+            // mutable slice, so the writes are sound without locking.
             let chunk = (total + threads - 1) / threads;
-            let inactive = &self.inactive;
-
-            let all_results: Vec<Vec<(usize, &CellType)>> = std::thread::scope(|s| {
-                let handles: Vec<_> = (0..threads)
-                    .filter_map(|t| {
-                        let start = t * chunk;
-                        if start >= total { return None; }
-                        let end = ((t + 1) * chunk).min(total);
-                        Some(s.spawn(move || {
-                            let mut out: Vec<(usize, &CellType)> = Vec::with_capacity(end - start);
-                            for idx in start..end {
-                                let y = idx / width;
-                                let x = idx % width;
-                                let current_type = &cells[idx].current;
-                                let mut decided: Option<&CellType> = None;
-                                'sub: for sr in &rule.subrules {
-                                    if current_type != &sr.current_type { continue; }
-                                    let out_ty = sr.applies_and_output(current_type, |dx, dy| {
-                                        let nx = x as isize + dx as isize;
-                                        let ny = y as isize + dy as isize;
-                                        if nx < 0 || ny < 0 || (nx as usize) >= width || (ny as usize) >= height {
-                                            *inactive
-                                        } else {
-                                            cells[(ny as usize) * width + (nx as usize)].current
-                                        }
-                                    });
-                                    if let Some(o) = out_ty { decided = Some(o); break 'sub; }
-                                }
-                                let new_type = decided.unwrap_or_else(|| &inactive);
-                                out.push((idx, new_type));
-                            }
-                            out
-                        }))
-                    })
-                    .collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
-            });
-
-            for chunk_results in all_results {
-                for (idx, ty) in chunk_results {
-                    self.cells[idx].transition(&ty);
+            std::thread::scope(|s| {
+                for ((start, next_chunk), state_chunk) in (0..)
+                    .map(|t| t * chunk)
+                    .zip(next_cells.chunks_mut(chunk))
+                    .zip(cell_states.chunks_mut(chunk))
+                {
+                    s.spawn(move || {
+                        Self::step_chunk(cells, next_chunk, state_chunk, rule, inactive, width, height, start);
+                    });
                 }
-            }
+            });
         }
 
+        // swap the buffers
+        std::mem::swap(&mut self.cells, &mut self.next_cells);
+
         // Update counts and peaks
-        // TODO what if we get rid of this entirely and move it to the transtions calls above?
+        // TODO move counting into the transition() calls above to avoid this full re-scan,
+        // e.g. track the dominant CellType from the previous cycle and derive the rest from
+        // the grid area and the other counts instead of re-hashing every cell.
         Self::recompute_counts_from_cells(self);
         self.step = self.step.saturating_add(1);
     }

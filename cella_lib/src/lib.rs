@@ -69,7 +69,7 @@ mod tests {
         g.step();
         // Center should stay B, neighbors should become B (at least Moore surrounding cells)
         let mut b_count = 0;
-        for c in &g.cells { if c.current == b { b_count += 1; } }
+        for c in &g.cells { if *c == b { b_count += 1; } }
         assert!(b_count > 1);
     }
 
@@ -98,7 +98,7 @@ mod tests {
         init[1*w + 0] = b.clone();
         let mut g = Grid2D::new(w,h,hist,init,rule);
         g.step();
-        assert_eq!(g.cells[1*w + 1].current, b);
+        assert_eq!(g.cell_states[1*w + 1].current, b);
     }
 
     #[test]
@@ -113,7 +113,7 @@ mod tests {
         init[2*w + 2] = b.clone();
         let mut g = Grid2D::new(w,h,hist,init,rule);
         g.step();
-        assert_eq!(g.cells[1*w + 1].current, b);
+        assert_eq!(g.cell_states[1*w + 1].current, b);
     }
 
     #[test]
@@ -129,7 +129,7 @@ mod tests {
         init[1*w + 2] = b.clone(); // right
         let mut g = Grid2D::new(w,h,hist,init,rule);
         g.step();
-        assert_eq!(g.cells[1*w + 1].current, b);
+        assert_eq!(g.cell_states[1*w + 1].current, b);
     }
 
     #[test]
@@ -249,7 +249,7 @@ mod more_tests {
         let mut g = Grid2D::new(w, h, 2, init, rule);
         g.step();
         // Center (3,3) had 8 B knight-neighbors, so it should become B
-        assert_eq!(g.cells[3 * w + 3].current, b, "center should become B after step");
+        assert_eq!(g.cell_states[3 * w + 3].current, b, "center should become B after step");
     }
 
     #[test]

@@ -83,7 +83,10 @@ fn serde_gridstate_roundtrip_2d_three_state() {
     assert_eq!(g2.width, g.width);
     assert_eq!(g2.height, g.height);
     assert_eq!(g2.step, g.step);
-    for i in 0..(w*h) { assert_eq!(g2.cells[i].current, g.cells[i].current); }
+    for i in 0..(w*h) { assert_eq!(g2.cell_states[i].current, g.cell_states[i].current); }
+    // repeat for cells
+    for i in 0..(w*h) { assert_eq!(g2.cells[i], g.cells[i]); }
+    for i in 0..(w*h) { assert_eq!(g2.next_cells[i], CellType::inactive()); }
 }
 
 #[test]

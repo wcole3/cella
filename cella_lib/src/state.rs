@@ -43,7 +43,7 @@ pub enum GridState {
     D1 {
         width: usize,
         history_limit: usize,
-        cells: Vec<CellState>,
+        cell_states: Vec<CellState>,
         step: u64,
         rule: Rule1D,
         #[serde(default)] counts_current: HashMap<String, u64>,
@@ -53,7 +53,7 @@ pub enum GridState {
         width: usize,
         height: usize,
         history_limit: usize,
-        cells: Vec<CellState>,
+        cell_states: Vec<CellState>,
         step: u64,
         rule: Rule2D,
         #[serde(default)] counts_current: HashMap<String, u64>,
@@ -69,7 +69,7 @@ impl GridState {
             = convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
         // build the GridState
         Self::D1 { width: g.width,
-        history_limit: g.history_limit, cells: g.cells.clone(), step: g.step,
+        history_limit: g.history_limit, cell_states: g.cells.clone(), step: g.step,
         rule: g.rule.clone(), counts_current: current_count_map,
         peak_counts: peak_count_map }
     }
@@ -79,7 +79,7 @@ impl GridState {
             = convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
         // build the GridState
         Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit,
-            cells: g.cells.clone(), step: g.step, rule: g.rule.clone(),
+            cell_states: g.cell_states.clone(), step: g.step, rule: g.rule.clone(),
             counts_current: current_count_map, peak_counts: peak_count_map }
     }
 
@@ -96,12 +96,12 @@ impl Grid1D {
     /// Build a Grid1D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D1 { width, history_limit, cells, step,
+            GridState::D1 { width, history_limit, cell_states, step,
                 rule, counts_current, peak_counts } => {
                 let (new_counts, new_peak_counts) =
-                    convert_map_string_to_spur(cells, counts_current, peak_counts);
+                    convert_map_string_to_spur(cell_states, counts_current, peak_counts);
 
-                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(),
+                Some(Self { width: *width, history_limit: *history_limit, cells: cell_states.clone(),
                     step: *step, rule: rule.clone(), counts_current: new_counts, peak_counts: new_peak_counts,
                     inactive: CellType::inactive() })
             }
@@ -114,12 +114,15 @@ impl Grid2D {
     /// Build a Grid2D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D2 { width, height, history_limit, cells,
+            GridState::D2 { width, height, history_limit, cell_states,
                 step, rule, counts_current, peak_counts } => {
                 let (new_counts, new_peak_counts) =
-                    convert_map_string_to_spur(cells, counts_current, peak_counts);
+                    convert_map_string_to_spur(cell_states, counts_current, peak_counts);
+                // compute the cells and next_cells vecs
+                let next_cells: Vec<CellType> = vec![CellType::inactive(); cell_states.len()];
+                let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
                 Some(Self { width: *width, height: *height, history_limit: *history_limit,
-                    cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: new_counts,
+                    cell_states: cell_states.clone(), cells, next_cells, step: *step, rule: rule.clone(), counts_current: new_counts,
                     peak_counts: new_peak_counts, inactive: CellType::inactive() })
             }
             _ => None,

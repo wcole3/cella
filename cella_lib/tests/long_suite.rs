@@ -71,7 +71,7 @@ fn hash_grid2d_state(g: &Grid2D) -> u64 {
     acc ^= fnv1a64(&g.width.to_le_bytes());
     acc ^= fnv1a64(&g.height.to_le_bytes());
     acc ^= fnv1a64(&g.step.to_le_bytes());
-    for c in &g.cells {
+    for c in &g.cell_states {
         acc ^= fnv1a64(c.current.as_str().as_bytes());
         acc = acc.wrapping_add(c.age_in_state as u64);
     }
@@ -174,7 +174,7 @@ fn configs_dir() -> PathBuf {
 
 fn export_config_2d(name: &str, g: &Grid2D) {
     use cella_lib::config::{CellaConfig, Config2D};
-    let initial: Vec<String> = g.cells.iter().map(|c| c.current.as_str().to_string()).collect();
+    let initial: Vec<String> = g.cell_states.iter().map(|c| c.current.as_str().to_string()).collect();
     let cfg = CellaConfig::D2(Config2D {
         width: g.width,
         height: g.height,
@@ -268,7 +268,7 @@ fn print_ascii_1d(label: &str, g: &Grid1D) {
 fn print_ascii_2d(label: &str, g: &Grid2D) {
     use std::collections::BTreeMap;
     let mut names: Vec<String> = g
-        .cells
+        .cell_states
         .iter()
         .map(|c| c.current.as_str().to_string())
         .filter(|n| n != INACTIVE)
@@ -280,7 +280,7 @@ fn print_ascii_2d(label: &str, g: &Grid2D) {
             let mut line = String::with_capacity(g.width);
             for x in 0..g.width {
                 let i = y * g.width + x;
-                let ty = g.cells[i].current.as_str();
+                let ty = g.cell_states[i].current.as_str();
                 if ty == INACTIVE { line.push('.'); }
                 else { line.push(*map.get(&ty.to_string()).unwrap_or(&'?')); }
             }

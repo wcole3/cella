@@ -160,7 +160,7 @@ fn all_inactive_grid_2d_stays_inactive() {
     let init = vec![CellType::inactive(); 9];
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
-    for c in &g.cells {
+    for c in &g.cell_states {
         assert_eq!(c.current, CellType::inactive());
     }
 }
@@ -223,7 +223,7 @@ fn grid_2d_no_matching_subrule_becomes_inactive() {
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
     // All cells should become Inactive since no rule matches type A
-    for c in &g.cells {
+    for c in &g.cell_states {
         assert_eq!(c.current, CellType::inactive());
     }
 }
@@ -258,7 +258,7 @@ fn countop_eq_zero_matches_no_neighbors() {
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
     // Center cell (1,1) has 0 B neighbors -> Eq 0 should match
-    assert_eq!(g.cells[4].current, out);
+    assert_eq!(g.cell_states[4].current, out);
 }
 
 // -------- Grid step counter --------
