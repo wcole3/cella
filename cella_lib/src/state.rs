@@ -102,10 +102,14 @@ impl Grid1D {
                     convert_map_string_to_spur(cell_states, counts_current, peak_counts);
                 let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
                 let next_cells: Vec<CellType> = vec![CellType::inactive(); *width];
+                let dominant_type: CellType = new_counts.iter()
+                    .max_by_key(|entry| entry.1)
+                    .map(|(spur, _)| CellType(*spur))
+                    .unwrap_or(CellType::inactive());
                 Some(Self { width: *width, history_limit: *history_limit,
                     cell_states: cell_states.clone(), cells, next_cells,
                     step: *step, rule: rule.clone(), counts_current: new_counts, peak_counts: new_peak_counts,
-                    inactive: CellType::inactive() })
+                    inactive: CellType::inactive(), dominant_type })
             }
             _ => None,
         }
@@ -123,9 +127,14 @@ impl Grid2D {
                 // compute the cells and next_cells vecs
                 let next_cells: Vec<CellType> = vec![CellType::inactive(); cell_states.len()];
                 let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
+                // get dominant type from current counts
+                let dominant_type: CellType = counts_current.iter()
+                    .max_by_key(|entry| entry.1)
+                    .map(|(k, _v)| CellType::from(k.as_str()))
+                    .unwrap_or(CellType::inactive());
                 Some(Self { width: *width, height: *height, history_limit: *history_limit,
                     cell_states: cell_states.clone(), cells, next_cells, step: *step, rule: rule.clone(), counts_current: new_counts,
-                    peak_counts: new_peak_counts, inactive: CellType::inactive() })
+                    peak_counts: new_peak_counts, inactive: CellType::inactive(), dominant_type })
             }
             _ => None,
         }

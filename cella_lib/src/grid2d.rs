@@ -1,5 +1,6 @@
 //! 2D grid implementation.
 
+use std::collections::HashMap;
 use std::io::Error;
 use crate::rules::Rule2D;
 use crate::threads::thread_count;
@@ -58,6 +59,8 @@ pub struct Grid2D {
     pub peak_counts: std::collections::HashMap<Spur, u64>,
     /// Reference to inactive cell type.
     pub inactive: CellType,
+    /// store the type with the highest count so we can skip it during counts
+    #[serde(skip)] pub(crate) dominant_type: CellType,
 }
 
 impl<'de> Deserialize<'de> for Grid2D {
@@ -79,6 +82,11 @@ impl<'de> Deserialize<'de> for Grid2D {
         // reconstruct the skipped fields
         let cells: Vec<CellType> = intermediate.cell_states.iter().map(|cs| cs.current).collect();
         let next_cells: Vec<CellType> = vec![intermediate.inactive.clone(); intermediate.width * intermediate.height];
+        // find max count celltype
+        let dominant_type: CellType = intermediate.counts_current.iter()
+            .max_by_key(|entry| entry.1)
+            .map(|(spur, _)| CellType(*spur))
+            .unwrap_or_else(|| intermediate.inactive.clone());
         Ok(Grid2D {
             width: intermediate.width,
             height: intermediate.height,
@@ -91,6 +99,7 @@ impl<'de> Deserialize<'de> for Grid2D {
             counts_current: intermediate.counts_current,
             peak_counts: intermediate.peak_counts,
             inactive: intermediate.inactive,
+            dominant_type,
         })
     }
 }
@@ -120,11 +129,17 @@ impl Grid2D {
         let next_cells: Vec<CellType> = vec![CellType::inactive(); width * height];
         let cells: Vec<CellType> = cell_states.iter().map(|cs| cs.current).collect();
         let mut counts_current: std::collections::HashMap<Spur, u64> = std::collections::HashMap::new();
-        for c in &cells { *counts_current.entry(c.0).or_insert(0) += 1; }
+        let mut dominant_type: (CellType, u64) = (CellType::inactive(), 0);
+        for c in &cells {
+            *counts_current.entry(c.0).or_insert(0) += 1;
+            if counts_current.entry(c.0).or_insert(0) > &mut dominant_type.1 {
+                dominant_type = (c.clone(), *counts_current.entry(c.0).or_insert(0));
+            }
+        }
         let peak_counts = counts_current.clone();
         let inactive = CellType::inactive();
         Self { width, height, history_limit, cell_states, cells,
-            next_cells, step: 0, rule, counts_current, peak_counts, inactive }
+            next_cells, step: 0, rule, counts_current, peak_counts, inactive, dominant_type: dominant_type.0}
     }
 
     /// Transitions the given CellState and current buffer cell type
@@ -142,15 +157,33 @@ impl Grid2D {
         }
     }
 
-    fn recompute_counts_from_cells(&mut self) {
+    fn recompute_counts_from_cells(&mut self, new_counts: HashMap<CellType, u64>) {
         // clear the current counts
-        // TODO profiling shows that entry hashing actually takes up a significant amount of time
-        // maybe instead of clearing we reset the counts and only hash on new states?
         self.counts_current.clear();
-        for c in &self.cells {
-            self.counts_current.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
-            // TODO below this is not correct
-            self.peak_counts.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
+        let mut total_count: u64 = self.cells.len() as u64;
+        let mut new_dominant_type: (&CellType, u64) = (&CellType::inactive(), 0);
+        for (k, v) in new_counts.iter() {
+            self.counts_current.entry(k.0).or_insert(*v);
+            total_count -= *v;
+            // check if peak count needs to be updated
+            self.peak_counts.entry(k.0).and_modify(|count| {
+                if *count < *v {
+                    *count = *v;
+                }
+            }).or_insert(*v);
+            if *v >= new_dominant_type.1 {
+                new_dominant_type.0 = k
+            }
+        }
+        // add the dominant type
+        self.counts_current.entry(self.dominant_type.0).or_insert(total_count);
+        self.peak_counts.entry(self.dominant_type.0).and_modify(|count| {
+                if *count < total_count {
+                    *count = total_count;
+                }
+            }).or_insert(total_count);
+        if total_count < new_dominant_type.1 {
+            self.dominant_type = *new_dominant_type.0;
         }
     }
 
@@ -193,12 +226,18 @@ impl Grid2D {
     /// `cells` is the full current grid (neighbor lookups span chunk boundaries);
     /// `next_cells` and `cell_states` are this chunk's disjoint output slices.
     fn step_chunk(cells: &[CellType], next_cells: &mut [CellType], cell_states: &mut [CellState],
-                  rule: &Rule2D, inactive: &CellType, width: usize, height: usize, start: usize) {
+                  rule: &Rule2D, inactive: &CellType, dt: &CellType,
+                  width: usize, height: usize, start: usize) -> HashMap<CellType, u64> {
+        let mut count_map: HashMap<CellType, u64> = HashMap::new();
         for local in 0..next_cells.len() {
             let new_type = *Self::next_type(cells, rule, inactive, width, height, start + local);
             next_cells[local] = new_type;
             cell_states[local].transition(&new_type);
+            if new_type != *dt {
+                count_map.entry(new_type).and_modify(|count| *count += 1).or_insert(0);
+            }
         }
+        count_map
     }
 
     /// Advance the automaton by one step using double-buffering.
@@ -219,34 +258,42 @@ impl Grid2D {
         let cell_states = &mut self.cell_states;
         let rule = &self.rule;
         let inactive = &self.inactive;
+        let dt = &self.dominant_type;
 
-        if threads <= 1 || total < 4096 {
-            Self::step_chunk(cells, next_cells, cell_states, rule, inactive, width, height, 0);
+        let count_map = if threads <= 1 || total < 4096 {
+            Self::step_chunk(cells, next_cells, cell_states, rule, inactive, dt, width, height, 0)
         } else {
             // One thread per chunk; `chunks_mut` hands each thread a disjoint
             // mutable slice, so the writes are sound without locking.
             let chunk = (total + threads - 1) / threads;
             std::thread::scope(|s| {
-                for ((start, next_chunk), state_chunk) in (0..)
+                let handles: Vec<_> = (0..)
                     .map(|t| t * chunk)
                     .zip(next_cells.chunks_mut(chunk))
                     .zip(cell_states.chunks_mut(chunk))
-                {
-                    s.spawn(move || {
-                        Self::step_chunk(cells, next_chunk, state_chunk, rule, inactive, width, height, start);
-                    });
+                    .map(|((start, next_chunk), state_chunk)| {
+                        s.spawn(move || {
+                            Self::step_chunk(cells, next_chunk, state_chunk, rule, inactive, dt, width, height, start)
+                        })
+                    })
+                    .collect();
+
+                let mut merged_map = HashMap::new();
+                for handle in handles {
+                    let chunk_map = handle.join().unwrap();
+                    for (cell_type, count) in chunk_map {
+                        merged_map.entry(cell_type).and_modify(|c| *c += count).or_insert(count);
+                    }
                 }
-            });
-        }
+                merged_map
+            })
+        };
 
         // swap the buffers
         std::mem::swap(&mut self.cells, &mut self.next_cells);
 
-        // Update counts and peaks
-        // TODO move counting into the transition() calls above to avoid this full re-scan,
-        // e.g. track the dominant CellType from the previous cycle and derive the rest from
-        // the grid area and the other counts instead of re-hashing every cell.
-        Self::recompute_counts_from_cells(self);
+        // Update counts and peaks.
+        Self::recompute_counts_from_cells(self, count_map);
         self.step = self.step.saturating_add(1);
     }
 }

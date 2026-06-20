@@ -1,6 +1,7 @@
 //! 1D grid implementation.
 
 use std::io::Error;
+use std::collections::HashMap;
 use lasso2::Spur;
 use serde::{Deserialize, Deserializer, Serialize};
 use crate::types::{CellState, CellType};
@@ -45,6 +46,8 @@ pub struct Grid1D {
     pub peak_counts: std::collections::HashMap<Spur, u64>,
     /// Reference to inactive cell type.
     pub inactive: CellType,
+    /// store the type with the highest count so we can skip it during counts
+    #[serde(skip)] pub(crate) dominant_type: CellType,
 }
 impl<'de> Deserialize<'de> for Grid1D {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -64,6 +67,11 @@ impl<'de> Deserialize<'de> for Grid1D {
         // Reconstruct the skipped buffers from cell_states.
         let cells: Vec<CellType> = im.cell_states.iter().map(|cs| cs.current).collect();
         let next_cells: Vec<CellType> = vec![im.inactive; im.width];
+        // find max count celltype
+        let dominant_type: CellType = im.counts_current.iter()
+            .max_by_key(|entry| entry.1)
+            .map(|(spur, _)| CellType(*spur))
+            .unwrap_or_else(|| im.inactive.clone());
         Ok(Grid1D {
             width: im.width,
             history_limit: im.history_limit,
@@ -75,6 +83,7 @@ impl<'de> Deserialize<'de> for Grid1D {
             counts_current: im.counts_current,
             peak_counts: im.peak_counts,
             inactive: im.inactive,
+            dominant_type,
         })
     }
 }
@@ -88,6 +97,8 @@ impl std::fmt::Debug for Grid1D {
             .field("rule", &self.rule)
             .field("counts_current", &self.counts_current)
             .field("peak_counts", &self.peak_counts)
+            .field("inactive", &self.inactive)
+            .field("dominant_type", &self.dominant_type)
             .finish()
     }
 }
@@ -102,9 +113,15 @@ impl Grid1D {
         let next_cells: Vec<CellType> = vec![CellType::inactive(); width];
         let mut counts_current: std::collections::HashMap<Spur, u64> = std::collections::HashMap::new();
         for c in &cells { *counts_current.entry(c.0).or_insert(0) += 1; }
+        
+        let dominant_type = counts_current.iter()
+            .max_by_key(|entry| entry.1)
+            .map(|(spur, _)| CellType(*spur))
+            .unwrap_or_else(|| CellType::inactive());
+
         let peak_counts = counts_current.clone();
         let inactive = CellType::inactive();
-        Self { width, history_limit, cell_states, cells, next_cells, step: 0, rule, counts_current, peak_counts, inactive }
+        Self { width, history_limit, cell_states, cells, next_cells, step: 0, rule, counts_current, peak_counts, inactive, dominant_type }
     }
 
     /// Transitions the given CellState and current buffer cell type
@@ -158,19 +175,45 @@ impl Grid1D {
     /// `cells` is the full current grid (neighbor lookups may span chunk boundaries);
     /// `next_cells` and `cell_states` are this chunk's disjoint output slices.
     fn step_chunk(cells: &[CellType], next_cells: &mut [CellType], cell_states: &mut [CellState],
-                  rule: &Rule1D, inactive: &CellType, width: usize, start: usize) {
+                  rule: &Rule1D, inactive: &CellType, dt: &CellType,
+                  width: usize, start: usize) -> HashMap<CellType, u64> {
+        let mut count_map: HashMap<CellType, u64> = HashMap::new();
         for local in 0..next_cells.len() {
             let new_type = *Self::next_type(cells, rule, inactive, width, start + local);
             next_cells[local] = new_type;
             cell_states[local].transition(&new_type);
+            if new_type != *dt {
+                count_map.entry(new_type).and_modify(|count| *count += 1).or_insert(0);
+            }
         }
+        count_map
     }
-    fn recompute_counts_from_cells(&mut self) {
+    fn recompute_counts_from_cells(&mut self, new_counts: HashMap<CellType, u64>) {
         self.counts_current.clear();
-        for c in &self.cells {
-            self.counts_current.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
-            // TODO below this is not correct
-            self.peak_counts.entry(c.0).and_modify(|count| *count += 1).or_insert(0);
+        let mut total_count: u64 = self.cells.len() as u64;
+        let mut new_dominant_type: (&CellType, u64) = (&CellType::inactive(), 0);
+        for (k, v) in new_counts.iter() {
+            self.counts_current.insert(k.0, *v);
+            total_count -= *v;
+            // check if peak count needs to be updated
+            self.peak_counts.entry(k.0).and_modify(|peak| {
+                if *v > *peak {
+                    *peak = *v;
+                }
+            }).or_insert(*v);
+            if *v >= new_dominant_type.1 {
+                new_dominant_type = (k, *v);
+            }
+        }
+        // add the dominant type
+        self.counts_current.insert(self.dominant_type.0, total_count);
+        self.peak_counts.entry(self.dominant_type.0).and_modify(|peak| {
+            if total_count > *peak {
+                *peak = total_count;
+            }
+        }).or_insert(total_count);
+        if total_count < new_dominant_type.1 {
+            self.dominant_type = *new_dominant_type.0;
         }
     }
     /// Advance the automaton by one step using double-buffering.
@@ -188,33 +231,43 @@ impl Grid1D {
         let cell_states = &mut self.cell_states;
         let rule = &self.rule;
         let inactive = &self.inactive;
-        // Serial fallback — 1D per-cell work is very cheap (small window +
-        // bit-check), so threading overhead dominates for anything but very
-        // large grids.  Require at least 8192 cells before spawning threads.
-        if threads <= 1 || width < 8192 {
-            Self::step_chunk(cells, next_cells, cell_states, rule, inactive, width, 0);
+        let dt = &self.dominant_type;
+
+        let count_map = if threads <= 1 || width < 8192 {
+            Self::step_chunk(cells, next_cells, cell_states, rule, inactive, dt, width, 0)
         } else {
             // One thread per chunk; `chunks_mut` hands each thread a disjoint
             // mutable slice, so the writes are sound without locking.
             let chunk = (width + threads - 1) / threads;
             std::thread::scope(|s| {
-                for ((start, next_chunk), state_chunk) in (0..)
+                let handles: Vec<_> = (0..)
                     .map(|t| t * chunk)
                     .zip(next_cells.chunks_mut(chunk))
                     .zip(cell_states.chunks_mut(chunk))
-                {
-                    s.spawn(move || {
-                        Self::step_chunk(cells, next_chunk, state_chunk, rule, inactive, width, start);
-                    });
+                    .map(|((start, next_chunk), state_chunk)| {
+                        s.spawn(move || {
+                            Self::step_chunk(cells, next_chunk, state_chunk, rule, inactive, dt, width, start)
+                        })
+                    })
+                    .collect();
+
+                let mut merged_map = HashMap::new();
+                for handle in handles {
+                    let chunk_map = handle.join().unwrap();
+                    for (cell_type, count) in chunk_map {
+                        merged_map.entry(cell_type).and_modify(|c| *c += count).or_insert(count);
+                    }
                 }
-            });
-        }
+                merged_map
+            })
+        };
+
         // Swap the buffers: cells becomes the freshly-computed next_cells,
         // and next_cells becomes the old buffer ready to be overwritten next step.
         std::mem::swap(&mut self.cells, &mut self.next_cells);
+
         // Update counts and peaks
-        // TODO move counting into the transition() calls above to avoid this full re-scan
-        Self::recompute_counts_from_cells(self);
+        Self::recompute_counts_from_cells(self, count_map);
         self.step = self.step.saturating_add(1);
     }
 }
