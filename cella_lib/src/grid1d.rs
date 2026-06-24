@@ -1,11 +1,10 @@
 //! 1D grid implementation.
 
 use std::io::Error;
-use std::collections::HashMap;
 use lasso2::Spur;
 use serde::{Deserialize, Deserializer, Serialize};
 use crate::types::{CellState, CellType};
-use crate::rules::Rule1D;
+use crate::rules::{Rule1D, TypeCounter};
 use crate::threads::thread_count;
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -153,17 +152,17 @@ impl Grid1D {
     /// the cell becomes [`inactive`](Self::inactive).
     #[inline]
     fn next_type<'a>(cells: &[CellType], rule: &'a Rule1D, inactive: &'a CellType,
-                     width: usize, idx: usize) -> &'a CellType {
+                      width: usize, idx: usize) -> &'a CellType {
         let current_type = &cells[idx];
         for s in &rule.subrules {
             if current_type != &s.current_type { continue; }
             let n = s.n as isize;
             let len = (2 * n + 1) as usize;
-            let mut window: Vec<CellType> = Vec::with_capacity(len);
-            for d in -n..=n {
-                window.push(Self::get_type_or_inactive(cells, inactive, width, idx as isize + d));
+            let mut window: [CellType; 7] = [CellType::inactive(); 7];
+            for (i, d) in (-n..=n).enumerate() {
+                window[i] = Self::get_type_or_inactive(cells, inactive, width, idx as isize + d);
             }
-            if let Some(out) = s.applies_and_output(current_type, &window) {
+            if let Some(out) = s.applies_and_output(current_type, &window[..len]) {
                 return out;
             }
         }
@@ -175,20 +174,20 @@ impl Grid1D {
     /// `cells` is the full current grid (neighbor lookups may span chunk boundaries);
     /// `next_cells` and `cell_states` are this chunk's disjoint output slices.
     fn step_chunk(cells: &[CellType], next_cells: &mut [CellType], cell_states: &mut [CellState],
-                  rule: &Rule1D, inactive: &CellType, dt: &CellType,
-                  width: usize, start: usize) -> HashMap<CellType, u64> {
-        let mut count_map: HashMap<CellType, u64> = HashMap::new();
+                   rule: &Rule1D, inactive: &CellType, dt: &CellType,
+                   width: usize, start: usize) -> TypeCounter {
+        let mut count_map = TypeCounter::new();
         for local in 0..next_cells.len() {
             let new_type = *Self::next_type(cells, rule, inactive, width, start + local);
             next_cells[local] = new_type;
             cell_states[local].transition(&new_type);
             if new_type != *dt {
-                count_map.entry(new_type).and_modify(|count| *count += 1).or_insert(0);
+                count_map.add(new_type);
             }
         }
         count_map
     }
-    fn recompute_counts_from_cells(&mut self, new_counts: HashMap<CellType, u64>) {
+    fn recompute_counts_from_cells(&mut self, new_counts: &TypeCounter) {
         self.counts_current.clear();
         let mut total_count: u64 = self.cells.len() as u64;
         let mut new_dominant_type: (&CellType, u64) = (&CellType::inactive(), 0);
@@ -251,14 +250,12 @@ impl Grid1D {
                     })
                     .collect();
 
-                let mut merged_map = HashMap::new();
+                let mut merged = TypeCounter::new();
                 for handle in handles {
-                    let chunk_map = handle.join().unwrap();
-                    for (cell_type, count) in chunk_map {
-                        merged_map.entry(cell_type).and_modify(|c| *c += count).or_insert(count);
-                    }
+                    let chunk_counter = handle.join().unwrap();
+                    merged.merge(&chunk_counter);
                 }
-                merged_map
+                merged
             })
         };
 
@@ -267,7 +264,7 @@ impl Grid1D {
         std::mem::swap(&mut self.cells, &mut self.next_cells);
 
         // Update counts and peaks
-        Self::recompute_counts_from_cells(self, count_map);
+        Self::recompute_counts_from_cells(self, &count_map);
         self.step = self.step.saturating_add(1);
     }
 }

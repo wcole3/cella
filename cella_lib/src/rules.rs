@@ -15,6 +15,45 @@ use crate::types::CellType;
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// Lightweight cell-type counter for hotpath use.
+/// Avoids HashMap allocation; typically < 20 unique types.
+#[derive(Clone, Debug)]
+pub struct TypeCounter {
+    entries: Vec<(CellType, u64)>,
+}
+
+impl TypeCounter {
+    pub fn new() -> Self {
+        Self { entries: Vec::with_capacity(16) }
+    }
+
+    pub fn add(&mut self, t: CellType) {
+        for e in &mut self.entries {
+            if e.0 == t {
+                e.1 += 1;
+                return;
+            }
+        }
+        self.entries.push((t, 1));
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        for (t, c) in &other.entries {
+            for e in &mut self.entries {
+                if e.0 == *t {
+                    e.1 += *c;
+                    return;
+                }
+            }
+            self.entries.push((*t, *c));
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&CellType, &u64)> {
+        self.entries.iter().map(|(t, c)| (t, c))
+    }
+}
+
 mod serde_u128 {
     use serde::de::{self, Visitor};
     use serde::{Deserializer, Serializer};
@@ -73,45 +112,43 @@ pub fn neighborhood_contains(dx: i32, dy: i32, range: i32, neighborhood: Neighbo
 
 #[memoize(SharedCache)]
 /// For Neighborhoods, we want to save the offsets so that we can
-/// loop over them during stepping
-pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> HashSet<(i32, i32)> {
-    let mut offsets = HashSet::new();
+/// loop over them during stepping. Returns a sorted Vec for deterministic
+/// iteration order and better cache locality.
+pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> Vec<(i32, i32)> {
+    let mut set = HashSet::new();
     match neighborhood {
         Neighborhood2D::Moore | Neighborhood2D::VonNeumann | Neighborhood2D::Langton => {
             for dx in -n..=n {
                 for dy in -n..=n {
                     if dx == 0 && dy == 0 { continue; }
                     match neighborhood {
-                        Neighborhood2D::Moore => {offsets.insert((dx, dy));}
-                        Neighborhood2D::VonNeumann => {if dx.abs() + dy.abs() <= n { offsets.insert((dx, dy)); }}
-                        Neighborhood2D::Langton => {if dx.abs() == dy.abs() && dx.abs() <= n { offsets.insert((dx, dy)); }}
+                        Neighborhood2D::Moore => {set.insert((dx, dy));}
+                        Neighborhood2D::VonNeumann => {if dx.abs() + dy.abs() <= n { set.insert((dx, dy)); }}
+                        Neighborhood2D::Langton => {if dx.abs() == dy.abs() && dx.abs() <= n { set.insert((dx, dy)); }}
                         _ => {}
                     }
-
                 }
             }
-            offsets
         },
         Neighborhood2D::StraightLine => {
             for i in -n..=n {
                 if i != 0 {
-                    offsets.insert((i, 0));
-                    offsets.insert((0, i));
+                    set.insert((i, 0));
+                    set.insert((0, i));
                 }
             }
-            offsets
         },
         Neighborhood2D::Knight => {
-            // naive search for knight since we compute this once at start
-            // must double range to cover all cells reachable in 1..=N hops
             for dx in -2*n..=2*n {
                 for dy in -2*n..=2*n {
-                    if knight_reachable(dx, dy, n as u8) { offsets.insert((dx, dy)); }
+                    if knight_reachable(dx, dy, n as u8) { set.insert((dx, dy)); }
                 }
             }
-            offsets
         }
     }
+    let mut offsets: Vec<_> = set.into_iter().collect();
+    offsets.sort();
+    offsets
 }
 
 /// Returns `true` if `(dx, dy)` is reachable from `(0, 0)` in at most `max_moves` knight hops.
@@ -207,32 +244,6 @@ impl Rule1DSubrule {
         Ok(())
     }
 
-    ///
-    /// Converts a slice of booleans into a single integer value representing the binary pattern.
-    ///
-    /// # Parameters
-    /// - `window`: A slice of boolean values, where each `true` represents a binary `1`
-    ///   and each `false` represents a binary `0`.
-    ///
-    /// # Returns
-    /// A `usize` value that represents the binary pattern of the boolean slice.
-    /// The first element in the slice corresponds to the most significant bit, and
-    /// the last element to the least significant bit.
-    ///
-    /// # Notes
-    /// - The function assumes the input slice is not empty. An empty slice would result
-    ///   in the `idx` remaining `0`.
-    /// - The order of the input slice is significant in forming the binary pattern.
-    ///
-    /// # Complexity
-    /// The function runs in `O(n)` time, where `n` is the length of the `window`, as it iterates
-    /// over the slice once.
-    fn pattern_index_1d(window: &[bool]) -> usize {
-        let mut idx = 0usize;
-        for &b in window { idx = (idx << 1) | (b as usize); }
-        idx
-    }
-
     /// Evaluate this subrule against the provided neighborhood window.
     ///
     /// `center_current` is the current type of the center cell; `neighborhood`
@@ -244,15 +255,17 @@ impl Rule1DSubrule {
     /// let x = CellType::from("X");
     /// let y = CellType::from("Y");
     /// let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: y.clone() };
-    /// let window = vec![CellType::inactive(), x.clone(), CellType::inactive()];
+    /// let window = [CellType::inactive(), x.clone(), CellType::inactive()];
     /// let out = sub.applies_and_output(&x, &window);
     /// assert_eq!(out, Some(&y));
     /// ```
-    pub fn applies_and_output(&self, center_current: &CellType, neighborhood: &Vec<CellType>) -> Option<&CellType> {
+    pub fn applies_and_output(&self, center_current: &CellType, neighborhood: &[CellType]) -> Option<&CellType> {
         if center_current != &self.current_type { return None; }
         let crit = &self.criteria_type;
-        let window: Vec<bool> = neighborhood.iter().map(|t| t == crit).collect();
-        let idx = Self::pattern_index_1d(&window);
+        let mut idx: u128 = 0;
+        for t in neighborhood {
+            idx = (idx << 1) | ((*t == *crit) as u128);
+        }
         let bit = (self.wolfram_code >> idx) & 1u128;
         if bit == 1u128 {
             if let Some(r) = self.randomness {
@@ -318,9 +331,9 @@ pub enum CountOp {
 /// One subrule for a 2D automaton using neighbor-count comparisons.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Rule2DSubrule {
-    /// hold a map of the offsets associated with the neighborhood/range
+    /// Sorted offsets for deterministic iteration and better cache locality.
     #[serde(skip)]
-    pub offsets: HashSet<(i32, i32)>,
+    pub offsets: Vec<(i32, i32)>,
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
@@ -376,8 +389,8 @@ impl Rule2DSubrule {
     where F: Fn(i32, i32) -> CellType {
         if center_current != &self.current_type { return None; }
         let mut neighbors = 0u32;
-        for (dx, dy) in &self.offsets {
-            let t = get_neighbor(*dx, *dy);
+        for off in &self.offsets {
+            let t = get_neighbor(off.0, off.1);
             if t == self.criteria_type { neighbors += 1; }
             // TODO consider an early exit here based on op type and limit; THERE ARE MORE
             if self.op == CountOp::Gt && !self.limit.is_some() && neighbors >= self.count { break }

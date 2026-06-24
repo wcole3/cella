@@ -1,8 +1,7 @@
 //! 2D grid implementation.
 
-use std::collections::HashMap;
 use std::io::Error;
-use crate::rules::Rule2D;
+use crate::rules::{Rule2D, TypeCounter};
 use crate::threads::thread_count;
 use crate::types::{CellState, CellType};
 use lasso2::Spur;
@@ -157,7 +156,7 @@ impl Grid2D {
         }
     }
 
-    fn recompute_counts_from_cells(&mut self, new_counts: HashMap<CellType, u64>) {
+    fn recompute_counts_from_cells(&mut self, new_counts: &TypeCounter) {
         // clear the current counts
         self.counts_current.clear();
         let mut total_count: u64 = self.cells.len() as u64;
@@ -200,15 +199,14 @@ impl Grid2D {
         }
     }
 
-    /// Evaluate subrules in order for the cell at `idx`, returning its next type.
+    /// Evaluate subrules in order for the cell at `(x, y)`, returning its next type.
     ///
     /// Subrules are tried in order; the first that applies wins. If none trigger
     /// the cell becomes [`inactive`](Self::inactive).
     #[inline]
     fn next_type<'a>(cells: &'a [CellType], rule: &'a Rule2D, inactive: &'a CellType,
-                     width: usize, height: usize, idx: usize) -> &'a CellType {
-        let y = (idx / width) as isize;
-        let x = (idx % width) as isize;
+                      width: usize, height: usize, x: isize, y: isize) -> &'a CellType {
+        let idx = y as usize * width + x as usize;
         let current_type = &cells[idx];
         for sr in &rule.subrules {
             if current_type != &sr.current_type { continue; }
@@ -226,15 +224,22 @@ impl Grid2D {
     /// `cells` is the full current grid (neighbor lookups span chunk boundaries);
     /// `next_cells` and `cell_states` are this chunk's disjoint output slices.
     fn step_chunk(cells: &[CellType], next_cells: &mut [CellType], cell_states: &mut [CellState],
-                  rule: &Rule2D, inactive: &CellType, dt: &CellType,
-                  width: usize, height: usize, start: usize) -> HashMap<CellType, u64> {
-        let mut count_map: HashMap<CellType, u64> = HashMap::new();
+                   rule: &Rule2D, inactive: &CellType, dt: &CellType,
+                   width: usize, height: usize, start: usize) -> TypeCounter {
+        let mut count_map = TypeCounter::new();
+        let mut x = (start % width) as isize;
+        let mut y = (start / width) as isize;
         for local in 0..next_cells.len() {
-            let new_type = *Self::next_type(cells, rule, inactive, width, height, start + local);
+            let new_type = *Self::next_type(cells, rule, inactive, width, height, x, y);
             next_cells[local] = new_type;
             cell_states[local].transition(&new_type);
             if new_type != *dt {
-                count_map.entry(new_type).and_modify(|count| *count += 1).or_insert(0);
+                count_map.add(new_type);
+            }
+            x += 1;
+            if x == width as isize {
+                x = 0;
+                y += 1;
             }
         }
         count_map
@@ -278,14 +283,12 @@ impl Grid2D {
                     })
                     .collect();
 
-                let mut merged_map = HashMap::new();
+                let mut merged = TypeCounter::new();
                 for handle in handles {
-                    let chunk_map = handle.join().unwrap();
-                    for (cell_type, count) in chunk_map {
-                        merged_map.entry(cell_type).and_modify(|c| *c += count).or_insert(count);
-                    }
+                    let chunk_counter = handle.join().unwrap();
+                    merged.merge(&chunk_counter);
                 }
-                merged_map
+                merged
             })
         };
 
@@ -293,7 +296,7 @@ impl Grid2D {
         std::mem::swap(&mut self.cells, &mut self.next_cells);
 
         // Update counts and peaks.
-        Self::recompute_counts_from_cells(self, count_map);
+        Self::recompute_counts_from_cells(self, &count_map);
         self.step = self.step.saturating_add(1);
     }
 }
