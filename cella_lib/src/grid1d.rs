@@ -152,17 +152,17 @@ impl Grid1D {
     /// the cell becomes [`inactive`](Self::inactive).
     #[inline]
     fn next_type<'a>(cells: &[CellType], rule: &'a Rule1D, inactive: &'a CellType,
-                      width: usize, idx: usize) -> &'a CellType {
+                     width: usize, idx: usize) -> &'a CellType {
         let current_type = &cells[idx];
         for s in &rule.subrules {
             if current_type != &s.current_type { continue; }
             let n = s.n as isize;
             let len = (2 * n + 1) as usize;
-            let mut window: [CellType; 7] = [CellType::inactive(); 7];
-            for (i, d) in (-n..=n).enumerate() {
-                window[i] = Self::get_type_or_inactive(cells, inactive, width, idx as isize + d);
+            let mut window: Vec<CellType> = Vec::with_capacity(len);
+            for d in -n..=n {
+                window.push(Self::get_type_or_inactive(cells, inactive, width, idx as isize + d));
             }
-            if let Some(out) = s.applies_and_output(current_type, &window[..len]) {
+            if let Some(out) = s.applies_and_output(current_type, &window) {
                 return out;
             }
         }
