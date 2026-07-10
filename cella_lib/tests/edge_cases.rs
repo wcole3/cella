@@ -1,48 +1,5 @@
 use cella_lib::*;
 
-// -------- CellState history bounding --------
-
-#[test]
-fn history_bounded_by_limit() {
-    let mut st = CellState::new(CellType::from("A"), 2);
-    st.transition(&CellType::from("B"));
-    st.transition(&CellType::from("C"));
-    st.transition(&CellType::from("D"));
-    // limit=2, so only the two most recent previous states are kept
-    assert_eq!(st.history.len(), 2);
-    assert_eq!(st.history[0], CellType::from("B"));
-    assert_eq!(st.history[1], CellType::from("C"));
-    assert_eq!(st.current, CellType::from("D"));
-}
-
-#[test]
-fn history_zero_limit_keeps_nothing() {
-    let mut st = CellState::new(CellType::from("A"), 0);
-    st.transition(&CellType::from("B"));
-    st.transition(&CellType::from("C"));
-    assert_eq!(st.history.len(), 0);
-    assert_eq!(st.current, CellType::from("C"));
-}
-
-#[test]
-fn history_same_type_no_push() {
-    let mut st = CellState::new(CellType::from("A"), 3);
-    st.transition(&CellType::from("A"));
-    st.transition(&CellType::from("A"));
-    assert_eq!(st.history.len(), 0);
-    assert_eq!(st.age_in_state, 2);
-}
-
-#[test]
-fn age_saturates_at_u32_max() {
-    let mut st = CellState::new(CellType::from("A"), 1);
-    st.age_in_state = u32::MAX - 1;
-    st.transition(&CellType::from("A")); // -> MAX
-    assert_eq!(st.age_in_state, u32::MAX);
-    st.transition(&CellType::from("A")); // saturating, stays MAX
-    assert_eq!(st.age_in_state, u32::MAX);
-}
-
 // -------- Rule1DSubrule validation edge cases --------
 
 #[test]
@@ -149,8 +106,8 @@ fn all_inactive_grid_1d_stays_inactive() {
     let init = vec![CellType::inactive(); 5];
     let mut g = Grid1D::new(5, 2, init, rule);
     g.step();
-    for c in &g.cell_states {
-        assert_eq!(c.current, CellType::inactive());
+    for i in 0..g.width {
+        assert_eq!(g.cell_type(i), CellType::inactive());
     }
 }
 
@@ -160,8 +117,8 @@ fn all_inactive_grid_2d_stays_inactive() {
     let init = vec![CellType::inactive(); 9];
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
-    for c in &g.cell_states {
-        assert_eq!(c.current, CellType::inactive());
+    for i in 0..(g.width * g.height) {
+        assert_eq!(g.cell_type(i), CellType::inactive());
     }
 }
 
@@ -208,7 +165,7 @@ fn grid_1d_no_matching_subrule_becomes_inactive() {
     let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     let mut g = Grid1D::new(3, 2, init, rule);
     g.step();
-    assert_eq!(g.cell_states[1].current, CellType::inactive());
+    assert_eq!(g.cell_type(1), CellType::inactive());
 }
 
 #[test]
@@ -223,8 +180,8 @@ fn grid_2d_no_matching_subrule_becomes_inactive() {
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
     // All cells should become Inactive since no rule matches type A
-    for c in &g.cell_states {
-        assert_eq!(c.current, CellType::inactive());
+    for i in 0..(g.width * g.height) {
+        assert_eq!(g.cell_type(i), CellType::inactive());
     }
 }
 
@@ -258,7 +215,7 @@ fn countop_eq_zero_matches_no_neighbors() {
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
     // Center cell (1,1) has 0 B neighbors -> Eq 0 should match
-    assert_eq!(g.cell_states[4].current, out);
+    assert_eq!(g.cell_type(4), out);
 }
 
 // -------- Grid step counter --------

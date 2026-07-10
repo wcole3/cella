@@ -13,13 +13,16 @@ cargo run --release
 ```
 
 When you run this command, you will see a numbered list of demos:
-1.  **2D Game of Life**: A standard Conway-style implementation.
-2.  **1D Wolfram Rule 30**: The classic elementary CA (radius n=1).
-3.  **1D Wolfram n=2**: Demonstrates a larger neighborhood radius (n=2).
-4.  **1D Custom**: Allows you to enter your own Wolfram code and radius.
-5.  **Load from config**: Load a custom JSON configuration file.
-6.  **Cycle Demos**: 1D and 2D demos showing multi-state cycles (options 7 and 8).
-7.  **StraightLine Neighborhood**: A 2D demo using cardinal directions (option 9).
+1.  **2D Game of Life (approx)**: A standard Conway-style implementation.
+2.  **1D Wolfram Rule 30 (n=1)**: The classic elementary CA.
+3.  **1D Wolfram n=2 demo**: Demonstrates a larger neighborhood radius.
+4.  **1D Custom**: Enter your own Wolfram code and radius.
+5.  **Load from configuration file (JSON)**: Load a custom config.
+6.  **Langton's ant**: Placeholder — not yet implemented (requires a moving agent).
+7.  **1D three-state cycle demo**: Multi-state cycling in 1D.
+8.  **2D three-state cycle demo**: Multi-state cycling in 2D.
+9.  **2D StraightLine neighborhood demo**: Cardinal-direction neighborhoods.
+0.  **Exit**.
 
 ### Loading Custom Configs via CLI
 
@@ -63,7 +66,7 @@ You can specify the initial window size using command-line arguments:
 - **Color Pickers**: Customize the colors for each `CellType` in the simulation.
 - **Rules Editor**:
     - View and modify existing subrules.
-    - Change neighborhood shapes, ranges, and thresholds.
+    - Change neighborhood shapes (Moore, VonNeumann, Langton, StraightLine, Knight), ranges, and thresholds.
     - Add new subrules to create complex multi-state automata.
 
 #### Statistics Panel (Right Side)
@@ -137,5 +140,26 @@ Every configuration must have a `"dim"` field, which is either `"1d"` or `"2d"`.
   }
 }
 ```
+
+Notes on 2D subrule fields:
+
+- `op` is one of `"lt"`, `"gt"`, `"eq"`. The `gt`/`lt` comparisons are **inclusive** (`gt` = "at least `count`", `lt` = "at most `count`").
+- `neighborhood` is one of `"Moore"`, `"VonNeumann"`, `"Langton"`, `"StraightLine"`, `"Knight"`.
+- An optional `"limit"` field turns `gt`/`lt` into an inclusive between-range. For example, "survive with 2 to 3 neighbors":
+
+```json
+{
+  "current_type": "Alive",
+  "criteria_type": "Alive",
+  "count": 2,
+  "op": "gt",
+  "limit": 3,
+  "range": 1,
+  "neighborhood": "Moore",
+  "output_type": "Alive"
+}
+```
+
+- `"randomness"` (optional, `0.0`–`1.0`) is the probability that a matching subrule is skipped. Both `"limit"` and `"randomness"` may be omitted entirely.
 
 For more examples, see the `configs/` directory.

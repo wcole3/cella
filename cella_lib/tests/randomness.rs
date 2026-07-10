@@ -17,7 +17,7 @@ fn one_d_randomness_zero_always_applies() {
     let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     let mut g = Grid1D::new(3, 2, init, rule);
     g.step();
-    assert_eq!(g.cell_states[1].current, y);
+    assert_eq!(g.cell_type(1), y);
 }
 
 #[test]
@@ -34,5 +34,5 @@ fn two_d_randomness_one_never_applies() {
     let mut g = Grid2D::new(w, h, hist, init, rule);
     g.step();
     // Since rule didn't apply due to randomness=1.0, center becomes Inactive per engine base rule
-    assert_eq!(g.cell_states[1*w + 1].current, CellType::inactive());
+    assert_eq!(g.cell_type(1*w + 1), CellType::inactive());
 }

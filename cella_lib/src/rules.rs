@@ -244,38 +244,18 @@ impl Rule1DSubrule {
         Ok(())
     }
 
-    /// Evaluate this subrule against the provided neighborhood window.
+    /// Compute the wolfram-code bit index for the given neighborhood window.
+    /// Returns `true` if the corresponding bit in `wolfram_code` is set.
     ///
-    /// `center_current` is the current type of the center cell; `neighborhood`
-    /// is a contiguous window of length 2n+1 centered at the cell.
-    /// Returns `Some(output_type)` if the subrule triggers.
-    ///
-    /// ```rust
-    /// use cella_lib::{CellType, Rule1DSubrule};
-    /// let x = CellType::from("X");
-    /// let y = CellType::from("Y");
-    /// let sub = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 1u128<<2, n: 1, randomness: None, output_type: y.clone() };
-    /// let window = [CellType::inactive(), x.clone(), CellType::inactive()];
-    /// let out = sub.applies_and_output(&x, &window);
-    /// assert_eq!(out, Some(&y));
-    /// ```
-    pub fn applies_and_output(&self, center_current: &CellType, neighborhood: &[CellType]) -> Option<&CellType> {
-        if center_current != &self.current_type { return None; }
+    /// Caller already verified `current_type == self.current_type`.
+    #[inline]
+    pub fn applies(&self, neighborhood: &[CellType]) -> bool {
         let crit = &self.criteria_type;
         let mut idx: u128 = 0;
         for t in neighborhood {
             idx = (idx << 1) | ((*t == *crit) as u128);
         }
-        let bit = (self.wolfram_code >> idx) & 1u128;
-        if bit == 1u128 {
-            if let Some(r) = self.randomness {
-                let mut rng = rand::thread_rng();
-                let v: f64 = rng.r#gen();
-                if v < r { return None; }
-            }
-            return Some(&self.output_type);
-        }
-        None
+        (self.wolfram_code >> idx) & 1u128 == 1u128
     }
 }
 
@@ -301,21 +281,6 @@ impl Rule1D {
 ///  CountOp::Gt, 1, Neighborhood2D::Moore,
 ///  b.clone(), None, None );
 /// assert!(s.validate().is_ok());
-/// ```
-///
-/// StraightLine neighborhood example
-/// ```rust
-/// use cella_lib::{CellType, Rule2DSubrule, Neighborhood2D, CountOp};
-/// let a = CellType::from("A");
-/// let b = CellType::from("B");
-/// let sub = Rule2DSubrule::new( a.clone(), b.clone(), 2,
-/// CountOp::Gt, 1, Neighborhood2D::StraightLine,
-/// b.clone(), None, None );
-/// // Place two B's in cardinal directions: up (0,-1) and right (+1,0)
-/// let out = sub.applies_and_output(&a, |dx, dy| {
-///     if (dx, dy) == (0, -1) || (dx, dy) == (1, 0) { b.clone() } else { CellType::inactive() }
-/// });
-/// assert_eq!(out, Some(&b));
 /// ```
 /// Comparison operator for neighbor counts.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -384,34 +349,18 @@ impl Rule2DSubrule {
         Ok(())
     }
 
-    /// Evaluate this subrule by counting matching neighbors and applying op/limit.
-    pub fn applies_and_output<F>(&self, center_current: &CellType, get_neighbor: F) -> Option<&CellType>
-    where F: Fn(i32, i32) -> CellType {
-        if center_current != &self.current_type { return None; }
-        let mut neighbors = 0u32;
-        for off in &self.offsets {
-            let t = get_neighbor(off.0, off.1);
-            if t == self.criteria_type { neighbors += 1; }
-            // TODO consider an early exit here based on op type and limit; THERE ARE MORE
-            if self.op == CountOp::Gt && !self.limit.is_some() && neighbors >= self.count { break }
-        }
-        let pass = match (self.op, self.limit) {
+    /// Check whether `neighbors` satisfies the subrule's count condition.
+    /// Caller already verified `current_type` and counted neighbors.
+    #[inline]
+    pub fn eval_condition(&self, neighbors: u32) -> bool {
+        match (self.op, self.limit) {
             (CountOp::Eq, None) => neighbors == self.count,
             (CountOp::Gt, None) => neighbors >= self.count,
             (CountOp::Lt, None) => neighbors <= self.count,
             (CountOp::Gt, Some(hi)) => neighbors >= self.count && neighbors <= hi,
             (CountOp::Lt, Some(lo)) => neighbors <= self.count && neighbors >= lo,
             (CountOp::Eq, Some(_)) => false,
-        };
-        if pass {
-            if let Some(r) = self.randomness {
-                let mut rng = rand::thread_rng();
-                let v: f64 = rng.r#gen();
-                if v < r { return None; }
-            }
-            return Some(&self.output_type);
         }
-        None
     }
 }
 
