@@ -2,11 +2,14 @@
 
 use std::io::Error;
 use lasso2::Spur;
-use rand::Rng;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use crate::chunking::{split_chunks, OutChunk};
 use crate::types::{CellState, CellType};
-use crate::rules::{Rule1D, TypeCounter};
-use crate::threads::thread_count;
+use crate::rules::{apply_counts, Rule1D, Rule1DSubrule, TypeCounter};
+use crate::threads::{chunks_for_work, pool};
 
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -147,7 +150,9 @@ impl Grid1D {
             let base = idx * hl;
             let h = self.history_heads[idx] as usize;
             self.history_data[base + h] = cur;
-            self.history_heads[idx] = ((h + 1) % hl) as u8;
+            // `% hl` would be a hardware divide (hl is a runtime value) on every
+            // cell of every step; h is always < hl, so a compare suffices.
+            self.history_heads[idx] = if h + 1 == hl { 0 } else { (h + 1) as u8 };
             let c = self.history_counts[idx] as usize;
             if c < hl {
                 self.history_counts[idx] = (c + 1) as u8;
@@ -194,7 +199,7 @@ impl Grid1D {
     /// Used by interactive or programmatic routines that change grid
     /// state outside of stepping (i.e. grid painting).
     pub fn transition_state_and_buffer(&mut self, idx: usize, new_type: &CellType) -> Option<Error> {
-        if idx > self.width {
+        if idx >= self.width {
             Some(Error::new(std::io::ErrorKind::InvalidInput, "Index out of bounds"))
         } else {
             self.transition_cell(idx, *new_type);
@@ -202,82 +207,125 @@ impl Grid1D {
         }
     }
 
-    /// Type at `idx`, or `inactive` when out of bounds.
+    /// Wolfram bit index for a cell whose whole `2n+1` window is in bounds:
+    /// straight reads, no per-slot bounds test and no temporary window array.
+    ///
+    /// The `n` arms are spelled out rather than looped so each window folds into
+    /// straight-line code — a loop bounded by the runtime `n` does not unroll and
+    /// measurably costs more than the bounds checks it removes.
     #[inline]
-    fn get_type_or_inactive(cells: &[CellType], inactive: CellType, width: usize, idx: isize) -> CellType {
-        if idx < 0 || idx as usize >= width { inactive } else { cells[idx as usize] }
+    fn applies_interior(s: &Rule1DSubrule, cells: &[CellType], idx: usize,
+                        current: CellType) -> bool {
+        let crit = s.criteria_type;
+        let hit = |j: usize| (cells[j] == crit) as u128;
+        // The centre slot is the caller's already-loaded `current`, not a re-read.
+        let mid = (current == crit) as u128;
+        let bits: u128 = match s.n {
+            1 => (hit(idx - 1) << 2) | (mid << 1) | hit(idx + 1),
+            2 => (hit(idx - 2) << 4) | (hit(idx - 1) << 3) | (mid << 2)
+                 | (hit(idx + 1) << 1) | hit(idx + 2),
+            3 => (hit(idx - 3) << 6) | (hit(idx - 2) << 5) | (hit(idx - 1) << 4)
+                 | (mid << 3) | (hit(idx + 1) << 2) | (hit(idx + 2) << 1)
+                 | hit(idx + 3),
+            _ => return false,
+        };
+        (s.wolfram_code >> bits) & 1u128 == 1u128
     }
 
-    /// Evaluate subrules in order for the cell at `idx`, returning its next type.
+    /// Same as `applies_interior` but treats out-of-bounds slots as `inactive`.
     #[inline]
-    fn next_type(cells: &[CellType], rule: &Rule1D, inactive: &CellType,
-                  width: usize, idx: usize) -> CellType {
-        let current_type = &cells[idx];
-        for s in &rule.subrules {
-            if current_type != &s.current_type { continue; }
-            let n = s.n as isize;
-            let inactive = *inactive;
-            let out = match n {
-                1 => {
-                    let w = [
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 1),
-                        current_type.clone(),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 1),
-                    ];
-                    if s.applies(&w) { s.output_type.clone() } else { continue }
-                }
-                2 => {
-                    let w = [
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 2),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 1),
-                        current_type.clone(),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 1),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 2),
-                    ];
-                    if s.applies(&w) { s.output_type.clone() } else { continue }
-                }
-                3 => {
-                    let w = [
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 3),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 2),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize - 1),
-                        current_type.clone(),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 1),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 2),
-                        Self::get_type_or_inactive(cells, inactive, width, idx as isize + 3),
-                    ];
-                    if s.applies(&w) { s.output_type.clone() } else { continue }
-                }
-                _ => continue,
-            };
-            if let Some(r) = s.randomness {
-                let mut rng = rand::thread_rng();
-                if rng.r#gen::<f64>() < r { continue; }
-            }
-            return out;
+    fn applies_edge(s: &Rule1DSubrule, cells: &[CellType], inactive: CellType,
+                    width: usize, idx: usize) -> bool {
+        if s.n < 1 || s.n > 3 { return false; }
+        let n = s.n as isize;
+        let crit = s.criteria_type;
+        let mut bits: u128 = 0;
+        for k in -n..=n {
+            let j = idx as isize + k;
+            let t = if j < 0 || j as usize >= width { inactive } else { cells[j as usize] };
+            bits = (bits << 1) | ((t == crit) as u128);
         }
-        *inactive
+        (s.wolfram_code >> bits) & 1u128 == 1u128
     }
 
-    /// Compute the next state for a chunk, writing into disjoint output slices.
+    /// Evaluate subrules for a cell at least `rule.n_max()` from either end, so
+    /// every window slot is in bounds.
+    ///
+    /// Subrules with `n < 1` or `n > 3` cannot be encoded in a `u128` window and
+    /// never match; [`Rule1DSubrule::validate`] rejects them, and `applies_*`
+    /// reports no match for them here.
+    #[inline]
+    fn next_type_interior(cells: &[CellType], rule: &Rule1D, inactive: CellType,
+                          idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
+        let current_type = cells[idx];
+        for s in &rule.subrules {
+            if current_type != s.current_type { continue; }
+            if !Self::applies_interior(s, cells, idx, current_type) { continue; }
+            if let Some(r) = s.randomness {
+                if let Some(rng) = rng.as_deref_mut() {
+                    if rng.r#gen::<f64>() < r { continue; }
+                }
+            }
+            return s.output_type;
+        }
+        inactive
+    }
+
+    /// Evaluate subrules for a cell near either end, treating out-of-bounds
+    /// window slots as `inactive`.
+    ///
+    #[inline]
+    fn next_type_edge(cells: &[CellType], rule: &Rule1D, inactive: CellType,
+                      width: usize, idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
+        let current_type = cells[idx];
+        for s in &rule.subrules {
+            if current_type != s.current_type { continue; }
+            if !Self::applies_edge(s, cells, inactive, width, idx) { continue; }
+            if let Some(r) = s.randomness {
+                if let Some(rng) = rng.as_deref_mut() {
+                    if rng.r#gen::<f64>() < r { continue; }
+                }
+            }
+            return s.output_type;
+        }
+        inactive
+    }
+
+    /// Compute the next state for one chunk, writing into disjoint output slices.
     fn step_chunk(
-        cells: &[CellType], next_cells: &mut [CellType],
-        ages: &mut [u32],
-        history_data: &mut [CellType], history_heads: &mut [u8], history_counts: &mut [u8],
-        history_limit: usize,
-        rule: &Rule1D, inactive: CellType, dt: CellType,
-        width: usize, start: usize,
+        cells: &[CellType], out: &mut OutChunk<'_>, history_limit: usize,
+        rule: &Rule1D, pad: usize, needs_rng: bool,
+        inactive: CellType, dt: CellType, width: usize,
     ) -> TypeCounter {
         let mut count_map = TypeCounter::new();
+        // Only pay for RNG setup when a subrule actually draws from it.
+        let mut rng = if needs_rng { Some(SmallRng::from_entropy()) } else { None };
+        let start = out.start;
+        // Reborrow into locals: indexing through `&mut OutChunk` makes the loop
+        // reload each slice's pointer and length from the struct on every access.
+        let next_cells = &mut *out.next_cells;
+        let ages = &mut *out.ages;
+        let history_data = &mut *out.history_data;
+        let history_heads = &mut *out.history_heads;
+        let history_counts = &mut *out.history_counts;
+        let hi = width.saturating_sub(pad);
         for local in 0..next_cells.len() {
-            let new_type = Self::next_type(cells, rule, &inactive, width, start + local);
+            let idx = start + local;
+            let new_type = if idx >= pad && idx < hi {
+                Self::next_type_interior(cells, rule, inactive, idx, rng.as_mut())
+            } else {
+                Self::next_type_edge(cells, rule, inactive, width, idx, rng.as_mut())
+            };
             next_cells[local] = new_type;
-            let cur = cells[start + local];
+            let cur = cells[idx];
             if history_limit > 0 {
                 let base_hist = local * history_limit;
                 let h = history_heads[local] as usize;
                 history_data[base_hist + h] = cur;
-                history_heads[local] = ((h + 1) % history_limit) as u8;
+                // `% history_limit` would be a hardware divide (the limit is a
+                // runtime value) on every cell of every step; h is always
+                // < history_limit, so a compare suffices.
+                history_heads[local] = if h + 1 == history_limit { 0 } else { (h + 1) as u8 };
                 let c = history_counts[local] as usize;
                 if c < history_limit {
                     history_counts[local] = (c + 1) as u8;
@@ -295,78 +343,49 @@ impl Grid1D {
         count_map
     }
 
-    fn recompute_counts_from_cells(&mut self, new_counts: &TypeCounter) {
-        self.counts_current.clear();
-        let mut total_count: u64 = self.cells.len() as u64;
-        let mut new_dominant_type: (&CellType, u64) = (&CellType::inactive(), 0);
-        for (k, v) in new_counts.iter() {
-            self.counts_current.insert(k.0, *v);
-            total_count -= *v;
-            self.peak_counts.entry(k.0).and_modify(|peak| {
-                if *v > *peak { *peak = *v; }
-            }).or_insert(*v);
-            if *v >= new_dominant_type.1 {
-                new_dominant_type = (k, *v);
-            }
-        }
-        self.counts_current.insert(self.dominant_type.0, total_count);
-        self.peak_counts.entry(self.dominant_type.0).and_modify(|peak| {
-            if total_count > *peak { *peak = total_count; }
-        }).or_insert(total_count);
-        if total_count < new_dominant_type.1 {
-            self.dominant_type = *new_dominant_type.0;
-        }
-    }
-
     /// Advance the automaton by one step using double-buffering.
     pub fn step(&mut self) {
-        let threads = thread_count();
         let width = self.width;
         let hl = self.history_limit;
+        let pad = self.rule.n_max() as usize;
+        let needs_rng = self.rule.needs_rng();
+        // Nominal neighbor visits per cell: one 2n+1 window per subrule.
+        let work_per_cell: usize = self.rule.subrules.iter()
+            .map(|s| 2 * s.n as usize + 1).sum::<usize>().max(1);
+        let nchunks = chunks_for_work(width.saturating_mul(work_per_cell));
         let cells = &self.cells;
-        let next_cells = &mut self.next_cells;
-        let ages = &mut self.ages;
-        let history_data = &mut self.history_data;
-        let history_heads = &mut self.history_heads;
-        let history_counts = &mut self.history_counts;
         let rule = &self.rule;
         let inactive = self.inactive;
         let dt = self.dominant_type;
 
-        let count_map = if threads <= 1 || width < 8192 || hl == 0 {
-            Self::step_chunk(cells, next_cells, ages,
-                history_data, history_heads, history_counts, hl,
-                rule, inactive, dt, width, 0)
+        let count_map = if nchunks <= 1 {
+            let mut out = OutChunk {
+                start: 0,
+                next_cells: &mut self.next_cells,
+                ages: &mut self.ages,
+                history_data: &mut self.history_data,
+                history_heads: &mut self.history_heads,
+                history_counts: &mut self.history_counts,
+            };
+            Self::step_chunk(cells, &mut out, hl, rule, pad, needs_rng, inactive, dt, width)
         } else {
-            let chunk = (width + threads - 1) / threads;
-            std::thread::scope(|s| {
-                let handles: Vec<_> = (0..)
-                    .map(|t| t * chunk)
-                    .zip(next_cells.chunks_mut(chunk))
-                    .zip(ages.chunks_mut(chunk))
-                    .zip(history_data.chunks_mut(chunk * hl))
-                    .zip(history_heads.chunks_mut(chunk))
-                    .zip(history_counts.chunks_mut(chunk))
-                    .map(|(((((start, next_chunk), age_chunk), hist_data_chunk), head_chunk), count_chunk)| {
-                        s.spawn(move || {
-                            Self::step_chunk(cells, next_chunk, age_chunk,
-                                hist_data_chunk, head_chunk, count_chunk, hl,
-                                rule, inactive, dt, width, start)
-                        })
-                    })
-                    .collect();
-
-                let mut merged = TypeCounter::new();
-                for handle in handles {
-                    let chunk_counter = handle.join().unwrap();
-                    merged.merge(&chunk_counter);
-                }
-                merged
+            let chunk = width.div_ceil(nchunks);
+            let mut chunks = split_chunks(
+                &mut self.next_cells, &mut self.ages,
+                &mut self.history_data, &mut self.history_heads, &mut self.history_counts,
+                hl, chunk,
+            );
+            // Persistent pool: no thread spawn/join per step.
+            pool(nchunks).install(|| {
+                chunks.par_iter_mut()
+                    .map(|c| Self::step_chunk(cells, c, hl, rule, pad, needs_rng, inactive, dt, width))
+                    .reduce(TypeCounter::new, |mut a, b| { a.merge(&b); a })
             })
         };
 
         std::mem::swap(&mut self.cells, &mut self.next_cells);
-        Self::recompute_counts_from_cells(self, &count_map);
+        apply_counts(&mut self.counts_current, &mut self.peak_counts,
+            &mut self.dominant_type, width as u64, &count_map);
         self.step = self.step.saturating_add(1);
     }
 

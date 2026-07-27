@@ -12,7 +12,6 @@
 use std::collections::HashSet;
 use memoize::memoize;
 use crate::types::CellType;
-use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Lightweight cell-type counter for hotpath use.
@@ -38,11 +37,12 @@ impl TypeCounter {
     }
 
     pub fn merge(&mut self, other: &Self) {
-        for (t, c) in &other.entries {
+        // `continue 'outer` (not `return`): every entry of `other` must be folded in.
+        'outer: for (t, c) in &other.entries {
             for e in &mut self.entries {
                 if e.0 == *t {
                     e.1 += *c;
-                    return;
+                    continue 'outer;
                 }
             }
             self.entries.push((*t, *c));
@@ -51,6 +51,43 @@ impl TypeCounter {
 
     pub fn iter(&self) -> impl Iterator<Item = (&CellType, &u64)> {
         self.entries.iter().map(|(t, c)| (t, c))
+    }
+}
+
+impl Default for TypeCounter {
+    fn default() -> Self { Self::new() }
+}
+
+/// Rebuild `counts_current` / `peak_counts` from one step's [`TypeCounter`].
+///
+/// `new_counts` deliberately omits `dominant_type` (the stepping loop skips it),
+/// so that type's population is back-filled by subtracting every counted type
+/// from `total_cells`. Also re-picks the dominant type for the next step: if some
+/// counted type now outnumbers the back-filled remainder, it takes over.
+///
+/// Shared by `Grid1D` and `Grid2D` so the two can't drift apart.
+pub(crate) fn apply_counts(
+    counts_current: &mut std::collections::HashMap<lasso2::Spur, u64>,
+    peak_counts: &mut std::collections::HashMap<lasso2::Spur, u64>,
+    dominant_type: &mut CellType,
+    total_cells: u64,
+    new_counts: &TypeCounter,
+) {
+    counts_current.clear();
+    let mut remainder = total_cells;
+    let mut challenger: (CellType, u64) = (*dominant_type, 0);
+    for (k, v) in new_counts.iter() {
+        counts_current.insert(k.0, *v);
+        remainder = remainder.saturating_sub(*v);
+        peak_counts.entry(k.0).and_modify(|peak| { if *v > *peak { *peak = *v; } }).or_insert(*v);
+        if *v > challenger.1 { challenger = (*k, *v); }
+    }
+    counts_current.insert(dominant_type.0, remainder);
+    peak_counts.entry(dominant_type.0)
+        .and_modify(|peak| { if remainder > *peak { *peak = remainder; } })
+        .or_insert(remainder);
+    if remainder < challenger.1 {
+        *dominant_type = challenger.0;
     }
 }
 
@@ -268,6 +305,8 @@ impl Rule1D {
     pub fn validate(&self) -> Result<(), RuleError> { for s in &self.subrules { s.validate()?; } Ok(()) }
     /// Return the maximum neighborhood radius among subrules (or 1 if empty).
     pub fn n_max(&self) -> u8 { self.subrules.iter().map(|s| s.n).max().unwrap_or(1) }
+    /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
+    pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
 }
 
 /// One subrule for a 2D automaton using threshold counts in a neighborhood.
@@ -285,9 +324,9 @@ impl Rule1D {
 /// Comparison operator for neighbor counts.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CountOp {
-    /// Less than: `neighbor_count < target_count`.
+    /// At most (inclusive): `neighbor_count <= target_count`.
     #[serde(rename = "lt")] Lt,
-    /// Greater than: `neighbor_count > target_count`.
+    /// At least (inclusive): `neighbor_count >= target_count`.
     #[serde(rename = "gt")] Gt,
     /// Equal to: `neighbor_count == target_count`.
     #[serde(rename = "eq")] Eq,
@@ -299,6 +338,15 @@ pub struct Rule2DSubrule {
     /// Sorted offsets for deterministic iteration and better cache locality.
     #[serde(skip)]
     pub offsets: Vec<(i32, i32)>,
+    /// Precomputed: `op == Gt && limit.is_none()`, i.e. neighbor counting may stop
+    /// as soon as `count` is reached. Hoisted out of the per-neighbor loop.
+    #[serde(skip)]
+    pub(crate) early_exit: bool,
+    /// Precomputed: largest `max(|dx|, |dy|)` over `offsets` — the Chebyshev radius
+    /// of this subrule's neighborhood. Cells at least this far from every border
+    /// can read all their neighbors without bounds checks.
+    #[serde(skip)]
+    pub(crate) pad: usize,
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
@@ -326,9 +374,17 @@ impl Rule2DSubrule {
                randomness: Option<f64>, limit: Option<u32>) -> Self {
         // compute the offsets for the neighborhood
         let offsets = neighborhood_offsets(neighborhood, range as i32);
+        let pad = offsets.iter().map(|(dx, dy)| dx.abs().max(dy.abs()) as usize).max().unwrap_or(0);
+        let early_exit = matches!(op, CountOp::Gt) && limit.is_none();
         // make the struct
         Self { current_type, criteria_type, count, op, limit, range,
-            neighborhood, randomness, output_type, offsets }
+            neighborhood, randomness, output_type, offsets, early_exit, pad }
+    }
+
+    /// Linear index offsets into a row-major grid of the given width.
+    /// Interior cells can add these to their own index with no bounds logic.
+    pub(crate) fn linear_offsets(&self, width: usize) -> Vec<isize> {
+        self.offsets.iter().map(|(dx, dy)| *dy as isize * width as isize + *dx as isize).collect()
     }
 
     /// Validate subrule parameters (range>=1 and randomness/limit bounds).
@@ -395,4 +451,36 @@ impl Rule2D {
     pub fn validate(&self) -> Result<(), RuleError> { for s in &self.subrules { s.validate()?; } Ok(()) }
     /// Return the maximum range among subrules (or 1 if empty).
     pub fn range_max(&self) -> u8 { self.subrules.iter().map(|s| s.range).max().unwrap_or(1) }
+    /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
+    pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
+}
+
+/// Per-step precomputation shared by every chunk of a 2D step.
+///
+/// Built once in `Grid2D::step` (cost is O(subrules × neighbors), i.e. tens of
+/// operations against tens of thousands of cells) rather than cached on the grid,
+/// so a caller mutating `grid.rule` between steps can never see a stale plan.
+pub(crate) struct Rule2DPlan {
+    /// Per subrule: neighbor offsets as linear indices for the grid's width.
+    pub lin: Vec<Vec<isize>>,
+    /// Chebyshev radius of the widest subrule; the interior margin.
+    pub pad: usize,
+    /// Whether any subrule needs an RNG.
+    pub needs_rng: bool,
+    /// Upper bound on neighbor visits per cell, summed over subrules. Used only
+    /// to size the parallel split — an over-estimate for rules that early-exit or
+    /// whose subrules rarely match, which is the safe direction (it never turns a
+    /// grid that is too small to parallelize into one that is).
+    pub work_per_cell: usize,
+}
+
+impl Rule2DPlan {
+    pub fn new(rule: &Rule2D, width: usize) -> Self {
+        Self {
+            lin: rule.subrules.iter().map(|s| s.linear_offsets(width)).collect(),
+            pad: rule.subrules.iter().map(|s| s.pad).max().unwrap_or(0),
+            needs_rng: rule.needs_rng(),
+            work_per_cell: rule.subrules.iter().map(|s| s.offsets.len()).sum::<usize>().max(1),
+        }
+    }
 }

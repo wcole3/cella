@@ -359,7 +359,7 @@ impl CellaApp {
             Some(Dim::D1) => if let Some(g) = &mut self.d1 {
                 // push current row to history before stepping
                 let mut row: Vec<CellType> = Vec::with_capacity(g.width);
-                for x in 0..g.width { row.push(g.cell_states[x].current.clone()); }
+                for x in 0..g.width { row.push(g.cell_type(x)); }
                 self.history_1d.push(row);
                 if self.history_1d.len() > self.history_limit_1d { let overflow = self.history_1d.len() - self.history_limit_1d; self.history_1d.drain(0..overflow); }
                 g.step();
@@ -391,12 +391,18 @@ impl CellaApp {
         match self.dim {
             Some(Dim::D1) => {
                 if let Some(g) = &self.d1 {
-                    for c in &g.cell_states { if set.insert(c.current.0) { result.push(c.current.clone()); } }
+                    for i in 0..g.width {
+                        let ty = g.cell_type(i);
+                        if set.insert(ty.0) { result.push(ty); }
+                    }
                 }
             }
             Some(Dim::D2) => {
                 if let Some(g) = &self.d2 {
-                    for c in &g.cell_states { if set.insert(c.current.0) { result.push(c.current.clone()); } }
+                    for i in 0..g.width * g.height {
+                        let ty = g.cell_type(i);
+                        if set.insert(ty.0) { result.push(ty); }
+                    }
                 }
             }
             None => {}
@@ -512,7 +518,7 @@ impl CellaApp {
                     // Current row at y = history_len
                     if cell_y_end > history_len && cell_y_start <= history_len {
                         for x in cell_x_start..cell_x_end.min(g.width) {
-                            let col = self.color_of(&g.cell_states[x].current);
+                            let col = self.color_of(&g.cell_type(x));
                             if col != bg {
                                 let rect = egui::Rect::from_min_size(
                                     full_rect.min + egui::vec2(x as f32 * scale, history_len as f32 * scale),
@@ -530,7 +536,7 @@ impl CellaApp {
                     for y in cell_y_start..cell_y_end.min(g.height) {
                         for x in cell_x_start..cell_x_end.min(w) {
                             let idx = y * w + x;
-                            let col = self.color_of(&g.cell_states[idx].current);
+                            let col = self.color_of(&g.cell_type(idx));
                             if col != bg {
                                 let rect = egui::Rect::from_min_size(
                                     full_rect.min + egui::vec2(x as f32 * scale, y as f32 * scale),
@@ -1013,7 +1019,7 @@ impl CellaApp {
                     let hist = g.history_limit;
                     let mut init: Vec<CellType> = vec![CellType::inactive(); new_w];
                     for x in 0..new_w.min(old_w) {
-                        init[x] = g.cell_states[x].current.clone();
+                        init[x] = g.cell_type(x);
                     }
                     self.d1 = Some(Grid1D::new(new_w, hist, init, rule));
                     self.initial_state = self.d1.as_ref().map(GridState::from_grid1d);
@@ -1033,7 +1039,7 @@ impl CellaApp {
                     let mut init: Vec<CellType> = vec![CellType::inactive(); new_w * new_h];
                     for y in 0..new_h.min(old_h) {
                         for x in 0..new_w.min(old_w) {
-                            init[y * new_w + x] = g.cell_states[y * old_w + x].current.clone();
+                            init[y * new_w + x] = g.cell_type(y * old_w + x);
                         }
                     }
                     self.d2 = Some(Grid2D::new(new_w, new_h, hist, init, rule));
@@ -1290,10 +1296,10 @@ impl CellaApp {
         let mut pick: Option<CellType> = None;
         match self.dim {
             Some(Dim::D1) => if let Some(g) = &self.d1 {
-                for c in &g.cell_states { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
+                pick = (0..g.width).map(|i| g.cell_type(i)).find(|t| *t != CellType::inactive());
             },
             Some(Dim::D2) => if let Some(g) = &self.d2 {
-                for c in &g.cell_states { if c.current != CellType::inactive() { pick = Some(c.current.clone()); break; } }
+                pick = (0..g.width * g.height).map(|i| g.cell_type(i)).find(|t| *t != CellType::inactive());
             },
             None => {}
         }
@@ -1630,7 +1636,7 @@ impl eframe::App for CellaApp {
                                     let mut err = None;
                                     if let Some(g) = &mut self.d2 {
                                         for (idx, prev) in batch {
-                                            if idx < g.cell_states.len() {
+                                            if idx < g.width * g.height {
                                                if let Some(e) = g.transition_state_and_buffer(idx, &prev){
                                                     err = Some(e);
                                                     break;
@@ -1693,7 +1699,7 @@ impl eframe::App for CellaApp {
                                                 let total_rows = self.history_1d.len() + 1;
                                                 if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
                                                     let idx = cell_x;
-                                                    let prev = g.cell_states[idx].current.clone();
+                                                    let prev = g.cell_type(idx);
                                                     if prev != paint_ty {
                                                         if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
                                                         if let Some(batch) = &mut self.current_paint_batch {
@@ -1711,7 +1717,7 @@ impl eframe::App for CellaApp {
                                             if let Some(g) = &mut self.d2 {
                                                 if cell_x < g.width && cell_y < g.height {
                                                     let idx = cell_y * g.width + cell_x;
-                                                    let prev = g.cell_states[idx].current.clone();
+                                                    let prev = g.cell_type(idx);
                                                     if prev != paint_ty {
                                                         if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
                                                         if let Some(batch) = &mut self.current_paint_batch {
@@ -1747,13 +1753,13 @@ impl eframe::App for CellaApp {
                                     if let Some(g) = &mut self.d1 {
                                         let total_rows = self.history_1d.len() + 1;
                                         if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
-                                            let current = g.cell_states[cell_x].current.clone();
+                                            let current = g.cell_type(cell_x);
                                             // Build type list locally to avoid borrowing self
-                                            let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
-                                            for c in &g.cell_states { set.insert(&c.current); }
+                                            let mut set: std::collections::BTreeSet<CellType> = std::collections::BTreeSet::new();
+                                            for i in 0..g.width { set.insert(g.cell_type(i)); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
-                                            for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
+                                            for n in set { if n != CellType::inactive() { names.push(n.as_str().to_string()); } }
                                             let tys: Vec<CellType> = names.iter().map(|s| CellType::from(s.clone())).collect();
                                             let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
                                             idx = (idx + 1) % tys.len();
@@ -1771,13 +1777,13 @@ impl eframe::App for CellaApp {
                                     if let Some(g) = &mut self.d2 {
                                         if cell_x < g.width && cell_y < g.height {
                                             let i = cell_y * g.width + cell_x;
-                                            let current = g.cell_states[i].current.clone();
+                                            let current = g.cell_type(i);
                                             // Build type list locally to avoid borrowing self
-                                            let mut set: std::collections::BTreeSet<&CellType> = std::collections::BTreeSet::new();
-                                            for c in &g.cell_states { set.insert(&c.current); }
+                                            let mut set: std::collections::BTreeSet<CellType> = std::collections::BTreeSet::new();
+                                            for i in 0..g.width * g.height { set.insert(g.cell_type(i)); }
                                             let mut names: Vec<String> = Vec::new();
                                             names.push(INACTIVE.to_string());
-                                            for n in set { if *n != CellType::inactive() { names.push(n.as_str().to_string()); } }
+                                            for n in set { if n != CellType::inactive() { names.push(n.as_str().to_string()); } }
                                             let tys: Vec<CellType> = names.iter().map(|s| CellType::from(s.clone())).collect();
                                             let mut idx = tys.iter().position(|t| t == &current).unwrap_or(0);
                                             idx = (idx + 1) % tys.len();

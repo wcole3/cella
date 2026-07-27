@@ -24,6 +24,7 @@ pub mod grid2d;
 pub mod state;
 pub mod config;
 pub mod threads;
+mod chunking;
 
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
@@ -35,6 +36,55 @@ pub use types::{CellState, CellType, INACTIVE};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dominant type is the one *skipped* during per-cell counting and
+    /// back-filled by subtraction, so it has to be re-elected whenever another
+    /// type takes the majority — otherwise the skip stops saving anything and
+    /// every cell of the true majority is counted one by one.
+    ///
+    /// A crate-internal test because `dominant_type` is not public: population
+    /// counts stay correct either way, so this can only be observed from inside.
+    #[test]
+    fn dominant_type_is_re_elected_when_majority_flips() {
+        let alive = CellType::from("Alive");
+        let inactive = CellType::inactive();
+        let rule = Rule2D { subrules: vec![
+            Rule2DSubrule::new(alive, alive, 0, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
+            Rule2DSubrule::new(inactive, alive, 1, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
+        ]};
+        let (w, h) = (33usize, 33usize);
+        let mut init = vec![inactive; w * h];
+        init[(h / 2) * w + w / 2] = alive;
+        let mut g = Grid2D::new(w, h, 2, init, rule);
+        assert_eq!(g.dominant_type, inactive, "Inactive starts as the majority");
+
+        for _ in 0..20 { g.step(); }
+        assert_eq!(g.counts_current.get(&alive.0).copied().unwrap_or(0), (w * h) as u64,
+            "the flood should have filled the grid");
+        assert_eq!(g.dominant_type, alive,
+            "dominant_type must follow the majority, else the counting skip is wasted");
+    }
+
+    /// Same requirement for the 1D stepper.
+    #[test]
+    fn dominant_type_is_re_elected_when_majority_flips_1d() {
+        let x = CellType::from("X");
+        let inactive = CellType::inactive();
+        let rule = Rule1D { subrules: vec![
+            Rule1DSubrule { current_type: x, criteria_type: x, wolfram_code: u128::MAX, n: 1, randomness: None, output_type: x },
+            Rule1DSubrule { current_type: inactive, criteria_type: x, wolfram_code: u128::MAX, n: 1, randomness: None, output_type: x },
+        ]};
+        let width = 65usize;
+        let mut init = vec![inactive; width];
+        init[width / 2] = x;
+        let mut g = Grid1D::new(width, 2, init, rule);
+        assert_eq!(g.dominant_type, inactive, "Inactive starts as the majority");
+
+        for _ in 0..width { g.step(); }
+        assert_eq!(g.counts_current.get(&x.0).copied().unwrap_or(0), width as u64);
+        assert_eq!(g.dominant_type, x,
+            "dominant_type must follow the majority, else the counting skip is wasted");
+    }
 
     #[test]
     fn rule1d_validation() {

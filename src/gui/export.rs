@@ -76,7 +76,10 @@ pub fn export_gif_2d(
 
     // Gather current distinct types
     let mut set: BTreeMap<String, CellType> = BTreeMap::new();
-    for c in &grid.cell_states { set.entry(c.current.as_str().to_string().clone()).or_insert(c.current.clone()); }
+    for i in 0..grid.width * grid.height {
+        let ty = grid.cell_type(i);
+        set.entry(ty.as_str().to_string()).or_insert(ty);
+    }
     let types: Vec<CellType> = set.values().cloned().collect();
 
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
@@ -90,7 +93,7 @@ pub fn export_gif_2d(
         for y in 0..grid.height {
             for x in 0..grid.width {
                 let idx = y * grid.width + x;
-                let ty = &grid.cell_states[idx].current;
+                let ty = &grid.cell_type(idx);
                 let pal_index = if ty.as_str() == INACTIVE { 0u8 } else { *index_map.get(&ty.as_str().to_string()).unwrap_or(&1u8) };
                 for dy in 0..scale as usize {
                     for dx in 0..scale as usize {
@@ -133,7 +136,10 @@ pub fn export_gif_1d(
 
     // Gather current distinct types
     let mut set: BTreeMap<String, CellType> = BTreeMap::new();
-    for c in &grid.cell_states { set.entry(c.current.as_str().to_string().clone()).or_insert(c.current.clone()); }
+    for i in 0..grid.width {
+        let ty = grid.cell_type(i);
+        set.entry(ty.as_str().to_string()).or_insert(ty);
+    }
     let types: Vec<CellType> = set.values().cloned().collect();
 
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
@@ -172,7 +178,7 @@ pub fn export_gif_1d(
         // Draw current row at the bottom of the visible window
         let cur_y = hist_to_show;
         for x in 0..grid.width {
-            let ty = &grid.cell_states[x].current;
+            let ty = &grid.cell_type(x);
             let pal_index = if ty.as_str() == INACTIVE { 0u8 } else { *index_map.get(&ty.as_str().to_string()).unwrap_or(&1u8) };
             for dy in 0..scale as usize {
                 for dx in 0..scale as usize {
@@ -190,7 +196,7 @@ pub fn export_gif_1d(
 
         // After writing the frame, push the current row into history and cap length
         let mut row_now: Vec<CellType> = Vec::with_capacity(grid.width);
-        for x in 0..grid.width { row_now.push(grid.cell_states[x].current.clone()); }
+        for x in 0..grid.width { row_now.push(grid.cell_type(x)); }
         history.push(row_now);
         if display_rows > 1 {
             let cap = display_rows - 1;

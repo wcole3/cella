@@ -62,10 +62,8 @@ pub fn build_1d_three_state_cycle(width: usize, history: usize) -> Grid1D {
 /// Print a 1D grid row to stdout using symbol mapping.
 fn print_grid_1d(g: &Grid1D) {
     // Build stable mapping for active states (non-Inactive)
-    let mut names: Vec<String> = g
-        .cell_states
-        .iter()
-        .map(|c| c.current.as_str().to_string())
+    let mut names: Vec<String> = (0..g.width)
+        .map(|i| g.cell_type(i).as_str().to_string())
         .filter(|n| n != INACTIVE)
         .collect();
     names.sort();
@@ -78,7 +76,7 @@ fn print_grid_1d(g: &Grid1D) {
     }
     let mut line = String::with_capacity(g.width);
     for i in 0..g.width {
-        let ty = &g.cell_states[i].current.as_str().to_string();
+        let ty = &g.cell_type(i).as_str().to_string();
         if ty == INACTIVE { line.push('.'); }
         else { line.push(*map.get(ty).unwrap_or(&'?')); }
     }

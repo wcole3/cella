@@ -411,3 +411,182 @@ fn multi_subrule_mixed_n_1d() {
         assert_eq!(g.cell_type(0), inactive, "edge n=1,n=2,n=3 all skip -> inactive");
     }
 }
+
+// ─── 5. Population counting: parallel vs serial, and the total invariant ───
+
+/// `set_thread_override` is process-global, so tests that drive it must not run
+/// concurrently with each other or they would clobber each other's setting.
+static THREAD_OVERRIDE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `counts_current` must always account for every cell exactly once.
+///
+/// The dominant type's population is back-filled by subtraction rather than
+/// counted, so any error in the counted types shows up here as a total that no
+/// longer matches the grid size.
+fn assert_counts_total_1d(g: &Grid1D, ctx: &str) {
+    let sum: u64 = g.counts_current.values().sum();
+    assert_eq!(sum, g.width as u64, "{ctx}: counts sum {sum} != {} cells", g.width);
+}
+
+fn assert_counts_total_2d(g: &Grid2D, ctx: &str) {
+    let sum: u64 = g.counts_current.values().sum();
+    let total = (g.width * g.height) as u64;
+    assert_eq!(sum, total, "{ctx}: counts sum {sum} != {total} cells");
+}
+
+/// Three-state cycle: every cell changes type every step, so all three types are
+/// live in every chunk — exactly the case where merging per-chunk counters has to
+/// fold every entry, not just the first one it recognizes.
+fn three_state_rule_1d() -> Rule1D {
+    let (a, b, c) = (CellType::from("A"), CellType::from("B"), CellType::from("C"));
+    let any = 0xFFu128;
+    Rule1D { subrules: vec![
+        Rule1DSubrule { current_type: a, criteria_type: a, wolfram_code: any, n: 1, randomness: None, output_type: b },
+        Rule1DSubrule { current_type: b, criteria_type: b, wolfram_code: any, n: 1, randomness: None, output_type: c },
+        Rule1DSubrule { current_type: c, criteria_type: c, wolfram_code: any, n: 1, randomness: None, output_type: a },
+    ]}
+}
+
+fn three_state_rule_2d() -> Rule2D {
+    let (a, b, c) = (CellType::from("A"), CellType::from("B"), CellType::from("C"));
+    Rule2D { subrules: vec![
+        Rule2DSubrule::new(a, b, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, None),
+        Rule2DSubrule::new(b, c, 0, CountOp::Gt, 1, Neighborhood2D::Moore, c, None, None),
+        Rule2DSubrule::new(c, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, a, None, None),
+    ]}
+}
+
+fn init_cycle(n: usize) -> Vec<CellType> {
+    let (a, b, c) = (CellType::from("A"), CellType::from("B"), CellType::from("C"));
+    (0..n).map(|i| match i % 3 { 0 => a, 1 => b, _ => c }).collect()
+}
+
+/// Multi-threaded stepping must produce the same populations as single-threaded.
+///
+/// Widths are deliberately not multiples of the thread count so the final chunk
+/// is short, and `history_limit` values are chosen so `chunk * history_limit`
+/// alignment differs between them.
+#[test]
+fn parallel_counts_match_serial_1d() {
+    let _guard = THREAD_OVERRIDE_GUARD.lock().unwrap();
+    // Force the work heuristic to split even these small grids, so the
+    // multi-chunk merge path is actually exercised.
+    cella_lib::threads::set_min_work_per_chunk_override(1);
+    for &width in &[10_241usize, 65_537] {
+        for &hist in &[0usize, 3, 7] {
+            cella_lib::threads::set_thread_override(1);
+            let mut serial = Grid1D::new(width, hist, init_cycle(width), three_state_rule_1d());
+            for _ in 0..5 {
+                serial.step();
+                assert_counts_total_1d(&serial, &format!("serial w={width} hl={hist}"));
+            }
+
+            for &threads in &[4usize, 8] {
+                cella_lib::threads::set_thread_override(threads);
+                let mut par = Grid1D::new(width, hist, init_cycle(width), three_state_rule_1d());
+                for _ in 0..5 {
+                    par.step();
+                    assert_counts_total_1d(&par, &format!("par t={threads} w={width} hl={hist}"));
+                }
+                assert_eq!(par.counts_current, serial.counts_current,
+                    "counts_current differs at t={threads}, width={width}, hl={hist}");
+                assert_eq!(par.peak_counts, serial.peak_counts,
+                    "peak_counts differs at t={threads}, width={width}, hl={hist}");
+            }
+        }
+    }
+    cella_lib::threads::clear_min_work_per_chunk_override();
+    cella_lib::threads::clear_thread_override();
+}
+
+#[test]
+fn parallel_counts_match_serial_2d() {
+    let _guard = THREAD_OVERRIDE_GUARD.lock().unwrap();
+    cella_lib::threads::set_min_work_per_chunk_override(1);
+    for &(w, h) in &[(63usize, 63usize), (65, 65), (257, 129)] {
+        for &hist in &[0usize, 3, 7] {
+            cella_lib::threads::set_thread_override(1);
+            let mut serial = Grid2D::new(w, h, hist, init_cycle(w * h), three_state_rule_2d());
+            for _ in 0..5 {
+                serial.step();
+                assert_counts_total_2d(&serial, &format!("serial {w}x{h} hl={hist}"));
+            }
+
+            for &threads in &[4usize, 8] {
+                cella_lib::threads::set_thread_override(threads);
+                let mut par = Grid2D::new(w, h, hist, init_cycle(w * h), three_state_rule_2d());
+                for _ in 0..5 {
+                    par.step();
+                    assert_counts_total_2d(&par, &format!("par t={threads} {w}x{h} hl={hist}"));
+                }
+                assert_eq!(par.counts_current, serial.counts_current,
+                    "counts_current differs at t={threads}, {w}x{h}, hl={hist}");
+                assert_eq!(par.peak_counts, serial.peak_counts,
+                    "peak_counts differs at t={threads}, {w}x{h}, hl={hist}");
+            }
+        }
+    }
+    cella_lib::threads::clear_min_work_per_chunk_override();
+    cella_lib::threads::clear_thread_override();
+}
+
+/// The dominant type is skipped during counting and back-filled by subtraction,
+/// so it has to be re-elected when a growing type overtakes it. Here `Inactive`
+/// starts as the vast majority and `Alive` floods the grid.
+#[test]
+fn dominant_type_switches_when_majority_flips_2d() {
+    let alive = CellType::from("Alive");
+    let inactive = CellType::inactive();
+    // Any cell with at least one Alive neighbor becomes Alive, and Alive stays Alive.
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule::new(alive, alive, 0, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
+        Rule2DSubrule::new(inactive, alive, 1, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
+    ]};
+    let (w, h) = (33usize, 33usize);
+    let mut init = vec![inactive; w * h];
+    init[(h / 2) * w + w / 2] = alive;
+    let mut g = Grid2D::new(w, h, 2, init, rule);
+
+    let mut saw_alive_majority = false;
+    for step in 1..=20 {
+        g.step();
+        assert_counts_total_2d(&g, &format!("flood step {step}"));
+        let n_alive = *g.counts_current.get(&alive.0).unwrap_or(&0);
+        if n_alive * 2 > (w * h) as u64 { saw_alive_majority = true; }
+    }
+    assert!(saw_alive_majority, "Alive never became the majority; test setup is wrong");
+    // Once flooded, every cell is Alive and Inactive must report zero, not a
+    // leftover back-filled remainder.
+    assert_eq!(*g.counts_current.get(&alive.0).unwrap_or(&0), (w * h) as u64);
+    assert_eq!(*g.counts_current.get(&inactive.0).unwrap_or(&0), 0);
+}
+
+// ─── 6. Painting entry point bounds ───
+
+#[test]
+fn transition_state_and_buffer_rejects_out_of_bounds_1d() {
+    let x = CellType::from("X");
+    let rule = Rule1D { subrules: vec![
+        Rule1DSubrule { current_type: x, criteria_type: x, wolfram_code: 30, n: 1, randomness: None, output_type: x },
+    ]};
+    let width = 8usize;
+    let mut g = Grid1D::new(width, 2, vec![CellType::inactive(); width], rule);
+    assert!(g.transition_state_and_buffer(width - 1, &x).is_none(), "last valid index must succeed");
+    // `width` is one past the end: it used to slip past a `>` guard and panic.
+    assert!(g.transition_state_and_buffer(width, &x).is_some(), "idx == width must be rejected");
+    assert!(g.transition_state_and_buffer(width + 5, &x).is_some(), "idx > width must be rejected");
+}
+
+#[test]
+fn transition_state_and_buffer_rejects_out_of_bounds_2d() {
+    let alive = CellType::from("Alive");
+    let rule = Rule2D { subrules: vec![
+        Rule2DSubrule::new(alive, alive, 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
+    ]};
+    let (w, h) = (4usize, 3usize);
+    let total = w * h;
+    let mut g = Grid2D::new(w, h, 2, vec![CellType::inactive(); total], rule);
+    assert!(g.transition_state_and_buffer(total - 1, &alive).is_none(), "last valid index must succeed");
+    assert!(g.transition_state_and_buffer(total, &alive).is_some(), "idx == width*height must be rejected");
+    assert!(g.transition_state_and_buffer(total + 7, &alive).is_some(), "idx > width*height must be rejected");
+}
