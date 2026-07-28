@@ -86,24 +86,22 @@ fn parse_gui_size(args: &[String]) -> Option<(f32, f32)> {
     let mut i = 0usize;
     while i < args.len() {
         let arg = &args[i];
+        let next = args.get(i + 1);
         if let Some(rest) = arg.strip_prefix("--size=") {
             if let Some((w, h)) = parse_wh(rest) { width = Some(w); height = Some(h); }
         } else if arg == "--size" {
-            if i + 1 < args.len() {
-                if let Some((w, h)) = parse_wh(&args[i + 1]) { width = Some(w); height = Some(h); i += 1; }
-            }
+            if let Some((w, h)) = next.and_then(|s| parse_wh(s)) { width = Some(w); height = Some(h); i += 1; }
         } else if let Some(rest) = arg.strip_prefix("--width=") {
             if let Ok(w) = rest.parse::<f32>() { width = Some(w); }
         } else if arg == "--width" {
-            if i + 1 < args.len() {
-                if let Ok(w) = args[i + 1].parse::<f32>() { width = Some(w); i += 1; }
-            }
+            if let Some(Ok(w)) = next.map(|s| s.parse::<f32>()) { width = Some(w); i += 1; }
         } else if let Some(rest) = arg.strip_prefix("--height=") {
             if let Ok(h) = rest.parse::<f32>() { height = Some(h); }
-        } else if arg == "--height" {
-            if i + 1 < args.len() {
-                if let Ok(h) = args[i + 1].parse::<f32>() { height = Some(h); i += 1; }
-            }
+        } else if arg == "--height"
+            && let Some(Ok(h)) = next.map(|s| s.parse::<f32>())
+        {
+            height = Some(h);
+            i += 1;
         }
         i += 1;
     }

@@ -15,26 +15,26 @@ pub fn build_2d_life(width: usize, height: usize, history: usize) -> Grid2D {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-        Rule2DSubrule::new( alive.clone(), alive.clone(), 4,
-            CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(),
+        Rule2DSubrule::new( alive, alive, 4,
+            CountOp::Gt, 1, Neighborhood2D::Moore, inactive,
             None, None),
         // Survival: Alive stays Alive (>=2 Alive neighbors), after overpopulation check
-        Rule2DSubrule::new( alive.clone(), alive.clone(), 2,
-            CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None ),
+        Rule2DSubrule::new( alive, alive, 2,
+            CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None ),
         // Prevent birth unless exactly 3 Alive neighbors
-        Rule2DSubrule::new( inactive.clone(), alive.clone(), 4,
-            CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(),
+        Rule2DSubrule::new( inactive, alive, 4,
+            CountOp::Gt, 1, Neighborhood2D::Moore, inactive,
             None, None),
         // Birth (exactly 3)
-        Rule2DSubrule::new( inactive.clone(), alive.clone(), 3,
-            CountOp::Eq,  1, Neighborhood2D::Moore, alive.clone(),
+        Rule2DSubrule::new( inactive, alive, 3,
+            CountOp::Eq,  1, Neighborhood2D::Moore, alive,
             None, None),
     ]};
     let mut init = vec![CellType::inactive(); width*height];
     // seed a blinker in the middle-ish
     if width >= 3 && height >= 1 {
         let y = height/2; let x = width/2;
-        let set = |x: usize, y: usize, v: &mut Vec<CellType>| v[y*width + x] = alive.clone();
+        let set = |x: usize, y: usize, v: &mut Vec<CellType>| v[y*width + x] = alive;
         if x>0 { set(x-1, y, &mut init); }
         set(x, y, &mut init);
         if x+1<width { set(x+1, y, &mut init); }
@@ -49,12 +49,12 @@ pub fn build_2d_three_state_cycle(width: usize, height: usize, history: usize) -
     let c = CellType::from("C");
     // Rotate when condition always passes (count >= 0). Order matters: transition before survival.
     let rule = Rule2D { subrules: vec![
-        Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None),
-        Rule2DSubrule::new(b.clone(), c.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, c.clone(), None, None),
-        Rule2DSubrule::new(c.clone(), a.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, a.clone(), None, None),
+        Rule2DSubrule::new(a, b, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, None),
+        Rule2DSubrule::new(b, c, 0, CountOp::Gt, 1, Neighborhood2D::Moore, c, None, None),
+        Rule2DSubrule::new(c, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, a, None, None),
     ]};
     let mut init = vec![CellType::inactive(); width*height];
-    for y in 0..height { for x in 0..width { let idx = (x + y) % 3; init[y*width + x] = match idx { 0 => a.clone(), 1 => b.clone(), _ => c.clone() }; } }
+    for y in 0..height { for x in 0..width { let idx = (x + y) % 3; init[y*width + x] = match idx { 0 => a, 1 => b, _ => c }; } }
     Grid2D::new(width, height, history, init, rule)
 }
 
@@ -91,17 +91,17 @@ pub fn demo_life() {
     let inactive = CellType::inactive();
     let rule = Rule2D { subrules: vec![
         // Overpopulation
-        Rule2DSubrule::new(alive.clone(), alive.clone(), 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive.clone(), None, None),
+        Rule2DSubrule::new(alive, alive, 4, CountOp::Gt, 1, Neighborhood2D::Moore, inactive, None, None),
         // Survival
-        Rule2DSubrule::new(alive.clone(), alive.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive.clone(), None, None),
+        Rule2DSubrule::new(alive, alive, 2, CountOp::Gt, 1, Neighborhood2D::Moore, alive, None, None),
         // Birth (exactly 3)
-        Rule2DSubrule::new(inactive.clone(), alive.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive.clone(), None, None),
+        Rule2DSubrule::new(inactive, alive, 3, CountOp::Eq, 1, Neighborhood2D::Moore, alive, None, None),
     ]};
 
     let width = 20usize; let height = 10usize; let hist = 5usize;
     let mut init = vec![CellType::inactive(); width*height];
     // Seed a blinker pattern
-    let set_alive = |x: usize, y: usize, v: &mut Vec<CellType>| { v[y*width + x] = alive.clone(); };
+    let set_alive = |x: usize, y: usize, v: &mut Vec<CellType>| { v[y*width + x] = alive; };
     set_alive(5, 5, &mut init);
     set_alive(6, 5, &mut init);
     set_alive(7, 5, &mut init);
@@ -184,15 +184,15 @@ pub fn build_2d_straightline(width: usize, height: usize, history: usize) -> Gri
     let b = CellType::from("B");
     let rule = Rule2D { subrules: vec![
         // Any A with at least 1 B in straight cardinal directions within range 2 becomes B
-        Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 2, Neighborhood2D::StraightLine, b.clone(), None, None),
+        Rule2DSubrule::new(a, b, 1, CountOp::Gt, 2, Neighborhood2D::StraightLine, b, None, None),
         // Persistence: B stays B with at least 1 B straight neighbor (range 1)
-        Rule2DSubrule::new(b.clone(), b.clone(), 1, CountOp::Gt, 1, Neighborhood2D::StraightLine, b.clone(), None, None),
+        Rule2DSubrule::new(b, b, 1, CountOp::Gt, 1, Neighborhood2D::StraightLine, b, None, None),
     ]};
-    let mut init = vec![a.clone(); width*height];
+    let mut init = vec![a; width*height];
     // Seed a small cross of B near the center
     if width > 2 && height > 2 {
         let cx = width/2; let cy = height/2;
-        let mut set = |x: usize, y: usize| init[y*width + x] = b.clone();
+        let mut set = |x: usize, y: usize| init[y*width + x] = b;
         set(cx, cy);
         if cx > 0 { set(cx-1, cy); }
         if cx + 1 < width { set(cx+1, cy); }
