@@ -314,9 +314,7 @@ mod more_tests {
                     for (sx, sy) in [(-1i32,1),(-1,-1),(1,-1)] {
                         assert_eq!(
                             neighborhood_contains(dx * sx, dy * sy, range, Neighborhood2D::Knight),
-                            v,
-                            "symmetry failure at ({},{}) vs ({},{}) range={}",
-                            dx, dy, dx * sx, dy * sy, range
+                            v
                         );
                     }
                     // Transpose symmetry: (dx,dy) reachable iff (dy,dx) reachable
@@ -377,7 +375,7 @@ mod more_tests {
         }
         assert_eq!(g.step, 10, "grid must have advanced exactly 10 steps");
         // Grid must still have valid dimensions
-        assert_eq!(g.cells.len(), w * h, "cell count must remain {}x{}={}", w, h, w * h);
+        assert_eq!(g.cells.len(), w * h);
 
         // --- 4. range=3 reachability: (0,0) always excluded, known 3-hop cells included ---
         assert!(!neighborhood_contains(0, 0, 3, Neighborhood2D::Knight));
@@ -533,23 +531,18 @@ mod more_tests {
         ]};
         let cfg = CellaConfig::D2(Config2D { width: w, height: h, history_limit: hist, initial: init, rule: rule.clone() });
         let s = serde_json::to_string(&cfg).unwrap();
-        let cfg2: CellaConfig = serde_json::from_str(&s).unwrap();
-        match cfg2 {
-            CellaConfig::D2(c2) => {
-                assert_eq!(c2.width, w);
-                assert_eq!(c2.height, h);
-                assert_eq!(c2.history_limit, hist);
-                assert_eq!(c2.initial.len(), w*h);
-                assert_eq!(c2.rule.subrules.len(), rule.subrules.len());
-                // check that the rules are eq
-                for (i, r) in c2.rule.subrules.iter().enumerate() {
-                    assert_eq!(*r, *rule.subrules.get(i).expect("rule subrules should deserialize"));
-                }
-                let built = CellaConfig::D2(c2.clone()).build_grid2d();
-                assert!(built.is_some());
-            }
-            _ => panic!("expected 2d config"),
+        let c2: Config2D = serde_json::from_str(&s).unwrap();
+        assert_eq!(c2.width, w);
+        assert_eq!(c2.height, h);
+        assert_eq!(c2.history_limit, hist);
+        assert_eq!(c2.initial.len(), w*h);
+        assert_eq!(c2.rule.subrules.len(), rule.subrules.len());
+        // check that the rules are eq
+        for (i, r) in c2.rule.subrules.iter().enumerate() {
+            assert_eq!(*r, *rule.subrules.get(i).expect("rule subrules should deserialize"));
         }
+        let built = CellaConfig::D2(c2.clone()).build_grid2d();
+        assert!(built.is_some());
     }
 
     #[test]

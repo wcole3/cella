@@ -147,3 +147,54 @@ fn convert_map_spur_to_string(counts_current: &HashMap<Spur, u64>, peak_counts: 
     (new_counts, new_peak_counts)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_state_rebuilds_counts_when_serialized_maps_are_empty() {
+        let a = CellType::from("A");
+        let rule = Rule1D { subrules: vec![] };
+        let mut g = Grid1D::new(3, 2, vec![a.clone(), a.clone(), CellType::inactive()], rule);
+        g.counts_current.clear();
+        g.peak_counts.clear();
+
+        let state = GridState::from_grid1d(&g);
+        let restored = Grid1D::from_state(&state).expect("restore 1D grid");
+        assert_eq!(restored.counts_current.get(&a.0), Some(&2));
+        assert_eq!(restored.peak_counts.get(&a.0), Some(&2));
+    }
+
+    #[test]
+    fn from_state_rebuilds_counts_when_serialized_maps_are_empty_2d() {
+        let a = CellType::from("A");
+        let rule = Rule2D { subrules: vec![] };
+        let mut g = Grid2D::new(2, 2, 2, vec![a.clone(), a.clone(), CellType::inactive(), CellType::inactive()], rule);
+        g.counts_current.clear();
+        g.peak_counts.clear();
+
+        let state = GridState::from_grid2d(&g);
+        let restored = Grid2D::from_state(&state).expect("restore 2D grid");
+        assert_eq!(restored.counts_current.get(&a.0), Some(&2));
+        assert_eq!(restored.peak_counts.get(&a.0), Some(&2));
+    }
+
+    #[test]
+    fn json_helpers_and_mismatched_from_state_paths_are_covered() {
+        let a = CellType::from("A");
+        let g2 = Grid2D::new(1, 1, 0, vec![a], Rule2D { subrules: vec![] });
+        let pretty = GridState::from_grid2d(&g2).to_json_pretty();
+        assert!(pretty.contains("D2"));
+
+        let via_fn = grid2d_to_json(&g2);
+        assert!(via_fn.contains("D2"));
+
+        let s2 = GridState::from_grid2d(&g2);
+        assert!(Grid1D::from_state(&s2).is_none());
+
+        let g1 = Grid1D::new(1, 0, vec![a], Rule1D { subrules: vec![] });
+        let s1 = GridState::from_grid1d(&g1);
+        assert!(Grid2D::from_state(&s1).is_none());
+    }
+}
+

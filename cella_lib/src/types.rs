@@ -91,3 +91,30 @@ pub struct CellState {
     pub current: CellType,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_string_and_debug_are_usable() {
+        let ct = CellType::from(String::from("DebugType"));
+        assert_eq!(ct.as_str(), "DebugType");
+        let dbg = format!("{:?}", ct);
+        assert!(dbg.contains("CellType"));
+        assert!(dbg.contains("DebugType"));
+    }
+
+    #[test]
+    fn default_and_display_are_usable() {
+        let ct = CellType::default();
+        assert_eq!(ct, CellType::inactive());
+        assert_eq!(format!("{}", ct), INACTIVE);
+    }
+
+    #[test]
+    fn deserialize_rejects_non_string() {
+        let bad = serde_json::from_str::<CellType>("123");
+        assert!(bad.is_err());
+    }
+}
+

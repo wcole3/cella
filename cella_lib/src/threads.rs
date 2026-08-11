@@ -50,6 +50,13 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
     None
 }
 
+fn resolve_thread_count_uncached() -> usize {
+    if let Some(path) = find_properties_file() {
+        if let Some(n) = parse_threads_from_props(&path) { return n; }
+    }
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
 /// Get the configured thread count for parallel stepping.
 /// 
 /// This first honors a process-local override (used by tests/benchmarks),
@@ -57,12 +64,7 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
 pub fn thread_count() -> usize {
     let overridden = THREAD_OVERRIDE.load(Ordering::Relaxed);
     if overridden != 0 { return overridden; }
-    *THREADS.get_or_init(|| {
-        if let Some(path) = find_properties_file() {
-            if let Some(n) = parse_threads_from_props(&path) { return n; }
-        }
-        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
-    })
+    *THREADS.get_or_init(resolve_thread_count_uncached)
 }
 
 /// Set a process-local override thread count (>=1) used by `thread_count()`.
@@ -140,3 +142,122 @@ pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
     guard.push((n, built));
     built
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn parse_threads_rejects_nonpositive_and_invalid_values() {
+        let _guard = test_lock().lock().unwrap();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("cella_threads_{}_bad.properties", std::process::id()));
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "threads=0").unwrap();
+            writeln!(file, "threads=bad").unwrap();
+        }
+
+        assert_eq!(parse_threads_from_props(&path), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn parse_threads_accepts_valid_value() {
+        let _guard = test_lock().lock().unwrap();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("cella_threads_{}_good.properties", std::process::id()));
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "threads=4").unwrap();
+        }
+
+        assert_eq!(parse_threads_from_props(&path), Some(4));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn find_properties_and_parse_missing_key_paths_are_covered() {
+        let _guard = test_lock().lock().unwrap();
+        let base = std::env::temp_dir().join(format!("cella_no_props_{}", std::process::id()));
+        let deep = base.join("a").join("b").join("c").join("d").join("e");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let old = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&deep).unwrap();
+        assert!(find_properties_file().is_none());
+        let fallback = resolve_thread_count_uncached();
+        assert!(fallback >= 1);
+        std::env::set_current_dir(old).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+
+        let path = std::env::temp_dir().join(format!("cella_threads_{}_nokey.properties", std::process::id()));
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "workers=8").unwrap();
+            writeln!(file, "threads").unwrap();
+        }
+        assert_eq!(parse_threads_from_props(&path), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn override_chunks_and_pool_paths_are_covered() {
+        let _guard = test_lock().lock().unwrap();
+
+        let baseline = thread_count();
+        assert!(baseline >= 1);
+
+        set_thread_override(3);
+        assert_eq!(thread_count(), 3);
+
+        set_min_work_per_chunk_override(2);
+        assert_eq!(chunks_for_work(1), 1);
+        assert_eq!(chunks_for_work(8), 3);
+
+        clear_min_work_per_chunk_override();
+        assert!(chunks_for_work(MIN_WORK_PER_CHUNK) >= 1);
+
+        let p1 = pool(2) as *const _;
+        let p2 = pool(2) as *const _;
+        assert_eq!(p1, p2);
+
+        clear_thread_override();
+    }
+
+    #[test]
+    fn find_properties_and_parse_error_and_success_edges() {
+        let _guard = test_lock().lock().unwrap();
+
+        // At filesystem root, `pop()` returns false and the search loop exits.
+        let old = std::env::current_dir().unwrap();
+        std::env::set_current_dir("/").unwrap();
+        let _ = find_properties_file();
+        std::env::set_current_dir(old).unwrap();
+
+        // Missing file path should fail to read and return None.
+        let missing = std::env::temp_dir().join("cella_missing_threads.properties");
+        assert_eq!(parse_threads_from_props(&missing), None);
+
+        // Ensure uncached resolver can return a configured value from discovered properties.
+        let base = std::env::temp_dir().join(format!("cella_props_ok_{}", std::process::id()));
+        let deep = base.join("x").join("y");
+        std::fs::create_dir_all(&deep).unwrap();
+        let props = base.join("cella.properties");
+        std::fs::write(&props, "threads=3\n").unwrap();
+        let old2 = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&deep).unwrap();
+        assert_eq!(resolve_thread_count_uncached(), 3);
+        std::env::set_current_dir(old2).unwrap();
+        let _ = std::fs::remove_file(props);
+        let _ = std::fs::remove_dir_all(base);
+    }
+}
+

@@ -154,16 +154,27 @@ pub fn neighborhood_contains(dx: i32, dy: i32, range: i32, neighborhood: Neighbo
 pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> Vec<(i32, i32)> {
     let mut set = HashSet::new();
     match neighborhood {
-        Neighborhood2D::Moore | Neighborhood2D::VonNeumann | Neighborhood2D::Langton => {
+        Neighborhood2D::Moore => {
             for dx in -n..=n {
                 for dy in -n..=n {
                     if dx == 0 && dy == 0 { continue; }
-                    match neighborhood {
-                        Neighborhood2D::Moore => {set.insert((dx, dy));}
-                        Neighborhood2D::VonNeumann => {if dx.abs() + dy.abs() <= n { set.insert((dx, dy)); }}
-                        Neighborhood2D::Langton => {if dx.abs() == dy.abs() && dx.abs() <= n { set.insert((dx, dy)); }}
-                        _ => {}
-                    }
+                    set.insert((dx, dy));
+                }
+            }
+        },
+        Neighborhood2D::VonNeumann => {
+            for dx in -n..=n {
+                for dy in -n..=n {
+                    if dx == 0 && dy == 0 { continue; }
+                    if dx.abs() + dy.abs() <= n { set.insert((dx, dy)); }
+                }
+            }
+        },
+        Neighborhood2D::Langton => {
+            for dx in -n..=n {
+                for dy in -n..=n {
+                    if dx == 0 && dy == 0 { continue; }
+                    if dx.abs() == dy.abs() && dx.abs() <= n { set.insert((dx, dy)); }
                 }
             }
         },
@@ -484,3 +495,212 @@ impl Rule2DPlan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{Error as DeError, StrDeserializer, U64Deserializer, U128Deserializer};
+
+    #[test]
+    fn type_counter_merge_combines_existing_and_new_entries() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let c = CellType::from("C");
+
+        let mut left = TypeCounter::new();
+        left.add(a);
+        left.add(a);
+        left.add(b);
+
+        let mut right = TypeCounter::new();
+        right.add(a);
+        right.add(c);
+        right.add(c);
+
+        left.merge(&right);
+
+        let mut seen = std::collections::HashMap::new();
+        for (t, n) in left.iter() {
+            seen.insert(t.as_str().to_string(), *n);
+        }
+        assert_eq!(seen.get("A"), Some(&3));
+        assert_eq!(seen.get("B"), Some(&1));
+        assert_eq!(seen.get("C"), Some(&2));
+    }
+
+    #[test]
+    fn type_counter_default_and_add_work() {
+        let mut c = TypeCounter::default();
+        let a = CellType::from("A");
+        c.add(a);
+        c.add(a);
+        let v: Vec<u64> = c.iter().map(|(_, n)| *n).collect();
+        assert_eq!(v, vec![2]);
+    }
+
+    #[test]
+    fn serde_u128_accepts_string_u64_and_u128_inputs() {
+        assert_eq!(super::serde_u128::deserialize(StrDeserializer::<DeError>::new("123")).unwrap(), 123u128);
+        assert_eq!(super::serde_u128::deserialize(U64Deserializer::<DeError>::new(123)).unwrap(), 123u128);
+        assert_eq!(super::serde_u128::deserialize(U128Deserializer::<DeError>::new(123)).unwrap(), 123u128);
+    }
+
+    #[test]
+    fn serde_u128_rejects_invalid_inputs() {
+        let bad = super::serde_u128::deserialize(StrDeserializer::<DeError>::new("not-a-number"));
+        assert!(bad.is_err());
+
+        let bad_ty = super::serde_u128::deserialize(serde::de::value::BoolDeserializer::<DeError>::new(true));
+        assert!(bad_ty.is_err());
+    }
+
+    #[test]
+    fn eval_condition_covers_limit_variants() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        let gt = Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(4));
+        assert!(gt.eval_condition(2));
+        assert!(gt.eval_condition(4));
+        assert!(!gt.eval_condition(5));
+
+        let lt = Rule2DSubrule::new(a.clone(), b.clone(), 4, CountOp::Lt, 1, Neighborhood2D::Moore, b.clone(), None, Some(2));
+        assert!(lt.eval_condition(2));
+        assert!(lt.eval_condition(4));
+        assert!(!lt.eval_condition(1));
+
+        let eq_with_limit = Rule2DSubrule::new(a, b, 3, CountOp::Eq, 1, Neighborhood2D::Moore, CellType::from("B"), None, Some(1));
+        assert!(!eq_with_limit.eval_condition(3));
+    }
+
+    #[test]
+    fn rule2d_validate_covers_limit_bounds() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        let valid_gt = Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(5));
+        assert!(valid_gt.validate().is_ok());
+
+        let invalid_gt = Rule2DSubrule::new(a.clone(), b.clone(), 5, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(4));
+        assert_eq!(invalid_gt.validate(), Err(RuleError::InvalidRange2D));
+
+        let valid_lt = Rule2DSubrule::new(a.clone(), b.clone(), 5, CountOp::Lt, 1, Neighborhood2D::Moore, b.clone(), None, Some(2));
+        assert!(valid_lt.validate().is_ok());
+
+        let invalid_lt = Rule2DSubrule::new(a, b, 5, CountOp::Lt, 1, Neighborhood2D::Moore, CellType::from("B"), None, Some(6));
+        assert_eq!(invalid_lt.validate(), Err(RuleError::InvalidRange2D));
+    }
+
+    #[test]
+    fn rule_applies_and_range_helpers_are_covered() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let sub = Rule1DSubrule {
+            wolfram_code: 1u128 << 7,
+            randomness: None,
+            n: 1,
+            output_type: b,
+            current_type: a,
+            criteria_type: a,
+        };
+        assert!(sub.applies(&[a, a, a]));
+        assert!(!sub.applies(&[a, b, a]));
+
+        let r1 = Rule1D { subrules: vec![sub.clone()] };
+        assert!(r1.validate().is_ok());
+        assert_eq!(r1.n_max(), 1);
+
+        let r2 = Rule2D {
+            subrules: vec![
+                Rule2DSubrule::new(a, b, 1, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, None),
+                Rule2DSubrule::new(CellType::from("B"), CellType::from("A"), 1, CountOp::Gt, 3, Neighborhood2D::Moore, CellType::from("A"), None, None),
+            ],
+        };
+        assert_eq!(r2.range_max(), 3);
+        assert!(r2.validate().is_ok());
+    }
+
+    #[test]
+    fn rule1d_validate_covers_n3_and_invalid_wolfram_code() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        // n=3 skips the bounded-code check (all u128 values are valid).
+        let n3 = Rule1DSubrule {
+            current_type: a,
+            criteria_type: a,
+            wolfram_code: u128::MAX,
+            n: 3,
+            randomness: None,
+            output_type: b,
+        };
+        assert!(n3.validate().is_ok());
+
+        // n=1 has 2^(2n+1)=8 patterns, so max valid wolfram code is < 2^8.
+        let bad_code = Rule1DSubrule {
+            wolfram_code: 1u128 << 8,
+            n: 1,
+            ..n3
+        };
+        assert!(bad_code.validate().is_err());
+    }
+
+    #[test]
+    fn eval_condition_covers_lt_without_limit() {
+        let a = CellType::from("A");
+        let sub = Rule2DSubrule::new(
+            a,
+            a,
+            2,
+            CountOp::Lt,
+            1,
+            Neighborhood2D::Moore,
+            a,
+            None,
+            None,
+        );
+        assert!(sub.eval_condition(2));
+        assert!(sub.eval_condition(1));
+        assert!(!sub.eval_condition(3));
+    }
+
+    #[test]
+    fn validate_and_deserialize_error_paths_are_exercised() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        let bad_1d = Rule1DSubrule {
+            current_type: a,
+            criteria_type: b,
+            wolfram_code: 0,
+            n: 0,
+            randomness: None,
+            output_type: b,
+        };
+        assert!(Rule1D { subrules: vec![bad_1d] }.validate().is_err());
+
+        let bad_rand = Rule2DSubrule::new(a, b, 1, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(2.0), None);
+        assert!(bad_rand.validate().is_err());
+
+        let bad_eq_limit = Rule2DSubrule::new(a, b, 1, CountOp::Eq, 1, Neighborhood2D::Moore, b, None, Some(0));
+        assert!(bad_eq_limit.validate().is_err());
+
+        let bad_gt_limit = Rule2DSubrule::new(a, b, 2, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, Some(1));
+        assert!(bad_gt_limit.validate().is_err());
+
+        let bad_lt_limit = Rule2DSubrule::new(a, b, 1, CountOp::Lt, 1, Neighborhood2D::Moore, b, None, Some(2));
+        assert!(bad_lt_limit.validate().is_err());
+
+        let bad_rule = Rule2D { subrules: vec![bad_rand] };
+        assert!(bad_rule.validate().is_err());
+
+        let bad_json = "{\"subrules\":\"nope\"}";
+        let deser: Result<Rule2D, _> = serde_json::from_str(bad_json);
+        assert!(deser.is_err());
+
+        let bad_subrule_json = "{\"current_type\":\"A\"}";
+        let deser_sub: Result<Rule2DSubrule, _> = serde_json::from_str(bad_subrule_json);
+        assert!(deser_sub.is_err());
+    }
+}
+

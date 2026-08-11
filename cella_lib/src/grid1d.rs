@@ -431,3 +431,243 @@ impl Grid1D {
         }).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threads::{clear_min_work_per_chunk_override, clear_thread_override, set_min_work_per_chunk_override, set_thread_override};
+    use serde_json::json;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn deserialize_and_debug_paths_work() {
+        let inactive = CellType::inactive();
+        let a = CellType::from("A");
+        let counts: std::collections::HashMap<Spur, u64> = [(a.0, 2u64), (inactive.0, 1u64)].into_iter().collect();
+        let peaks = counts.clone();
+
+        let v = json!({
+            "width": 3,
+            "history_limit": 2,
+            "cell_states": [
+                {"history": ["Inactive"], "age_in_state": 1, "history_limit": 2, "current": "A"},
+                {"history": ["A"], "age_in_state": 0, "history_limit": 2, "current": "A"},
+                {"history": [], "age_in_state": 2, "history_limit": 2, "current": "Inactive"}
+            ],
+            "step": 7,
+            "rule": {"subrules": []},
+            "counts_current": serde_json::to_value(counts).unwrap(),
+            "peak_counts": serde_json::to_value(peaks).unwrap(),
+            "inactive": "Inactive"
+        });
+
+        let g: Grid1D = serde_json::from_value(v).expect("deserialize Grid1D");
+        assert_eq!(g.width, 3);
+        assert_eq!(g.step, 7);
+        assert_eq!(g.cell_type(0), a);
+        let dbg = format!("{:?}", g);
+        assert!(dbg.contains("Grid1D"));
+    }
+
+    #[test]
+    fn transition_updates_age_and_history_count_branches() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let rule = Rule1D { subrules: vec![] };
+        let mut g = Grid1D::new(1, 1, vec![a], rule);
+
+        assert!(g.transition_state_and_buffer(0, &a).is_none());
+        assert_eq!(g.cell_age(0), 1);
+        assert_eq!(g.history_counts[0], 1);
+
+        // With history_limit=1, count is already full: the c < hl branch is now false.
+        assert!(g.transition_state_and_buffer(0, &b).is_none());
+        assert_eq!(g.cell_age(0), 0);
+        assert_eq!(g.history_counts[0], 1);
+    }
+
+    #[test]
+    fn randomness_one_skips_rule_for_interior_and_edge_cells() {
+        let x = CellType::from("X");
+        let y = CellType::from("Y");
+
+        let sub = Rule1DSubrule {
+            current_type: x,
+            criteria_type: x,
+            wolfram_code: u128::MAX,
+            n: 1,
+            randomness: Some(1.0),
+            output_type: y,
+        };
+        let rule = Rule1D { subrules: vec![sub] };
+
+        // width=3: middle cell takes interior path
+        let mut interior = Grid1D::new(3, 0, vec![x, x, x], rule.clone());
+        interior.step();
+        assert_eq!(interior.cell_type(1), CellType::inactive());
+
+        // width=1: only cell takes edge path
+        let mut edge = Grid1D::new(1, 0, vec![x], rule);
+        edge.step();
+        assert_eq!(edge.cell_type(0), CellType::inactive());
+    }
+
+    #[test]
+    fn to_cell_states_preserves_history_fifo() {
+        let a = CellType::from("A");
+        let rule = Rule1D { subrules: vec![] };
+        let mut g = Grid1D::new(1, 2, vec![a], rule);
+        g.transition_state_and_buffer(0, &CellType::inactive());
+        let states = g.to_cell_states();
+        assert_eq!(states.len(), 1);
+        let hist: VecDeque<CellType> = states[0].history.clone();
+        assert_eq!(hist.len(), 1);
+    }
+
+    #[test]
+    fn transition_path_without_history_limit_is_exercised() {
+        let a = CellType::from("A");
+        let mut g = Grid1D::new(1, 0, vec![a], Rule1D { subrules: vec![] });
+        assert!(g.transition_state_and_buffer(0, &CellType::inactive()).is_none());
+        assert!(g.history_data.is_empty());
+    }
+
+    #[test]
+    fn invalid_n_and_rng_none_paths_are_exercised() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let cells = vec![a, a, a];
+
+        let invalid_n = Rule1DSubrule {
+            current_type: a,
+            criteria_type: a,
+            wolfram_code: u128::MAX,
+            n: 4,
+            randomness: None,
+            output_type: b,
+        };
+        assert!(!Grid1D::applies_interior(&invalid_n, &cells, 1, a));
+
+        let random_sub = Rule1DSubrule { randomness: Some(0.5), n: 1, ..invalid_n.clone() };
+        let rule = Rule1D { subrules: vec![random_sub] };
+        // Call internals directly with rng=None to cover that branch.
+        let got_interior = Grid1D::next_type_interior(&cells, &rule, CellType::inactive(), 1, None);
+        assert_eq!(got_interior, b);
+        let got_edge = Grid1D::next_type_edge(&cells, &rule, CellType::inactive(), cells.len(), 0, None);
+        assert_eq!(got_edge, b);
+    }
+
+    #[test]
+    fn zero_history_accessors_and_deserialize_fallback_paths() {
+        let inactive = CellType::inactive();
+        let a = CellType::from("A");
+        let mut g = Grid1D::new(2, 0, vec![a, inactive], Rule1D { subrules: vec![] });
+        assert!(g.cell_history(0).is_empty());
+        assert!(g.cell_history(1).is_empty());
+
+        let v = serde_json::json!({
+            "width": 2,
+            "history_limit": 0,
+            "cell_states": [
+                {"history": [], "age_in_state": 0, "history_limit": 0, "current": "A"},
+                {"history": [], "age_in_state": 0, "history_limit": 0, "current": "Inactive"}
+            ],
+            "step": 0,
+            "rule": {"subrules": []},
+            "counts_current": {},
+            "peak_counts": {},
+            "inactive": "Inactive"
+        });
+        let deser: Grid1D = serde_json::from_value(v).expect("deserialize with empty maps");
+        assert_eq!(deser.dominant_type, CellType::inactive());
+
+        let bad = serde_json::from_str::<Grid1D>("{\"width\":\"nope\"}");
+        assert!(bad.is_err());
+
+        // Force rng<r continue path in next_type_edge with certainty.
+        let mut rng = SmallRng::seed_from_u64(1);
+        let sub = Rule1DSubrule {
+            current_type: CellType::from("A"),
+            criteria_type: CellType::from("A"),
+            wolfram_code: u128::MAX,
+            n: 1,
+            randomness: Some(1.0),
+            output_type: CellType::from("B"),
+        };
+        let out = Grid1D::next_type_edge(&[CellType::from("A")], &Rule1D { subrules: vec![sub] }, CellType::inactive(), 1, 0, Some(&mut rng));
+        assert_eq!(out, CellType::inactive());
+
+        // Also cover the n<1 rejection in applies_edge.
+        let invalid = Rule1DSubrule { n: 0, randomness: None, ..Rule1DSubrule {
+            current_type: CellType::from("A"),
+            criteria_type: CellType::from("A"),
+            wolfram_code: 1,
+            n: 1,
+            randomness: None,
+            output_type: CellType::from("B"),
+        }};
+        assert!(!Grid1D::applies_edge(&invalid, &[CellType::from("A")], CellType::inactive(), 1, 0));
+        g.step();
+    }
+
+    #[test]
+    fn out_of_bounds_n3_history_full_and_parallel_step_paths() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        let sub_n3 = Rule1DSubrule {
+            current_type: a,
+            criteria_type: a,
+            wolfram_code: u128::MAX,
+            n: 3,
+            randomness: None,
+            output_type: b,
+        };
+        let cells = vec![a; 7];
+        assert!(Grid1D::applies_interior(&sub_n3, &cells, 3, a));
+
+        let mut g_hist = Grid1D::new(1, 2, vec![a], Rule1D { subrules: vec![] });
+        assert!(g_hist.transition_state_and_buffer(99, &b).is_some());
+        assert!(g_hist.transition_state_and_buffer(0, &b).is_none());
+        assert!(g_hist.transition_state_and_buffer(0, &a).is_none());
+        let hist = g_hist.cell_history(0);
+        assert_eq!(hist.len(), 2);
+
+        set_thread_override(2);
+        set_min_work_per_chunk_override(1);
+        let mut g_parallel = Grid1D::new(8, 1, vec![a; 8], Rule1D { subrules: vec![] });
+        g_parallel.step();
+        clear_min_work_per_chunk_override();
+        clear_thread_override();
+    }
+
+    #[test]
+    fn empty_initial_uses_inactive_dominant_and_rng_continue_interior() {
+        let g_empty = Grid1D::new(0, 0, vec![], Rule1D { subrules: vec![] });
+        assert_eq!(g_empty.dominant_type, CellType::inactive());
+
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let sub = Rule1DSubrule {
+            current_type: a,
+            criteria_type: a,
+            wolfram_code: u128::MAX,
+            n: 1,
+            randomness: Some(1.0),
+            output_type: b,
+        };
+        let rule = Rule1D { subrules: vec![sub] };
+        let cells = vec![a, a, a];
+        let mut rng = SmallRng::seed_from_u64(123);
+        let out = Grid1D::next_type_interior(&cells, &rule, CellType::inactive(), 1, Some(&mut rng));
+        assert_eq!(out, CellType::inactive());
+
+        // Use r>1 to make the continue branch deterministic for internal-path coverage.
+        let sub_force = Rule1DSubrule { randomness: Some(2.0), ..rule.subrules[0].clone() };
+        let force_rule = Rule1D { subrules: vec![sub_force] };
+        let mut rng2 = SmallRng::seed_from_u64(7);
+        let out2 = Grid1D::next_type_interior(&cells, &force_rule, CellType::inactive(), 1, Some(&mut rng2));
+        assert_eq!(out2, CellType::inactive());
+    }
+}
+

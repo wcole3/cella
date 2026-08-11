@@ -126,3 +126,86 @@ impl CellaConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn build_grid_rejects_mismatched_initial_lengths() {
+        let rule1 = Rule1D { subrules: vec![] };
+        let cfg1 = CellaConfig::D1(Config1D {
+            width: 3,
+            history_limit: 1,
+            initial: vec!["A".to_string(), "B".to_string()],
+            rule: rule1,
+        });
+        assert!(cfg1.build_grid1d().is_none());
+
+        let rule2 = Rule2D { subrules: vec![] };
+        let cfg2 = CellaConfig::D2(Config2D {
+            width: 2,
+            height: 2,
+            history_limit: 1,
+            initial: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            rule: rule2,
+        });
+        assert!(cfg2.build_grid2d().is_none());
+    }
+
+    #[test]
+    fn file_roundtrip_and_build_grid_success_paths() {
+        let a = "A".to_string();
+        let b = "B".to_string();
+
+        let cfg1 = CellaConfig::D1(Config1D {
+            width: 2,
+            history_limit: 1,
+            initial: vec![a.clone(), b.clone()],
+            rule: Rule1D { subrules: vec![] },
+        });
+        assert!(cfg1.build_grid1d().is_some());
+        assert!(cfg1.build_grid2d().is_none());
+
+        let cfg2 = CellaConfig::D2(Config2D {
+            width: 1,
+            height: 2,
+            history_limit: 1,
+            initial: vec![a, b],
+            rule: Rule2D { subrules: vec![] },
+        });
+        assert!(cfg2.build_grid2d().is_some());
+        assert!(cfg2.build_grid1d().is_none());
+
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("cella_cfg_{stamp}.json"));
+        cfg2.to_file_pretty(&path).expect("write config");
+        let loaded = CellaConfig::from_file(&path).expect("read config");
+        assert!(matches!(loaded, CellaConfig::D2(_)));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn file_io_error_paths_are_covered() {
+        let missing = std::env::temp_dir().join("cella_missing_config_hopefully.json");
+        assert!(CellaConfig::from_file(&missing).is_err());
+
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let bad_path = std::env::temp_dir().join(format!("cella_bad_cfg_{stamp}.json"));
+        std::fs::write(&bad_path, "{not json").unwrap();
+        assert!(CellaConfig::from_file(&bad_path).is_err());
+        let _ = std::fs::remove_file(&bad_path);
+
+        let cfg = CellaConfig::D1(Config1D {
+            width: 1,
+            history_limit: 0,
+            initial: vec!["Inactive".to_string()],
+            rule: Rule1D { subrules: vec![] },
+        });
+        // Writing to a directory path fails, covering fs::write error propagation.
+        let dir_path = std::env::temp_dir();
+        assert!(cfg.to_file_pretty(dir_path).is_err());
+    }
+}
+

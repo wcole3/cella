@@ -62,3 +62,63 @@ pub(crate) fn split_chunks<'a>(
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::CellType;
+
+    #[test]
+    fn split_chunks_handles_zero_history_limit() {
+        let mut next_cells = vec![CellType::from("A"); 5];
+        let mut ages = vec![0u32; 5];
+        let mut history_data: Vec<CellType> = Vec::new();
+        let mut history_heads: Vec<u8> = Vec::new();
+        let mut history_counts: Vec<u8> = Vec::new();
+
+        let chunks = split_chunks(
+            &mut next_cells,
+            &mut ages,
+            &mut history_data,
+            &mut history_heads,
+            &mut history_counts,
+            0,
+            2,
+        );
+
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].start, 0);
+        assert_eq!(chunks[0].next_cells.len(), 2);
+        assert!(chunks[0].history_data.is_empty());
+        assert!(chunks[0].history_heads.is_empty());
+        assert!(chunks[0].history_counts.is_empty());
+    }
+
+    #[test]
+    fn split_chunks_assigns_history_slices_when_enabled() {
+        let mut next_cells = vec![CellType::from("A"); 4];
+        let mut ages = vec![0u32; 4];
+        let mut history_data = vec![CellType::from("A"); 8];
+        let mut history_heads = vec![0u8; 4];
+        let mut history_counts = vec![0u8; 4];
+
+        let chunks = split_chunks(
+            &mut next_cells,
+            &mut ages,
+            &mut history_data,
+            &mut history_heads,
+            &mut history_counts,
+            2,
+            3,
+        );
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].history_data.len(), 6);
+        assert_eq!(chunks[0].history_heads.len(), 3);
+        assert_eq!(chunks[0].history_counts.len(), 3);
+        assert_eq!(chunks[1].start, 3);
+    }
+
+    // TODO add tests with heterogeneous cells and test chunks get correct history split
+}
+

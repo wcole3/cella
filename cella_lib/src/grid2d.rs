@@ -426,3 +426,172 @@ impl Grid2D {
         }).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::{CountOp, Neighborhood2D, Rule2DSubrule};
+    use crate::threads::{clear_min_work_per_chunk_override, clear_thread_override, set_min_work_per_chunk_override, set_thread_override};
+    use serde_json::json;
+
+    #[test]
+    fn deserialize_and_debug_paths_work() {
+        let inactive = CellType::inactive();
+        let a = CellType::from("A");
+        let counts: std::collections::HashMap<Spur, u64> = [(a.0, 3u64), (inactive.0, 1u64)].into_iter().collect();
+        let peaks = counts.clone();
+
+        let v = json!({
+            "width": 2,
+            "height": 2,
+            "history_limit": 2,
+            "cell_states": [
+                {"history": ["Inactive"], "age_in_state": 1, "history_limit": 2, "current": "A"},
+                {"history": ["A"], "age_in_state": 0, "history_limit": 2, "current": "A"},
+                {"history": [], "age_in_state": 2, "history_limit": 2, "current": "A"},
+                {"history": ["A"], "age_in_state": 0, "history_limit": 2, "current": "Inactive"}
+            ],
+            "step": 3,
+            "rule": {"subrules": []},
+            "counts_current": serde_json::to_value(counts).unwrap(),
+            "peak_counts": serde_json::to_value(peaks).unwrap(),
+            "inactive": "Inactive"
+        });
+
+        let g: Grid2D = serde_json::from_value(v).expect("deserialize Grid2D");
+        assert_eq!(g.width, 2);
+        assert_eq!(g.height, 2);
+        assert_eq!(g.step, 3);
+        let dbg = format!("{:?}", g);
+        assert!(dbg.contains("Grid2D"));
+    }
+
+    #[test]
+    fn transition_updates_age_and_history_count_branches() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let rule = Rule2D { subrules: vec![] };
+        let mut g = Grid2D::new(1, 1, 1, vec![a], rule);
+
+        assert!(g.transition_state_and_buffer(0, &a).is_none());
+        assert_eq!(g.cell_age(0), 1);
+        assert_eq!(g.history_counts[0], 1);
+
+        assert!(g.transition_state_and_buffer(0, &b).is_none());
+        assert_eq!(g.cell_age(0), 0);
+        assert_eq!(g.history_counts[0], 1);
+    }
+
+    #[test]
+    fn randomness_one_skips_rule_on_edge_path() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let rule = Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                a,
+                b,
+                0,
+                CountOp::Gt,
+                1,
+                Neighborhood2D::Moore,
+                b,
+                Some(1.0),
+                None,
+            )],
+        };
+        // 1x1 grid always uses edge path.
+        let mut g = Grid2D::new(1, 1, 0, vec![a], rule);
+        g.step();
+        assert_eq!(g.cell_type(0), CellType::inactive());
+    }
+
+    #[test]
+    fn transition_path_without_history_limit_is_exercised() {
+        let a = CellType::from("A");
+        let mut g = Grid2D::new(1, 1, 0, vec![a], Rule2D { subrules: vec![] });
+        assert!(g.transition_state_and_buffer(0, &CellType::inactive()).is_none());
+        assert!(g.history_data.is_empty());
+    }
+
+    #[test]
+    fn rng_none_paths_are_exercised_for_interior_and_edge() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let sr = Rule2DSubrule::new(a, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(0.5), None);
+        let rule = Rule2D { subrules: vec![sr] };
+
+        let cells = vec![a; 9];
+        let plan = Rule2DPlan::new(&rule, 3);
+        let interior = Grid2D::next_type_interior(&cells, &rule, &plan.lin, CellType::inactive(), 4, None);
+        assert_eq!(interior, b);
+
+        let edge = Grid2D::next_type_edge(&cells, &rule, CellType::inactive(), 3, 3, 0, 0, 0, None);
+        assert_eq!(edge, b);
+    }
+
+    #[test]
+    fn deserialize_fallback_error_and_rng_continue_paths() {
+        let v = serde_json::json!({
+            "width": 1,
+            "height": 1,
+            "history_limit": 0,
+            "cell_states": [{"history": [], "age_in_state": 0, "history_limit": 0, "current": "Inactive"}],
+            "step": 0,
+            "rule": {"subrules": []},
+            "counts_current": {},
+            "peak_counts": {},
+            "inactive": "Inactive"
+        });
+        let deser: Grid2D = serde_json::from_value(v).expect("deserialize with empty maps");
+        assert_eq!(deser.dominant_type, CellType::inactive());
+
+        let bad = serde_json::from_str::<Grid2D>("{\"width\":\"nope\"}");
+        assert!(bad.is_err());
+
+        // randomness=1.0 guarantees the rng<r branch and continue path are executed.
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let sr = Rule2DSubrule::new(a, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(1.0), None);
+        let rule = Rule2D { subrules: vec![sr] };
+        let cells = vec![a; 9];
+        let plan = Rule2DPlan::new(&rule, 3);
+        let mut rng1 = SmallRng::seed_from_u64(7);
+        let mut rng2 = SmallRng::seed_from_u64(9);
+        let interior = Grid2D::next_type_interior(&cells, &rule, &plan.lin, CellType::inactive(), 4, Some(&mut rng1));
+        let edge = Grid2D::next_type_edge(&cells, &rule, CellType::inactive(), 3, 3, 0, 0, 0, Some(&mut rng2));
+        assert_eq!(interior, CellType::inactive());
+        assert_eq!(edge, CellType::inactive());
+
+        // Force deterministic continue in both paths via r>1 (internal-path coverage).
+        let sr_force = Rule2DSubrule::new(a, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(2.0), None);
+        let rule_force = Rule2D { subrules: vec![sr_force] };
+        let plan_force = Rule2DPlan::new(&rule_force, 3);
+        let mut rng3 = SmallRng::seed_from_u64(11);
+        let mut rng4 = SmallRng::seed_from_u64(13);
+        let interior2 = Grid2D::next_type_interior(&cells, &rule_force, &plan_force.lin, CellType::inactive(), 4, Some(&mut rng3));
+        let edge2 = Grid2D::next_type_edge(&cells, &rule_force, CellType::inactive(), 3, 3, 0, 0, 0, Some(&mut rng4));
+        assert_eq!(interior2, CellType::inactive());
+        assert_eq!(edge2, CellType::inactive());
+    }
+
+    #[test]
+    fn out_of_bounds_history_full_and_parallel_step_paths() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+
+        let mut g_hist = Grid2D::new(1, 1, 2, vec![a], Rule2D { subrules: vec![] });
+        assert!(g_hist.transition_state_and_buffer(99, &b).is_some());
+        assert!(g_hist.transition_state_and_buffer(0, &b).is_none());
+        assert!(g_hist.transition_state_and_buffer(0, &a).is_none());
+        let hist = g_hist.cell_history(0);
+        assert_eq!(hist.len(), 2);
+
+        set_thread_override(2);
+        set_min_work_per_chunk_override(1);
+        let mut g_parallel = Grid2D::new(4, 4, 1, vec![a; 16], Rule2D { subrules: vec![] });
+        g_parallel.step();
+        clear_min_work_per_chunk_override();
+        clear_thread_override();
+    }
+}
+
