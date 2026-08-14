@@ -52,7 +52,7 @@ fn test_config_2d_file_io() {
         height: 2,
         history_limit: 3,
         initial: init.clone(),
-        rule: rule.clone(),
+        rule: rule.clone(), model: None,
     });
 
     // Save
@@ -114,7 +114,7 @@ fn test_build_grid1d_fail_wrong_dim() {
         height: 1,
         history_limit: 2,
         initial: init,
-        rule,
+        rule, model: None,
     });
     
     assert!(cfg.build_grid1d().is_none(), "Should return None when building Grid1D from D2 config");
@@ -129,7 +129,7 @@ fn test_build_grid2d_success() {
         height: 2,
         history_limit: 2,
         initial: init,
-        rule,
+        rule, model: None,
     });
     
     let g = cfg.build_grid2d().expect("Should build Grid2D");
@@ -147,7 +147,7 @@ fn test_build_grid2d_fail_length() {
         height: 2, // Need 4
         history_limit: 2,
         initial: init,
-        rule,
+        rule, model: None,
     });
     
     assert!(cfg.build_grid2d().is_none(), "Should fail due to length mismatch");

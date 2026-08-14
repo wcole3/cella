@@ -181,6 +181,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
         history_limit: g.history_limit,
         initial,
         rule: g.rule.clone(),
+        model: g.model.clone(),
     });
     let dir = configs_dir();
     let _ = fs::create_dir_all(&dir);
@@ -607,6 +608,95 @@ fn zzz_benchmark_summary() {
 }
 
 
+// -------- Wildfire scenarios (external model; counter-based RNG makes the
+// stochastic runs snapshot-stable and thread-count-independent) --------
+
+/// 256x256 mixed-fuel landscape with an elevation ramp, moderate wind, and a
+/// centre ignition. `spotting` adds firebrand events on top.
+fn wildfire_grid_256(spotting: bool) -> Grid2D {
+    use cella_lib::wildfire::{cell_rand, FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams};
+    let (w, h) = (256usize, 256usize);
+    let forest = CellType::from("Forest");
+    let shrub = CellType::from("Shrub");
+    let mut init = vec![forest; w * h];
+    for (idx, cell) in init.iter_mut().enumerate() {
+        // Deterministic fuel mosaic with unburnable water/rock patches.
+        match cell_rand(777, 0, idx as u64, 9) {
+            v if v < 0.25 => *cell = shrub,
+            v if v < 0.30 => *cell = CellType::inactive(),
+            _ => {}
+        }
+    }
+    init[(h / 2) * w + w / 2] = CellType::from("Burning");
+    let mut elevation = vec![0.0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            elevation[y * w + x] = x as f32 * 1.5 + (y as f32 * 0.4);
+        }
+    }
+    let params = WildfireParams {
+        seed: 20260814,
+        p0: 0.58,
+        fuels: vec![
+            FuelClass { name: "Forest".into(), veg_factor: 1.0 },
+            FuelClass { name: "Shrub".into(), veg_factor: 0.6 },
+        ],
+        wind_speed: 8.0,
+        wind_dir_deg: 45.0,
+        c1: 0.045,
+        c2: 0.131,
+        slope_a: 0.078,
+        cell_size: 30.0,
+        burn_duration: 3,
+        spotting: spotting.then(|| SpottingParams {
+            p_spot: 0.02,
+            median_distance: 8.0,
+            sigma: 0.4,
+            angle_jitter_deg: 25.0,
+        }),
+        burning_name: None,
+        burned_name: None,
+    };
+    let mut g = Grid2D::new(w, h, 0, init, Rule2D { subrules: vec![] });
+    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv { density: vec![], elevation })))
+        .expect("wildfire scenario attaches");
+    g
+}
+
+fn stress_2d_wildfire() {
+    let g = wildfire_grid_256(false);
+    if ascii_enabled() { print_ascii_2d("2d_wildfire_256: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_wildfire_256", &g); }
+    run_benchmark_2d("2d_wildfire_256", &g, 200);
+}
+
+fn stress_2d_wildfire_spotting() {
+    let g = wildfire_grid_256(true);
+    if ascii_enabled() { print_ascii_2d("2d_wildfire_spotting_256: initial", &g); }
+    if configs_export_enabled() { export_config_2d("2d_wildfire_spotting_256", &g); }
+    run_benchmark_2d("2d_wildfire_spotting_256", &g, 200);
+}
+
+#[test]
+#[ignore]
+fn stress_2d_wildfire_t1() { set_thread_override(1); stress_2d_wildfire(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_wildfire_t4() { set_thread_override(4); stress_2d_wildfire(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_wildfire_t8() { set_thread_override(8); stress_2d_wildfire(); clear_thread_override(); }
+
+#[test]
+#[ignore]
+fn stress_2d_wildfire_spotting_t1() { set_thread_override(1); stress_2d_wildfire_spotting(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_wildfire_spotting_t4() { set_thread_override(4); stress_2d_wildfire_spotting(); clear_thread_override(); }
+#[test]
+#[ignore]
+fn stress_2d_wildfire_spotting_t8() { set_thread_override(8); stress_2d_wildfire_spotting(); clear_thread_override(); }
+
 // -------- Thread-count variants (1,4,8) for all long tests --------
 #[test]
 #[ignore]
@@ -819,7 +909,7 @@ fn stress_config_load_and_run() {
         height: h,
         history_limit: hist,
         initial,
-        rule,
+        rule, model: None,
     });
     
     // Save

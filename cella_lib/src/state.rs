@@ -30,6 +30,8 @@ pub enum GridState {
         rule: Rule2D,
         #[serde(default)] counts_current: HashMap<String, u64>,
         #[serde(default)] peak_counts: HashMap<String, u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<Box<dyn crate::external::ExternalModel>>,
     },
 }
 
@@ -49,7 +51,8 @@ impl GridState {
         let cell_states = g.to_cell_states();
         Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit,
             cell_states, step: g.step, rule: g.rule.clone(),
-            counts_current: current_count_map, peak_counts: peak_count_map }
+            counts_current: current_count_map, peak_counts: peak_count_map,
+            model: g.model.clone() }
     }
 
     pub fn to_json_pretty(&self) -> String { serde_json::to_string_pretty(self).unwrap() }
@@ -88,7 +91,7 @@ impl Grid2D {
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
             GridState::D2 { width, height, history_limit, cell_states,
-                step, rule, counts_current, peak_counts } => {
+                step, rule, counts_current, peak_counts, model } => {
                 let (new_counts, new_peak_counts) =
                     convert_map_string_to_spur(cell_states, counts_current, peak_counts);
                 let next_cells: Vec<CellType> = vec![CellType::inactive(); cell_states.len()];
@@ -101,10 +104,17 @@ impl Grid2D {
                     .max_by_key(|entry| entry.1)
                     .map(|(k, _v)| CellType::from(k.as_str()))
                     .unwrap_or(CellType::inactive());
-                Some(Self { width: *width, height: *height, history_limit: *history_limit,
+                let mut grid = Self { width: *width, height: *height, history_limit: *history_limit,
                     ages, cells, next_cells, history_data, history_heads, history_counts,
                     step: *step, rule: rule.clone(), counts_current: new_counts,
-                    peak_counts: new_peak_counts, inactive: CellType::inactive(), dominant_type })
+                    peak_counts: new_peak_counts, inactive: CellType::inactive(), dominant_type,
+                    model: None };
+                if let Some(model) = model {
+                    // A model that fails validation against its own snapshot is
+                    // a malformed state; treat it like a dimension mismatch.
+                    grid.attach_model(model.clone()).ok()?;
+                }
+                Some(grid)
             }
             _ => None,
         }

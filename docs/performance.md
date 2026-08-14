@@ -5,10 +5,12 @@ SoA/double-buffer refactor (branch `qwen-test`, July 2026) and **updated after
 acting on it**. It covers the current architecture and its optimizations, the
 correctness issues found, what was implemented and measured, and what remains.
 
-**Status: the §2 correctness fixes and the §3.1–§3.6 performance items have been
-implemented and measured.** Sections marked *(done)* describe shipped code;
-sections marked *(open)* are still recommendations. Line references are omitted
-in favour of naming functions, since line numbers drift.
+**Status: the §2 correctness fixes and the §3.1–§3.6, §3.10, and §3.11
+performance items have been implemented and measured.** Sections marked *(done)*
+describe shipped code; sections marked *(open)* are still recommendations. §7
+records the performance decisions baked into the wildfire/external-model work.
+Line references are omitted in favour of naming functions, since line numbers
+drift.
 
 Headline: the benchmark suite total went from **1329 ms to 840 ms (−37 %)** on the
 reference machine, with cell-for-cell identical output (the FNV snapshot tests in
@@ -421,6 +423,97 @@ effect in the `n = 1` window fold. This is 6–7 ms of absolute cost against a
 (§4) to get a noise floor tight enough to attribute this, and (b) look at §3.7's
 packed-`u64` 1D path, which would make the current n=1 fold irrelevant anyway.
 
+**Addendum — an untested prime suspect.** A later hot-path review found a
+candidate none of the ablations above covered: the window fold evaluates
+`(s.wolfram_code >> bits) & 1u128` — a **128-bit variable-count shift** — per
+cell, which lowers to a multi-instruction `shrd`/`shr`/`cmov` sequence on
+x86-64 while `n = 1` only ever uses 3 live bits; the per-cell `match s.n`
+dispatch and `applies_edge`'s per-cell re-validation of `n` sit in the same
+loop. The natural fix is a `Rule1DPlan` built per step in `Grid1D::step`
+(mirroring `Rule2DPlan` — `Rule1DSubrule` has no constructor, so derived state
+cannot be cached on the subrule itself) that downcasts the code per subrule:
+`u8` for n = 1, `u32` for n = 2, `u128` only for n = 3, hoisting the `n`
+validity check out of the cell loop. Sequenced after the criterion migration so
+the result is attributable; §3.7's packed-`u64` path would subsume it entirely.
+
+### 3.10 `pool()` registry lock removed *(done)*
+
+`pool(n)` took a `Mutex` lock and linearly scanned the pool registry on **every
+parallel step** — the same class of waste as the `thread_count()` Mutex removed
+in §3.6. Pools for `n <= 64` now live in a fixed array of `OnceLock` slots
+indexed by `n`, so the steady-state cost is one atomic load; larger `n` (which
+no realistic host hits) falls back to the old Mutex registry, and both paths
+are covered by `override_chunks_and_pool_paths_are_covered`. Per-step rather
+than per-cell, so no measurable benchmark delta is expected — it is strictly
+less work on every parallel step.
+
+### 3.11 Release profile: thin LTO + one codegen unit *(done)*
+
+Neither manifest defined a `[profile.release]`, so release builds ran with 16
+codegen units and no LTO, and cross-crate inlining into the `cella` binary
+relied entirely on `#[inline]` attributes. Both Cargo.tomls now set:
+
+```toml
+[profile.release]
+lto = "thin"
+codegen-units = 1
+```
+
+**Both** manifests need the profile because the repo is *not* a cargo
+workspace: `cargo` invocations from the repo root and from `cella_lib/` resolve
+different build roots, and profiles are only honored from the invoked root.
+This invalidated `tests/benchmarks_last.json`; the baseline was refreshed in
+the same change. Measured effect on the 40 pre-existing entries: **820.78 →
+800.01 ms (−2.5 %)** — at the edge of the harness noise band but consistently
+downward, with no per-case regression outside noise. Snapshots byte-identical.
+
+### 3.12 Per-step allocations and loop-invariant dispatch *(open)*
+
+Fresh findings, unmeasurable under the old ±5–8 % noise floor; queued behind
+the §4 criterion migration:
+
+- `Rule2DPlan::new` allocates `Vec<Vec<isize>>` — one malloc per subrule per
+  step, and the innermost loop's `zip(lin)` chases a `&Vec` pointer per
+  subrule per cell. Flatten to `lin_flat: Vec<isize>` + `spans: Vec<(u32,u32)>`
+  (two allocations per step, slice indexing in the loop). This also closes
+  §3.5 with no SmallVec dependency.
+- `Rule2DSubrule::eval_condition` is a six-arm `match (op, limit)` per matching
+  cell. Precompute an inclusive `(lo, hi)` range on the subrule (serde-skipped,
+  like `early_exit`) and the test becomes two compares.
+- `TypeCounter::new()` does `Vec::with_capacity(16)` per chunk per step *and*
+  per rayon `reduce` identity. A lazy first-`add` allocation makes the reduce
+  identity free (also a prerequisite for keeping the external-model event
+  merge allocation-free).
+- The six independently bounds-checked output writes per cell
+  (`next_cells`/`ages`/history arrays) and the per-cell `history_limit > 0`
+  test: inspect release asm first; hoist length asserts or move to zipped
+  iterators only if LLVM has not already elided them.
+
+### 3.13 Interior bounds-check elision — the §3.7 gateway *(open)*
+
+The "branchless" interior path still bounds-checks every neighbor read:
+`cells[idx.wrapping_add_signed(off)]` is slice indexing with a runtime offset,
+so LLVM emits a compare + panic branch per neighbor per subrule per cell —
+exactly what blocks the auto-vectorization §3.7 wants, and `std::simd` is
+still nightly-only, so autovectorization is the stable-Rust route.
+
+Safe-code shape to evaluate: decompose each neighborhood into per-`dy`
+contiguous runs `(row_offset, dx_lo, dx_hi)` at plan time (Moore rows are full
+runs, VonNeumann rows contiguous; Langton/Knight degenerate to short runs).
+Interior counting then walks one slice window per run —
+`&cells[lo..=hi].iter().filter(|c| **c == crit).count()` — one bounds check per
+run instead of per neighbor, in a shape LLVM auto-vectorizes over the 4-byte
+`CellType`s. Early exit stays correct evaluated between runs. Measured results
+decide how §3.7 proper (packed bitplanes, packed-`u64` 1D) is scoped.
+
+### 3.14 `work_per_cell` over-estimation *(open)*
+
+`work_per_cell` sums every subrule's full neighborhood regardless of match
+rate, so a rule whose first subrule matches most cells over-estimates several
+fold and can promote a grid to more chunks than the real work justifies. Only
+measurable once benches exist that straddle `MIN_WORK_PER_CHUNK` (§4); revisit
+then.
+
 ---
 
 ## 4. Benchmarking Notes
@@ -449,6 +542,70 @@ FNV snapshot tests exactly as they are — the snapshot mechanism is genuinely g
 regression armor, is orthogonal to timing, and was the thing that gave confidence
 that all of §3 preserved behaviour exactly.
 
+### Criterion migration plan
+
+Criterion over divan: its `--save-baseline` / `--baseline` comparison with
+outlier rejection and significance testing is precisely the cure for the
+"two A/B rounds reversed on re-measurement" problem above. (A divan bench
+target with `AllocProfiler` is a worthwhile follow-on for counting the §3.12
+per-step allocations exactly; the `unsafe` involved lives inside divan, not
+this crate.) Shape:
+
+- `[dev-dependencies] criterion` + a `[[bench]] name = "engine"` target with
+  `harness = false`; port the grid builders from `long_suite.rs` (timing only —
+  snapshots stay where they are).
+- New scenarios closing gaps 5.4/5.5/5.8 while we are there: a 1D case wide
+  enough to reach the work threshold (`1d_rule30_65536`), a randomness-0.5
+  subrule case (finally measures §3.3), a `history_limit` 0/1/7 sweep
+  (measures the §3.8 divide removal), a 12-type counts-heavy case (tests the
+  §3.4 decision), sizes straddling `MIN_WORK_PER_CHUNK` (feeds §3.14), and an
+  RNG micro-bench (`SmallRng` sequential draws vs the stateless
+  `wildfire::cell_rand` hash).
+- A/B protocol: `cargo bench -p cella_lib -- --save-baseline main` on HEAD,
+  apply the change, `cargo bench -p cella_lib -- --baseline main <filter>`;
+  accept on a significant improvement in the target benches with no
+  significant regression elsewhere, and gate every engine change on the FNV
+  snapshots staying byte-identical. The legacy `CELLA_BENCH=1` min-of-runs
+  protocol remains as a cross-check.
+
+### Baseline history (`tests/benchmarks_last.json`)
+
+Reconstructed from every commit that touched the file: the sum of per-bench
+averages per commit (the file's older schema was a flat `name -> integer ms`
+map; `6e8779f` switched it to `{avg, std_dev}`). Totals are only comparable
+between rows with the same entry count — rows marked *(set)* changed the
+benchmark set itself.
+
+| Commit | Date | Entries | Suite total (ms) | Reason |
+|---|---|---|---|---|
+| *(this change)* | 2026-08-14 | 46 | 1 335.37 | Thin-LTO/codegen-units profile + six wildfire entries *(set)*; the 40 pre-existing entries sum to **800.01** (−2.5 % vs 820.78) |
+| `b67acbf` | 2026-07-27 | 40 | 820.78 | Interior/edge fast path + persistent rayon pool + work-sized chunking (§3.1/§3.2) |
+| `5dbda2c` | 2026-06-24 | 40 | 1 536.82 | Revert grid1d fixed-array experiment back to `Vec` |
+| `a258d07` | 2026-06-24 | 40 | 1 850.86 | grid1d fixed-array experiment (flawed) |
+| `9cee1ea` | 2026-06-24 | 40 | 2 079.09 | `TypeCounter` + integer-math rearrangement |
+| `65165e6` | 2026-06-19 | 40 | 4 534.00 | Proper double buffering (both grids) |
+| `b030227` | 2026-06-07 | 40 | 4 766.54 | Baseline refresh after offsets-on-init |
+| `4d3828f` | 2026-06-07 | 40 | 5 477.09 | `Rule2DSubrule` offsets computed at construction |
+| `b15c7d7` | 2026-06-06 | 40 | 5 396.70 | Typo fix (no perf change) |
+| `781b716` | 2026-06-04 | 40 | 5 396.70 | **`CellType` `String` → interned `Spur` (~31× total)** |
+| `7847860` | 2026-05-16 | 40 | 167 692.80 | Knight stress benches added *(set)*; pre-Spur string cells |
+| `55a4878` | 2026-03-29 | 37 | 59 087.00 | Code review / cleanup *(set)* |
+| `6e8779f` | 2026-01-29 | 36 | 176 471.80 | Thread pools replace per-step spawn; schema → `{avg, std_dev}` |
+| `911a487` | 2025-09-29 | 36 | 282 986 | StraightLine neighborhood + benches *(set)* |
+| `9a05a19` | 2025-09-22 | 33 | 293 453 | Benchmark update *(set)* |
+| `20606d3` | 2025-08-31 | 27 | 220 516 | 2D subrules → count + op refactor |
+| `d2db892` | 2025-08-31 | 27 | 255 775 | Rules removed from snapshot hash |
+| `dbae5db` | 2025-08-31 | 27 | 194 888 | Benchmarks + snapshots update |
+| `25ac3e6` | 2025-08-31 | 27 | 182 085 | Bench update gated behind env var |
+| `535aed5` | 2025-08-31 | 27 | 195 774 | First committed baseline |
+
+Headline arc: **~196 s → 5.4 s** (Spur interning) **→ 0.82 s** (SoA +
+interior/edge + work-sized rayon) **→ 0.80 s** (thin LTO), on the 40-entry
+comparable set. Keep the table alive: every `CELLA_UPDATE_BENCH=1` refresh adds
+a row with the commit hash and a one-line reason. The six wildfire entries
+land at 123 ms serial / 71 ms `t4` for the 256×256 200-step scenarios —
+the first benchmarks whose stochastic output is snapshot-pinned (see §7).
+
 ---
 
 ## 5. Test Coverage
@@ -461,8 +618,12 @@ Current coverage:
 | `tests/edge_cases.rs` | rule validation edges, tiny grids, history bounds, CountOp zero-neighbor cases |
 | `tests/randomness.rs` | randomness 0.0 (always) and 1.0 (never) only |
 | `tests/soa_robust.rs` | circular-history FIFO order, parallel history consistency, SoA serde round-trips, out-of-bounds accessors, mixed-n subrules, **parallel-vs-serial counts, counts invariant, painting bounds** |
-| `tests/rule2d_countop.rs` | 2D threshold/CountOp logic |
-| `tests/long_suite.rs` | snapshot hashing, stress runs, benchmarks, `_t1/_t4/_t8` variants |
+| `tests/external_model.rs` | external-model seam (out-of-tree impl), wildfire engine paths, thread-equivalence, model round-trips, config back-compat corpus |
+| `tests/wildfire_stats.rs` | `#[ignore]`d wildfire ensembles: burned-fraction band, downwind centroid bias |
+| `tests/long_suite.rs` | snapshot hashing, stress runs, benchmarks, `_t1/_t4/_t8` variants (incl. the wildfire scenarios) |
+
+*(A `tests/rule2d_countop.rs` row used to sit here; that file was deleted in
+`9950a57` and its CountOp coverage now lives in `rules.rs` unit tests.)*
 | `lib.rs` inline tests | validation, Knight symmetry/stress, serde, multistate rotation, **dominant-type re-election** |
 
 ### Gaps closed *(done)*
@@ -570,6 +731,53 @@ cella is actually built around, whereas Hashlife shines precisely when you
 
 ---
 
+## 7. Wildfire-Driven Performance Hooks
+
+The external-model seam (`external.rs`) and the wildfire model (`wildfire.rs`)
+were designed around three performance decisions worth recording here:
+
+**Stateless counter-based RNG.** `wildfire::cell_rand(seed, step, idx, stream)`
+is a SplitMix64-style hash — no RNG state object at all. Besides being cheap
+(a handful of integer multiplies, no loop-carried dependency, so the ignition
+loop stays vectorizable in principle), it makes stochastic output **invariant
+to chunk split and thread count**, which is what lets the FNV snapshot tests
+pin the two wildfire benchmark scenarios: `stress_2d_wildfire{,_spotting}`
+assert the *same* snapshot at `_t1`, `_t4`, and `_t8`. The subrule engine's
+`randomness` feature still draws from a per-chunk `SmallRng::from_entropy()`
+(grid2d/grid1d `step_chunk`) and is therefore neither reproducible nor
+split-independent — migrating it to the hash draw is an open item, and a
+behavior change that needs its own decision (existing stochastic runs would
+change output; snapshots do not currently cover them, so the blast radius is
+configs in the wild, not the test suite). The criterion RNG micro-bench (§4)
+will quantify the cost side.
+
+**Events through the existing map/reduce.** Long-range writes (fire spotting)
+never touch other chunks during the parallel pass: each chunk returns
+`(TypeCounter, Vec<ModelEvent>)`, the vectors are appended during the rayon
+`reduce`, and the engine applies events serially after the join — sorted, and
+gated by `event_applies` for idempotence, so the result is independent of merge
+order. No locks, no crossbeam, no new dependency; the empty-events case costs
+one `Vec::new()` per chunk (kept allocation-free — `Vec::new` does not
+allocate until first push).
+
+**Per-step trig hoisted out of the cell loop.** The model precomputes slope
+factors per cell **once at attach** (elevation is static) and the eight wind
+factors **once per chunk** (uniform wind), so the per-cell ignition math is two
+multiplies per burning neighbor plus one hash draw — no `exp`/`cos`/`atan`
+anywhere in the hot loop. The engine runs its bookkeeping (history/ages/counts)
+as a second cache-warm pass over the chunk rather than fusing it into the
+model's loop; if profiling ever shows the extra sweep mattering, fusing it via
+a callback is the option, at the cost of the engine/model isolation.
+
+Benchmarks: `2d_wildfire_256` and `2d_wildfire_spotting_256` (200 steps,
+256×256, mixed fuels, elevation ramp, 8 m/s wind) landed at ~123 ms serial and
+~71 ms at `t4`/`t8` — the external-model path scales on the same
+work-sized chunking as the subrule engine (`work_per_cell()` = 20 for the
+wildfire model: eight neighbor reads plus RNG, float math, and the bookkeeping
+pass).
+
+---
+
 ## Summary of Priorities
 
 Done:
@@ -584,18 +792,37 @@ Done:
 5. ✅ RNG hoist (3.3), `thread_count()` atomic (3.6), history-modulo removal and
    `OutChunk` reborrow (3.8).
 
+Also done since the original review:
+
+6. ✅ `pool()` registry lock → `OnceLock` slot array (3.10).
+7. ✅ Release profile: thin LTO + `codegen-units = 1` in both manifests (3.11),
+   −2.5 % on the comparable benchmark set; baseline refreshed with the six
+   wildfire entries (§4 history table).
+8. ✅ Wildfire/external-model perf groundwork: stateless counter RNG, events
+   through the reduce, per-chunk trig hoisting (§7); wildfire benchmarks are
+   snapshot-pinned across thread counts.
+
 Next, in order:
 
-6. Move timing benchmarks to `criterion`/`divan` (§4). This is now the blocker on
-   further micro-optimization, not a nicety — the current ±5–8 % noise band is
-   wider than the remaining effects, including the 1D regression in §3.9.
-7. Close bench gaps 5.4, 5.5, 5.8 — in particular a randomness benchmark, without
-   which §3.3 cannot be measured, and a 1D case large enough to exercise the
-   parallel path.
-8. Bit-packed / SIMD fast path (3.7), starting with the packed-`u64` 1D Wolfram
-   path, which also subsumes the §3.9 regression.
-9. `SmallVec` offsets (3.5), bundled with 8.
-10. Revisit a spin-then-park worker pool (§3.2) only after measuring fork/join
-    latency on the target platform; it would need `unsafe`, and the payoff depends
-    entirely on that number.
-11. Hashlife (§6) as a long-term project.
+9. Move timing benchmarks to `criterion` (§4, migration plan there). This is
+   now the blocker on further micro-optimization, not a nicety — the current
+   ±5–8 % noise band is wider than the remaining effects, including the 1D
+   regression in §3.9.
+10. Close bench gaps 5.4, 5.5, 5.8 as part of the criterion port — in
+    particular a randomness benchmark, without which §3.3 cannot be measured,
+    a 1D case large enough to exercise the parallel path, and the
+    threshold-straddling sizes §3.14 needs.
+11. §3.9 via the `Rule1DPlan` downcast (addendum there) — the one item above
+    today's noise floor, and the last untested suspect.
+12. §3.12 per-step allocation and dispatch cleanups (subsumes §3.5, no
+    SmallVec dependency).
+13. §3.13 interior bounds-check elision via contiguous-run slices — the safe
+    stepping stone to the bit-packed / SIMD fast path (3.7), which remains the
+    largest projected win. (`std::simd` is still nightly-only; SWAR
+    bit-packing and autovectorization are the stable routes.)
+14. Migrate the subrule `randomness` draw to the stateless hash RNG (§7) —
+    a deliberate behavior change to schedule, not sneak in.
+15. Revisit a spin-then-park worker pool (§3.2) only after measuring fork/join
+    latency on the target platform; it would need `unsafe`, and the payoff
+    depends entirely on that number.
+16. Hashlife (§6) as a long-term project.

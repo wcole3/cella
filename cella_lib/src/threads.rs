@@ -127,18 +127,34 @@ pub(crate) fn chunks_for_work(total_work: usize) -> usize {
     (total_work / min_work).clamp(1, threads)
 }
 
-/// Get (or build) the persistent worker pool with `n` threads.
-pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
-    let pools = POOLS.get_or_init(|| Mutex::new(Vec::new()));
-    let mut guard = pools.lock().expect("pool registry lock");
-    if let Some((_, p)) = guard.iter().find(|(k, _)| *k == n) { return p; }
-    let built: &'static rayon::ThreadPool = Box::leak(Box::new(
+/// Fixed-slot cache for the common thread counts: `pool(n)` for `n <= 64` is a
+/// single atomic load in steady state. Larger counts fall back to the
+/// Mutex-guarded registry — `pool()` runs on every parallel step, and the old
+/// lock-and-scan on each call was the same class of waste as the
+/// `thread_count()` Mutex removed earlier (performance.md §3.6).
+const POOL_SLOTS: usize = 64;
+static POOL_CACHE: [std::sync::OnceLock<&'static rayon::ThreadPool>; POOL_SLOTS + 1] =
+    [const { std::sync::OnceLock::new() }; POOL_SLOTS + 1];
+
+fn build_pool(n: usize) -> &'static rayon::ThreadPool {
+    Box::leak(Box::new(
         rayon::ThreadPoolBuilder::new()
             .num_threads(n)
             .thread_name(move |i| format!("cella-step-{i}"))
             .build()
             .expect("build cella worker pool"),
-    ));
+    ))
+}
+
+/// Get (or build) the persistent worker pool with `n` threads.
+pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
+    if n <= POOL_SLOTS {
+        return POOL_CACHE[n].get_or_init(|| build_pool(n));
+    }
+    let pools = POOLS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = pools.lock().expect("pool registry lock");
+    if let Some((_, p)) = guard.iter().find(|(k, _)| *k == n) { return p; }
+    let built = build_pool(n);
     guard.push((n, built));
     built
 }
@@ -228,6 +244,13 @@ mod tests {
         let p1 = pool(2) as *const _;
         let p2 = pool(2) as *const _;
         assert_eq!(p1, p2);
+
+        // The > POOL_SLOTS fallback goes through the Mutex registry and must
+        // also return the same instance on repeat calls.
+        let big1 = pool(POOL_SLOTS + 1) as *const _;
+        let big2 = pool(POOL_SLOTS + 1) as *const _;
+        assert_eq!(big1, big2);
+        assert_eq!(pool(POOL_SLOTS + 1).current_num_threads(), POOL_SLOTS + 1);
 
         clear_thread_override();
     }

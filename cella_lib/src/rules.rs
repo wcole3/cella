@@ -36,6 +36,20 @@ impl TypeCounter {
         self.entries.push((t, 1));
     }
 
+    /// Remove one count of `t`, dropping the entry when it reaches zero.
+    /// Absent types are a no-op (the type was dominant-skipped or never counted).
+    pub(crate) fn sub(&mut self, t: CellType) {
+        for i in 0..self.entries.len() {
+            if self.entries[i].0 == t {
+                self.entries[i].1 -= 1;
+                if self.entries[i].1 == 0 {
+                    self.entries.swap_remove(i);
+                }
+                return;
+            }
+        }
+    }
+
     pub fn merge(&mut self, other: &Self) {
         // `continue 'outer` (not `return`): every entry of `other` must be folded in.
         'outer: for (t, c) in &other.entries {

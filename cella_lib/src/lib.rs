@@ -24,14 +24,18 @@ pub mod grid2d;
 pub mod state;
 pub mod config;
 pub mod threads;
+pub mod external;
+pub mod wildfire;
 mod chunking;
 
+pub use external::{ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent};
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
 pub use rules::{CountOp, neighborhood_contains, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError};
 pub use state::{grid2d_to_json, GridState};
 // Re-exports for ergonomic public API
 pub use types::{CellState, CellType, INACTIVE};
+pub use wildfire::{FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams};
 
 #[cfg(test)]
 mod tests {
@@ -201,7 +205,7 @@ mod tests {
         initial[1*w + 1] = alive.as_str().to_string();
         initial[1*w + 2] = alive.as_str().to_string();
         initial[1*w + 3.min(w-1)] = alive.as_str().to_string();
-        let cfg = CellaConfig::D2(Config2D { width:w, height:h, history_limit:hist, initial, rule });
+        let cfg = CellaConfig::D2(Config2D { width:w, height:h, history_limit:hist, initial, rule, model: None });
         let json = serde_json::to_string(&cfg).unwrap();
         let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
         let mut g = cfg2.build_grid2d().unwrap();
@@ -529,7 +533,7 @@ mod more_tests {
             Rule2DSubrule::new(b.clone(), c.clone(), 2, CountOp::Gt, 1, Neighborhood2D::VonNeumann, c.clone(), None, None),
             Rule2DSubrule::new(c.clone(), a.clone(), 2, CountOp::Gt, 1, Neighborhood2D::VonNeumann, a.clone(), None, None),
         ]};
-        let cfg = CellaConfig::D2(Config2D { width: w, height: h, history_limit: hist, initial: init, rule: rule.clone() });
+        let cfg = CellaConfig::D2(Config2D { width: w, height: h, history_limit: hist, initial: init, rule: rule.clone(), model: None });
         let s = serde_json::to_string(&cfg).unwrap();
         let c2: Config2D = serde_json::from_str(&s).unwrap();
         assert_eq!(c2.width, w);

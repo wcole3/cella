@@ -69,6 +69,10 @@ pub struct Config2D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule2D,
+    /// Optional external transition model (e.g. `{"wildfire": {...}}`); when
+    /// present it replaces the subrule engine. See [`crate::external`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Box<dyn crate::external::ExternalModel>>,
 }
 
 impl CellaConfig {
@@ -114,13 +118,18 @@ impl CellaConfig {
 
     /// Build a Grid2D from D2 config.
     ///
-    /// Returns `None` if `initial.len() != width*height`.
+    /// Returns `None` if `initial.len() != width*height`, or if the config's
+    /// external model fails validation against the grid.
     pub fn build_grid2d(&self) -> Option<Grid2D> {
         match self {
             CellaConfig::D2(c) => {
                 if c.initial.len() != c.width * c.height { return None; }
                 let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
-                Some(Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone()))
+                let mut grid = Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone());
+                if let Some(model) = &c.model {
+                    grid.attach_model(model.clone()).ok()?;
+                }
+                Some(grid)
             }
             _ => None,
         }
@@ -149,7 +158,7 @@ mod tests {
             height: 2,
             history_limit: 1,
             initial: vec!["A".to_string(), "B".to_string(), "C".to_string()],
-            rule: rule2,
+            rule: rule2, model: None,
         });
         assert!(cfg2.build_grid2d().is_none());
     }
@@ -173,7 +182,7 @@ mod tests {
             height: 2,
             history_limit: 1,
             initial: vec![a, b],
-            rule: Rule2D { subrules: vec![] },
+            rule: Rule2D { subrules: vec![] }, model: None,
         });
         assert!(cfg2.build_grid2d().is_some());
         assert!(cfg2.build_grid1d().is_none());

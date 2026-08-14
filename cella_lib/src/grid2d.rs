@@ -67,6 +67,10 @@ pub struct Grid2D {
     pub inactive: CellType,
     /// Type with the highest count (dominant); skipped during counting.
     #[serde(skip)] pub(crate) dominant_type: CellType,
+    /// Optional external transition model; when present it replaces the
+    /// subrule engine for stepping. See [`crate::external::ExternalModel`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Box<dyn crate::external::ExternalModel>>,
 }
 
 impl<'de> Deserialize<'de> for Grid2D {
@@ -82,6 +86,8 @@ impl<'de> Deserialize<'de> for Grid2D {
             counts_current: std::collections::HashMap<Spur, u64>,
             peak_counts: std::collections::HashMap<Spur, u64>,
             inactive: CellType,
+            #[serde(default)]
+            model: Option<Box<dyn crate::external::ExternalModel>>,
         }
         let intermediate = Grid2DIntermediate::deserialize(d)?;
         let cells: Vec<CellType> = intermediate.cell_states.iter().map(|cs| cs.current).collect();
@@ -94,7 +100,7 @@ impl<'de> Deserialize<'de> for Grid2D {
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
             .unwrap_or_else(|| intermediate.inactive.clone());
-        Ok(Grid2D {
+        let mut grid = Grid2D {
             width: intermediate.width,
             height: intermediate.height,
             history_limit: intermediate.history_limit,
@@ -110,7 +116,12 @@ impl<'de> Deserialize<'de> for Grid2D {
             peak_counts: intermediate.peak_counts,
             inactive: intermediate.inactive,
             dominant_type,
-        })
+            model: None,
+        };
+        if let Some(model) = intermediate.model {
+            grid.attach_model(model).map_err(serde::de::Error::custom)?;
+        }
+        Ok(grid)
     }
 }
 
@@ -159,7 +170,8 @@ impl Grid2D {
         let inactive = CellType::inactive();
         Self { width, height, history_limit, ages, cells: initial,
             next_cells, history_data, history_heads, history_counts,
-            step: 0, rule, counts_current, peak_counts, inactive, dominant_type: dominant_type.0 }
+            step: 0, rule, counts_current, peak_counts, inactive, dominant_type: dominant_type.0,
+            model: None }
     }
 
     /// Transition cell `idx` to `new_type`.
@@ -168,6 +180,9 @@ impl Grid2D {
             Some(Error::new(std::io::ErrorKind::InvalidInput, "Index out of bounds"))
         } else {
             self.transition_cell(idx, *new_type);
+            if let Some(m) = self.model.as_deref_mut() {
+                m.on_paint(idx, *new_type);
+            }
             None
         }
     }
@@ -341,7 +356,13 @@ impl Grid2D {
     }
 
     /// Advance the automaton by one step using double-buffering.
+    ///
+    /// When an [`crate::external::ExternalModel`] is attached, it drives the
+    /// transition instead of the subrule engine.
     pub fn step(&mut self) {
+        if self.model.is_some() {
+            return self.step_external();
+        }
         let width = self.width;
         let height = self.height;
         let total = width * height;

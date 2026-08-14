@@ -11,3 +11,11 @@ thiserror = "1"
 lasso2 = { version = "0.8.2", features = ["multi-threaded", "serialize"] }
 memoize = "0.6.0"
 rayon = "1"
+typetag = "0.2.23"
+
+# This crate is its own build root when tests/benches run from cella_lib/
+# (it is not a member of the root package's workspace), so the release profile
+# is mirrored here and in the root Cargo.toml — keep the two in sync.
+[profile.release]
+lto = "thin"
+codegen-units = 1

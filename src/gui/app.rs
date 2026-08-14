@@ -495,6 +495,10 @@ impl CellaApp {
                 set.extend(g.rule.subrules.iter().flat_map(|s| {
                     [s.current_type.0, s.criteria_type.0, s.output_type.0]
                 }));
+                // External models (e.g. wildfire) declare their own palette.
+                if let Some(m) = &g.model {
+                    set.extend(m.declared_types().iter().map(|t| t.0));
+                }
             },
             None => {}
         }
