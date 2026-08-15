@@ -100,3 +100,43 @@ Known simplifications to revisit as scores improve: uniform domain-mean wind
 beyond wind, no suppression (late-fire days flatten in reality partly because
 of containment — visible in the Bear table where observed growth stalls),
 density layer unused (canopy cover is available in the HDF5).
+
+## The challenge ladder (downloaded and waiting)
+
+Deeper research found harder validation targets; the directly fetchable ones
+are already in `data/`. In order of increasing difficulty after the six-fire
+pack:
+
+1. **Dogrib 2001** (`data/dogrib/instance/`, from the Cell2Fire repo) — the
+   Prometheus/Cell2Fire reference case: `.asc` grids (fuel, elevation),
+   weather stream, ignition, observed final burn. Essentially our flat-array
+   format already. Published bars to beat: Prometheus F1 = 0.74, Cell2Fire
+   F1 = 0.83. Exposes lattice/front-shape artifacts under a mid-run wind
+   shift; needs a Canadian-FBP → fuel-class mapping.
+2. **PT-FireSprd** (`data/pt-firesprd/`, CC-BY,
+   [Zenodo](https://doi.org/10.5281/zenodo.7495506)) — 80 Portuguese fires
+   2015–2021 with ~3-hourly progression polygons and measured rate-of-spread,
+   including Pedrógão Grande 2017 (junction fire, wind reversals, 8.9 km/h
+   ROS). Exposes junction-fire acceleration a memoryless CA lacks.
+3. **GOFER** (`data/gofer/`, CC-BY,
+   [Zenodo](https://zenodo.org/records/10442843)) — hourly GOES-derived
+   perimeters/fire lines for 28 large 2019–2021 California fires including
+   Creek 2020 (plume-driven) and Dixie 2021 (terrain channeling, 3-month
+   soak). Edges are ±1 km, so score arrival-time and growth-rate, not 30 m
+   IoU.
+4. **Camp Fire 2018** (`data/campfire_nist/`, NIST TN 2135 Appendix F) —
+   2,200 timestamped fire-spread observations at sub-hourly resolution.
+   The endgame spotting test: ember-driven spread across a canyon and
+   through "unburnable" urban fuel; requires interpolating an arrival-time
+   surface from points.
+
+Not downloaded (request-gated or digitize-from-paper): RxCADRE instrumented
+burns (USFS archive, drop-in ASCII — fetch when we get there), NIROPS/FIRIS
+IR archives, Kilmore East 2009 (paper in `papers/`, isochrones would need
+digitizing), Marshall Fire (awaiting NIST release), CFSDS Canada
+(OSF, distributional validation).
+
+Shared prerequisite for rungs 2–4: one `isochrones → arrival-time flat
+array` rasterizer (GDAL) — build once, unlocks PT-FireSprd, GOFER, NIROPS,
+and FIRIS alike. Metric to add alongside it: arrival-time error (the
+sub-daily sources make plain IoU under-informative).
