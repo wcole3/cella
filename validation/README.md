@@ -1,0 +1,102 @@
+# Wildfire Validation
+
+This directory holds the tooling for scoring cella's wildfire model against
+real, observed fires. The code and docs here are committed; the inputs and
+outputs (`data/`, `papers/`, `results/`, `.venv/`) are gitignored — they are
+pulled by scripts and can always be recreated.
+
+## The pipeline, start to finish
+
+```
+dataset.hdf5  ──convert_pytorchfire.py──▶  config.json + truth.json + meta.json
+   (observed fires)                                    │
+                                                       ▼
+                                     cargo run --example wildfire_validate
+                                                       │
+                                                       ▼
+                                  per-day IoU / Sørensen table + results JSON
+```
+
+### 1. Get the data
+
+The first dataset is the **PyTorchFire six-fire pack**: six real US megafires
+(Bear 2020, Chimney 2016, Pier 2017, Brattain 2020, Ferguson 2018, Buck 2017)
+as 30 m grids with LANDFIRE fuels/terrain, daily ERA5 wind, and one observed
+cumulative burned-area mask per day. License CC-BY 4.0.
+
+```bash
+curl -L -o validation/data/dataset.hdf5 \
+  https://raw.githubusercontent.com/mzhen77/neural-ca-wildfire/main/data/hdf5/dataset.hdf5
+```
+
+Open-access papers behind the dataset and the metrics live in
+`validation/papers/` (see `scripts/` history for the download list). The two
+paywalled classics (Alexandridis 2008, Filippi 2014) are cited but not stored.
+
+### 2. Convert to cella inputs
+
+```bash
+uv venv validation/.venv && VIRTUAL_ENV=$PWD/validation/.venv uv pip install numpy h5py
+validation/.venv/bin/python validation/scripts/convert_pytorchfire.py
+```
+
+This writes `validation/data/converted/<fire>/`:
+
+- `config.json` — a normal cella config with the wildfire model attached:
+  FBFM40 fuel codes grouped into named fuel classes (Grass, Shrub,
+  TimberLitter, ... — see the script for the mapping), elevation layer,
+  unburnable cells (water/urban/barren) as Inactive, and the first observed
+  day's fire as the Burning ignition cells.
+- `truth.json` — the observed mask for every day, rows of `'0'`/`'1'`.
+- `meta.json` — per-day uniform wind (domain-mean ERA5 u/v → speed +
+  direction in cella's convention) and `steps_per_day` (default 50 ticks per
+  day, following the papers on this dataset).
+
+### 3. Run the harness
+
+```bash
+cd cella_lib   # its own build root — running from the repo root won't find it
+cargo run --release --example wildfire_validate -- \
+    ../validation/data/converted/Bear_2020 5 ../validation/results/Bear_2020.json
+```
+
+Arguments: fire directory, ensemble size (seeds), output path. For each seed
+the harness rebuilds the grid, sets that seed and each day's wind on the
+model, advances `steps_per_day` ticks per day, and scores the simulated
+burned set (Burning + BurnedOut) against the observed mask with the two
+field-standard overlap metrics:
+
+- **IoU / Jaccard** = overlap / union — the score the comparison papers
+  report (the neural-CA baseline reaches IoU > 0.6 at 72 h on this data).
+- **Sørensen** = 2·overlap / (sum of areas).
+
+Day 0 always scores 1.0 by construction (the ignition *is* the first
+observed mask) — a built-in sanity check on grid alignment.
+
+## Status and first findings (2026-08-14)
+
+The pipeline runs end-to-end on all six fires. With textbook Alexandridis
+parameters (p0 = 0.58) the model **over-burns Bear 2020 by ~8×** (447k cells
+simulated vs 56k observed, final IoU 0.124) — expected, because those
+constants were tuned for a much coarser time step than 50 ticks/day. A quick
+probe shows the classic percolation cliff:
+
+| p0 | final sim burned | final IoU | behaviour |
+|---|---|---|---|
+| 0.10 | 5k | 0.089 | fire dies out |
+| 0.20 | 212k | 0.100 | over-burns |
+| 0.58 | 447k | 0.124 | burns almost everything reachable |
+
+The observed fire (56k cells) sits inside a narrow band between "dies" and
+"explodes" — which is precisely why published CA validations calibrate
+per-fire (Alexandridis via black-box optimization, PyTorchFire via
+gradients). **Next step: a calibration loop** — grid-search or
+coordinate-descent over (p0, burn_duration, per-class veg_factors, spotting)
+maximizing mean IoU over the daily series, using the deterministic seed
+ensemble. The harness's JSON reports are designed to drive that loop.
+
+Known simplifications to revisit as scores improve: uniform domain-mean wind
+(ERA5 gives per-cell u/v we currently average), no fuel moisture / weather
+beyond wind, no suppression (late-fire days flatten in reality partly because
+of containment — visible in the Bear table where observed growth stalls),
+density layer unused (canopy cover is available in the HDF5).
