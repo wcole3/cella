@@ -170,6 +170,48 @@ Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {
 
 ---
 
+## Fast Paths (bit-parallel stepping)
+
+Three optimizations kick in automatically when a rule or model has the right
+shape. All of them are invisible except for speed: each one checks its
+preconditions every step and falls back to the normal ("scalar") path when
+they don't hold, and property tests pin their output to be exactly identical
+to the scalar path — cells, ages, history, and counts.
+
+**1D packed Wolfram** (`Grid1D::step_packed`, detected by `Rule1DPlan`).
+When a 1D rule is a classic two-state Wolfram automaton (two subrules sharing
+one transition table — see `PackedWolfram` in `rules.rs`), the row is stored
+one *bit* per cell inside 64-bit integers. Shifting a word left/right hands
+all 64 cells their left/right neighbors at once, and the 8-entry transition
+table becomes a handful of AND/OR operations per word. Roughly 40 % faster on
+the rule-30 benchmarks.
+
+**2D bit-plane threshold** (`Grid2D::step_packed`, detected by `Rule2DPlan`).
+When a 2D rule is "life-like" (two cell types, every subrule counting the same
+type over one shared radius-1 neighborhood — see `PackedThreshold2D`), the
+next state only depends on (current state, neighbor count): 18 possible
+situations, precomputed into a table. The grid is packed one bit per cell;
+neighbor counts for 64 cells at a time are built by adding eight shifted words
+with schoolbook binary carries, then the table is applied with bitwise masks.
+Cuts the 256×256 Life benchmark by ~59 % — faster single-threaded than the
+old 8-thread scalar path.
+
+**Wildfire fire-front mask** (`WildfireModel::step_chunk`). The wildfire
+model can't use a count table (its ignition math depends on *which* neighbors
+burn, with per-direction wind and per-cell slope factors), but fire only
+moves at its edges: a cell can only change if it is Burning or touches a
+Burning cell. The step copies the grid through as the default, builds a
+Burning bitmap, ORs its eight shifts into a "might change" mask, and runs the
+full per-cell math only for those cells — a thin front line instead of the
+whole grid. Roughly halves the wildfire benchmarks. Skipped cells never
+consumed randomness, so the stochastic output is bit-identical.
+
+The performance history and the experiment log behind these (including the
+approaches that were tried and made things *worse*) live in
+`docs/performance.md` §8.
+
+---
+
 ## Parallelism and Threading
 
 Both `Grid1D` and `Grid2D` stepping are parallelized to take advantage of multi-core CPUs.

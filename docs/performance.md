@@ -581,6 +581,7 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-08-14 | 46 | 906.93 | §8 round 4: wildfire fire-front mask (E8, −49/−53 %) |
 | *(this change)* | 2026-08-14 | 46 | 1 134.49 | §8 round 3: 2D bit-plane fast path (E7, life-like −58/−59 %); comparable-40 total **580.67** |
 | *(this change)* | 2026-08-14 | 46 | 1 358.11 | §8 round 2: packed-u64 1D Wolfram path (E6, rule30 −34/−43 %); comparable-40 total **764.34** |
 | *(this change)* | 2026-08-14 | 46 | 1 365.45 | §8 experiments E1/E2/E3c (1D code downcast, 2D plan flatten + condition ranges, Gt-0 scan skip); comparable-40 total **785.46** |
@@ -960,11 +961,44 @@ Remaining cost in eligible benches is the per-cell bookkeeping sweep
 (history depth 4 on `large_moore`) and the bits↔cells conversions — same
 follow-on as E6 (keep bit rows alive across steps) if ever needed.
 
-### Net effect (three rounds)
+### Round 4
+
+### E8 — wildfire fire-front mask ✅ KEPT
+
+Could the packed approach apply to the wildfire model? Not directly: its
+ignition probability is not a function of neighbor *count* — it multiplies
+per-direction wind factors and per-cell slope factors over the *specific*
+burning neighbors, across multiple fuel classes, stochastically. No lookup
+table can represent that. But the bitmap machinery works as a **sparsity
+filter**: a wildfire cell can only change if it is Burning (ages/burns out)
+or touches a Burning cell (may ignite). `WildfireModel::step_chunk` now
+copies the chunk through as the default, builds a Burning bitmap for its rows
+(plus a one-row halo), ORs the eight one-cell shifts into a "fire front"
+mask, and runs the scalar per-cell math **only for set bits**. Fire fronts
+are thin lines (~perimeter, not area), so the 8-read + RNG work drops from
+every fuel cell to a few hundred cells per step.
+
+Exactness by construction: skipped cells could not change and never consumed
+randomness (the ignition draw only fires when a burning neighbor exists), so
+per-cell results and RNG streams are bit-identical — confirmed by the
+unchanged FNV snapshots at every thread count, the thread-equivalence tests,
+and the ensemble statistics.
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `2d_wildfire_256_t1` | 125.9 | 59.4 | **−53 %** |
+| `2d_wildfire_spotting_256_t1` | 116.7 | 59.6 | **−49 %** |
+| `2d_wildfire_256_t4` | 71.2 | 45.4 | −36 % |
+
+Remaining cost is the engine bookkeeping sweep, the chunk copy, and the
+bitmap build — all linear passes with no per-cell branching on rule logic.
+
+### Net effect (four rounds)
 
 Comparable-40-entry suite total (sum of avgs):
-**800.01 → 785.46 → 764.34 → 580.67 ms** (−27 % across the experiment rounds,
-on top of LTO); per-bench mins above are the honest per-case numbers.
+**800.01 → 785.46 → 764.34 → 580.67 ms** (−27 %), and the six wildfire
+entries dropped from ~123/71 ms to ~57/46 ms in round 4 (46-entry total
+1 134 → 907 ms). Per-bench mins above are the honest per-case numbers.
 Baselines refreshed after each round; snapshots byte-identical throughout,
 including both wildfire scenarios.
 
