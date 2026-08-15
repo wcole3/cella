@@ -993,7 +993,38 @@ and the ensemble statistics.
 Remaining cost is the engine bookkeeping sweep, the chunk copy, and the
 bitmap build — all linear passes with no per-cell branching on rule logic.
 
-### Net effect (four rounds)
+### Round 5
+
+### E9 — generalized bitwise subrule chain ❌ REJECTED
+
+An attempt to extend the 2D bit path beyond the two-type/table shape: one
+bit-plane per cell type (up to 5 types), per-subrule neighborhoods to radius
+2 (two-bit word shifts), counts to 24 via five bit-planes, ranges as 5-bit
+mask comparators, and the first-match subrule chain replayed with
+`undecided`/output masks — targeting `2d_large_vn_256` (mixed-radius,
+three-type) and the other still-scalar benches. Implementation was correct
+(property tests across mixed radii, Knight/Eq/between ranges, and the
+three-state cycle all passed, snapshots byte-identical) but **slower than
+the scalar path everywhere it fired**: `large_vn` +17 %, `knight` +27 %,
+`langton` +36 %, `three_state` a wash. Two reasons, obvious in hindsight:
+
+1. **E3c already removed the neighbor scan** from `Gt 0` rules, so the
+   three-state family is bookkeeping-bound — a bit kernel adds plane-build
+   and sweep overhead without removing any per-cell work that still exists.
+2. On the remaining candidates the scalar path's per-cell work is a dozen
+   early-exiting reads, while the chain pays plane construction, per-word
+   count trees, and a per-type readback sweep regardless — the conversion
+   overhead never amortizes at these rule sizes.
+
+Fully reverted. Lesson recorded: the bit paths win only where the scalar
+path still does *heavy uniform* per-cell rule work (life-like tables, the
+1D window fold) — not where earlier optimizations already made the scalar
+path cheap. Measurement note: this round was benched under background CPU
+contention (load average up to 17 from unrelated builds); the *relative*
+chain-vs-scalar losses were consistent enough to reject, but absolute
+numbers from the contended window were discarded.
+
+### Net effect (four kept rounds)
 
 Comparable-40-entry suite total (sum of avgs):
 **800.01 → 785.46 → 764.34 → 580.67 ms** (−27 %), and the six wildfire
