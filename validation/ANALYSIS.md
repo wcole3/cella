@@ -88,8 +88,23 @@ honest evaluation needs.
 ## 4. The current scorecard (uncalibrated, August 2026)
 
 These are the out-of-the-box results, before any tuning — textbook
-parameter values taken straight from the research literature. Higher is
-better; best score per fire in bold.
+parameter values taken straight from the research literature.
+
+One picture of the core problem before any numbers. Same fire, same final
+day, three predictions:
+
+![Three maps of the Bear 2020 fire side by side: the real burn is a small
+compact shape of 51 square km; the model's prediction covers the entire
+map, 402 square km; the Circle baseline is a plain disc of the correct
+size.](figures/bear_triptych.png)
+
+*The real Bear 2020 fire (left) burned 51 km². The model (middle) burned
+essentially everything on the map — 402 km², stopped only by rivers and
+roads. The Circle (right) knows no physics at all, but because its size is
+forced to match reality it overlaps the real fire far better than the
+model does. This is what "loses to the Circle" looks like.*
+
+Full scorecard — higher is better; best score per fire in bold:
 
 | Fire | Model | Persistence | The Circle | Verdict |
 |---|---|---|---|---|
@@ -103,6 +118,29 @@ better; best score per fire in bold.
 How to read a row: on Bear 2020, the model's map overlapped the real burn
 with a score of 0.12, while the brainless Circle scored 0.52 — the model's
 physics made its prediction four times *worse* than guessing a circle.
+The same table as a picture:
+
+![Horizontal bar chart of final overlap scores for all six fires. The grey
+Circle bar is longer than the orange model bar on every fire except
+Chimney 2016.](figures/final_scores.png)
+
+And here is *where* the predictions go wrong, fire by fire. Dark cells are
+land the model got right; orange is land the model burned that reality did
+not (false alarms); blue is land that really burned but the model missed:
+
+![Six maps, one per fire. In every map a dark correct region sits in the
+middle of a much larger orange false-alarm region covering most of the
+map. Blue missed areas are small fringes.](figures/agreement_maps.png)
+
+*Two honest observations from these maps. The bad news: the sea of orange
+is the over-burning — the model paints most of each map as burned. The
+good news: the dark core shows the model does capture the real fire's
+shape and location; the real burn is almost entirely inside the
+prediction (very little blue). The model's problem today is knowing where
+to* ***stop****, not where to start. Note Buck 2017's real perimeter has
+straight edges — those are firefighter containment lines, physics the
+model doesn't have (§5). Maps show one representative run (seed 0);
+table scores are 3-run averages.*
 
 ## 5. What is wrong with the model today
 
@@ -114,14 +152,45 @@ values were tuned decades ago for a different setup, so this was expected
 — it is why the test plan's first action item is calibration (tuning the
 knobs on four fires, then verifying on two fires the tuning never saw).
 
+![Six line charts, one per fire, of burned area versus time. On every
+fire the orange model curve climbs far above the dashed reality curve
+and keeps climbing after reality flattens out.](figures/area_curves.png)
+
+*Watch the shape, not just the gap. Real fires (dashed) grow and then
+flatten out — they run into damp fuel, cooler weather, and firefighters.
+The model (orange) never flattens on its own; it climbs until it runs out
+of land. On some fires (Ferguson, Brattain) reality actually spreads*
+***faster*** *than the model early on, then the model blows past it — so
+the model is both too slow at the start and unstoppable at the end. A
+single speed knob cannot fix both directions at once; that is a shape
+problem, not a tuning problem.*
+
 **Shortcoming 2 — it sits on a knife edge.** Fire spread models of this
 family have a known trap: below a threshold the simulated fire fizzles
 out, above it the fire consumes everything reachable, and reality lives in
-a narrow band between. On Bear, one setting burned 5,000 cells (fizzled),
-a slightly higher one burned 212,000 (exploded) — the real fire's 56,000
-sits in the gap. Small parameter changes swing results wildly, which means
-calibration is genuinely hard, not a formality. This sensitivity is itself
-a documented finding about this class of model.
+a narrow band between. We swept the main spread knob (`p0`, the base
+chance that fire jumps to a neighboring cell) across its range on Bear
+2020:
+
+![Line chart of final burned area versus the p0 setting, on a log scale.
+The curve is nearly flat and low up to 0.12, jumps almost vertically
+between 0.12 and 0.20 — crossing the dashed reality line at about
+0.15 — then flattens high.](figures/knife_edge.png)
+
+*Between 0.12 and 0.20 — a small nudge of the knob — the burned area
+jumps 35-fold, from "fizzled" (6 km²) to "exploded" (192 km²). Reality
+sits on the cliff face. Small parameter changes swing results wildly,
+which means calibration is genuinely hard, not a formality. This
+sensitivity is itself a documented finding about this class of model.*
+
+The sweep also produced a sharper finding: at p0 = 0.15 the model burns
+almost exactly the right *amount* (45 km² vs the real 51 km²) — but its
+overlap score is still only 0.12, far below the Circle's 0.52. **Even
+with its size fixed, the model puts the burn in the wrong places on this
+fire.** So calibration alone will not close the gap to the Circle;
+better physics (below) has to carry some of the load. Knowing that
+before the calibration campaign starts is exactly what these baselines
+are for.
 
 **Shortcoming 3 — missing real-world physics.** The model currently does
 not know about: **fuel moisture** (a damp forest spreads slowly no matter

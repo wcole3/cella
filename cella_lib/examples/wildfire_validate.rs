@@ -23,7 +23,13 @@
 //!
 //! Usage (run from cella_lib/, its own build root):
 //!   cargo run --release --example wildfire_validate -- \
-//!       ../validation/data/scenarios/Bear_2020 [seeds] [out.json]
+//!       ../validation/data/scenarios/Bear_2020 [seeds] [out.json] [fields.json]
+//!
+//! The optional 4th argument writes a second JSON with the full per-cell
+//! arrival grids (seed-0 simulation + the radial null). The figure script
+//! (validation/scripts/make_figures.py) reads that file to draw the
+//! model-vs-observed maps; it is heavy (one number per cell), so it is only
+//! written when asked for.
 
 use std::path::{Path, PathBuf};
 
@@ -73,6 +79,21 @@ struct TimeScore {
     miss_rate: f64,
     /// Fraction of simulated-burned cells not observed burned.
     false_rate: f64,
+}
+
+/// Per-cell arrival grids for figure drawing (written only when the 4th CLI
+/// argument asks for them). Hours since t0; -1.0 = never burned. The truth's
+/// own arrival grid already lives in truth.json, so it is not repeated here.
+#[derive(Serialize)]
+struct Fields {
+    scenario: String,
+    width: usize,
+    height: usize,
+    /// Seed-0 ensemble member (deterministic, so reproducible).
+    sim_arrival_seed0: Vec<f64>,
+    /// The area-matched radial null as an arrival grid: the observation time
+    /// at which the growing disc first covers each cell.
+    radial_arrival: Vec<f64>,
 }
 
 #[derive(Serialize)]
@@ -227,6 +248,7 @@ fn main() {
         .unwrap_or("../validation/data/scenarios/Bear_2020"));
     let seeds: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
     let out_path = args.get(3).map(PathBuf::from);
+    let fields_path = args.get(4).map(PathBuf::from);
 
     let sc: Scenario = load(&dir.join("scenario.json"));
     let truth: Truth = load(&dir.join("truth.json"));
@@ -246,8 +268,12 @@ fn main() {
         miss_rate: 0.0, false_rate: 0.0,
     }).collect();
     let mut mae_sum = 0.0f64;
+    let mut sim_arrival_seed0: Vec<f64> = Vec::new();
     for seed in 0..seeds {
         let sim_arrival = run_seed(&cfg, &sc, seed);
+        if seed == 0 {
+            sim_arrival_seed0 = sim_arrival.clone();
+        }
         for (slot, &t) in acc.iter_mut().zip(&truth.observed_at) {
             let s = overlap_scores(&mask_at(&sim_arrival, t), &mask_at(&truth.arrival_hours, t));
             slot.iou += s.iou;
@@ -316,4 +342,30 @@ fn main() {
     }
     std::fs::write(&out, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     eprintln!("report written to {}", out.display());
+
+    if let Some(fp) = fields_path {
+        // Radial arrival: walk the observation times in order; every cell the
+        // disc newly covers gets that time as its arrival.
+        let mut radial_arrival = vec![-1.0f64; total];
+        for &t in &truth.observed_at {
+            let obs_area = mask_at(&truth.arrival_hours, t).iter().filter(|&&b| b).count();
+            for &i in order.iter().take(obs_area) {
+                if radial_arrival[i] < 0.0 {
+                    radial_arrival[i] = t;
+                }
+            }
+        }
+        let fields = Fields {
+            scenario: sc.id.clone(),
+            width: sc.grid.width,
+            height: sc.grid.height,
+            sim_arrival_seed0,
+            radial_arrival,
+        };
+        if let Some(parent) = fp.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&fp, serde_json::to_string(&fields).unwrap()).unwrap();
+        eprintln!("fields written to {}", fp.display());
+    }
 }

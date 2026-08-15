@@ -79,6 +79,23 @@ field-standard overlap metrics:
 Day 0 always scores 1.0 by construction (the ignition *is* the first
 observed mask) — a built-in sanity check on grid alignment.
 
+An optional 4th argument (a second output path) also dumps the per-cell
+arrival grids — the seed-0 simulation and the radial null — which the
+figure step below needs.
+
+### 4. Regenerate the figures (optional)
+
+The charts and maps embedded in [ANALYSIS.md](ANALYSIS.md) live in
+`figures/` (committed, unlike `results/`). To rebuild them after a model
+or converter change, run the harness for all six fires with the fields
+dump, then:
+
+```bash
+VIRTUAL_ENV=$PWD/validation/.venv uv pip install matplotlib
+validation/.venv/bin/python validation/scripts/p0_sweep.py     # knife-edge data (slow)
+validation/.venv/bin/python validation/scripts/make_figures.py # writes figures/*.png
+```
+
 ## Status and first findings (2026-08-14)
 
 The pipeline runs end-to-end on all six fires. With textbook Alexandridis
