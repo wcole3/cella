@@ -8,7 +8,7 @@ pulled by scripts and can always be recreated.
 ## The pipeline, start to finish
 
 ```
-dataset.hdf5  ──convert_pytorchfire.py──▶  config.json + truth.json + meta.json
+dataset.hdf5  ──convert_pytorchfire.py──▶  scenario.json + config.json + truth.json
    (observed fires)                                    │
                                                        ▼
                                      cargo run --example wildfire_validate
@@ -40,24 +40,25 @@ uv venv validation/.venv && VIRTUAL_ENV=$PWD/validation/.venv uv pip install num
 validation/.venv/bin/python validation/scripts/convert_pytorchfire.py
 ```
 
-This writes `validation/data/converted/<fire>/`:
+This writes `validation/data/scenarios/<fire>/` in the **canonical v1
+scenario format — see [FORMATS.md](FORMATS.md)** for the full spec:
 
+- `scenario.json` — identity, provenance (source, license, converter git
+  hash, every simplification made), wind schedule, tick↔hours mapping.
 - `config.json` — a normal cella config with the wildfire model attached:
-  FBFM40 fuel codes grouped into named fuel classes (Grass, Shrub,
-  TimberLitter, ... — see the script for the mapping), elevation layer,
-  unburnable cells (water/urban/barren) as Inactive, and the first observed
-  day's fire as the Burning ignition cells.
-- `truth.json` — the observed mask for every day, rows of `'0'`/`'1'`.
-- `meta.json` — per-day uniform wind (domain-mean ERA5 u/v → speed +
-  direction in cella's convention) and `steps_per_day` (default 50 ticks per
-  day, following the papers on this dataset).
+  FBFM40 fuel codes grouped into named fuel classes, elevation layer,
+  unburnable cells as Inactive, the `t0` observation as Burning ignition.
+- `truth.json` — the observed **arrival time** per cell (hours since `t0`,
+  −1 = never burned) plus the times actually observed and the truth's own
+  spatial accuracy. Masks, area curves, and arrival metrics all derive
+  from this one field.
 
 ### 3. Run the harness
 
 ```bash
 cd cella_lib   # its own build root — running from the repo root won't find it
 cargo run --release --example wildfire_validate -- \
-    ../validation/data/converted/Bear_2020 5 ../validation/results/Bear_2020.json
+    ../validation/data/scenarios/Bear_2020 5 ../validation/results/Bear_2020.json
 ```
 
 Arguments: fire directory, ensemble size (seeds), output path. For each seed
