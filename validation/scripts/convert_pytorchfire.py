@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
-"""Convert the PyTorchFire six-fire HDF5 pack into cella validation inputs.
+"""Convert the PyTorchFire six-fire HDF5 pack into canonical v1 scenarios.
 
-For each fire in `validation/data/dataset.hdf5` this writes, under
-`validation/data/converted/<fire>/`:
+See validation/FORMATS.md for the layout this emits. For each fire in
+`validation/data/dataset.hdf5` this writes
+`validation/data/scenarios/<fire>/{scenario,config,truth}.json`.
 
-- `config.json`  — a cella `CellaConfig` (2d + wildfire model): fuel classes
-  from LANDFIRE FBFM40 codes, elevation from ELEV, ignition cells from the
-  first day's observed fire mask.
-- `truth.json`   — the observed cumulative burned mask for every day, as rows
-  of '0'/'1' characters (compact and trivial to parse from Rust).
-- `meta.json`    — the per-day uniform wind schedule (domain-mean ERA5 u/v ->
-  speed m/s + direction degrees, 0 = +x/east, 90 = +y/south i.e. grid-down),
-  dates, and grid dimensions.
-
-Everything here is a *starting* mapping, deliberately simple; calibration
-comes later. Run with the venv python:
+Run with the venv python:
 
     validation/.venv/bin/python validation/scripts/convert_pytorchfire.py
 """
 
+import datetime as dt
 import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,29 +22,34 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-OUT = DATA / "converted"
+OUT = DATA / "scenarios"
+
+STEPS_PER_DAY = 50  # follows the papers published on this dataset
+FORMAT_VERSION = 1
 
 # FBFM40 fuel model code -> (cella fuel class name, veg_factor).
 # Grouped by the standard Scott & Burgan families; factors are a first-guess
-# relative flammability ordering (grass fastest, timber litter slowest) to be
-# calibrated against the observed perimeters later.
+# relative flammability ordering (grass fastest, timber litter slowest).
+# These are DECLARED DEFAULTS under test, not calibrated values — see
+# validation/TEST_PLAN.md for how calibration is allowed to change them.
 FBFM40_GROUPS = [
-    (range(101, 110), "Grass", 1.2),      # GR1-GR9
-    (range(121, 125), "GrassShrub", 1.0), # GS1-GS4
-    (range(141, 150), "Shrub", 0.9),      # SH1-SH9
-    (range(161, 166), "TimberUnder", 0.8),# TU1-TU5
+    (range(101, 110), "Grass", 1.2),       # GR1-GR9
+    (range(121, 125), "GrassShrub", 1.0),  # GS1-GS4
+    (range(141, 150), "Shrub", 0.9),       # SH1-SH9
+    (range(161, 166), "TimberUnder", 0.8), # TU1-TU5
     (range(181, 190), "TimberLitter", 0.5),# TL1-TL9
-    (range(201, 205), "Slash", 0.7),      # SB1-SB4
+    (range(201, 205), "Slash", 0.7),       # SB1-SB4
 ]
 # 91-99: urban, snow/ice, agriculture, water, barren -> unburnable.
 
 
-def fuel_name(code: int) -> str | None:
-    """Class name for an FBFM40 code, or None for unburnable/nodata."""
-    for rng, name, _ in FBFM40_GROUPS:
-        if code in rng:
-            return name
-    return None
+def git_hash() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    except Exception:
+        return "unknown"
 
 
 def wind_to_speed_dir(u: float, v: float) -> tuple[float, float]:
@@ -66,52 +64,82 @@ def wind_to_speed_dir(u: float, v: float) -> tuple[float, float]:
     return speed, direction
 
 
-def convert_fire(f: h5py.File, name: str, steps_per_day: int) -> None:
+def convert_fire(f: h5py.File, name: str) -> None:
     g = f[name]
-    h, w = g.attrs["height"], g.attrs["width"]
+    h, w = int(g.attrs["height"]), int(g.attrs["width"])
     fuel_codes = g["230FBFM40"][()]
     elevation = g["ELEV2020"][()].astype(np.float32)
-    dates = sorted(g["fire"].keys())
-    masks = {d: (g["fire"][d][()] > 0) for d in dates}
+    dates = sorted(g["fire"].keys())  # chronological
+    t0 = dt.datetime.fromisoformat(dates[0])
+    hours = [ (dt.datetime.fromisoformat(d) - t0).total_seconds() / 3600.0 for d in dates ]
 
-    # Initial cell types: fuel class name, or Inactive for unburnable, with
-    # the first observed mask as the ignition perimeter.
+    # Arrival field: first observation time each cell shows burned; -1 never.
+    arrival = np.full((h, w), -1.0)
+    for d, hrs in zip(reversed(dates), reversed(hours)):
+        burned = g["fire"][d][()] > 0
+        arrival[burned] = hrs  # earlier dates overwrite later ones
+
+    # Initial cell types: fuel class name, Inactive for unburnable, and the
+    # t0 observation as the Burning ignition set (never later truth).
     names = np.full((h, w), "Inactive", dtype=object)
     for rng, cls, _ in FBFM40_GROUPS:
-        sel = np.isin(fuel_codes, list(rng))
-        names[sel] = cls
-    day0 = masks[dates[0]]
+        names[np.isin(fuel_codes, list(rng))] = cls
+    day0 = g["fire"][dates[0]][()] > 0
     names[day0] = "Burning"
 
-    fuels = [{"name": cls, "veg_factor": vf} for _, cls, vf in FBFM40_GROUPS]
-
-    # Domain-mean wind per day.
     wind = []
-    for d in dates:
+    for d, hrs in zip(dates, hours):
         u = float(np.nanmean(g["u_component_of_wind_10m"][d][()]))
         v = float(np.nanmean(g["v_component_of_wind_10m"][d][()]))
         speed, direction = wind_to_speed_dir(u, v)
-        wind.append({"date": d, "speed": round(speed, 3), "dir_deg": round(direction, 2)})
+        wind.append({"hours": hrs, "speed_ms": round(speed, 3), "dir_deg": round(direction, 2)})
+
+    scenario = {
+        "format_version": FORMAT_VERSION,
+        "id": name,
+        "grid": {
+            "width": w, "height": h,
+            "cell_size_m": float(g.attrs["resolution"]),
+            "crs": str(g.attrs["crs"]),
+            "origin": [float(x) for x in g.attrs["bounds_in_3310"][:2]],
+        },
+        "t0_utc": t0.strftime("%Y-%m-%dT00:00:00Z"),
+        "provenance": {
+            "source": "PyTorchFire six-fire pack (dataset.hdf5)",
+            "source_url": "https://github.com/mzhen77/neural-ca-wildfire",
+            "license": "CC-BY-4.0",
+            "retrieved": "2026-08-14",
+            "converter": "validation/scripts/convert_pytorchfire.py",
+            "converter_git": git_hash(),
+            "simplifications": [
+                "wind = domain-mean ERA5 u/v per day (per-cell field discarded)",
+                "FBFM40 codes grouped into 6 named classes with first-guess veg_factors",
+                "canopy cover / LAI layers unused (density left uniform)",
+                "arrival quantized to daily observation times",
+            ],
+        },
+        "wind": wind,
+        "steps_per_hour": STEPS_PER_DAY / 24.0,
+    }
 
     config = {
         "dim": "2d",
-        "width": int(w),
-        "height": int(h),
+        "width": w,
+        "height": h,
         "history_limit": 0,
         "initial": names.ravel().tolist(),
         "rule": {"subrules": []},
         "model": {"wildfire": {
             "params": {
-                "seed": 0,  # the harness overrides this per ensemble member
+                "seed": 0,  # harness overrides per ensemble member
                 "p0": 0.58,
-                "fuels": fuels,
-                "wind_speed": wind[0]["speed"],
+                "fuels": [{"name": cls, "veg_factor": vf} for _, cls, vf in FBFM40_GROUPS],
+                "wind_speed": wind[0]["speed_ms"],
                 "wind_dir_deg": wind[0]["dir_deg"],
                 "c1": 0.045,
                 "c2": 0.131,
                 "slope_a": 0.078,
-                "cell_size": 30.0,
-                # Cells stay burning for a fraction of a day; calibration knob.
+                "cell_size": float(g.attrs["resolution"]),
                 "burn_duration": 5,
                 "spotting": None,
             },
@@ -120,34 +148,28 @@ def convert_fire(f: h5py.File, name: str, steps_per_day: int) -> None:
     }
 
     truth = {
-        "dates": dates,
-        "masks": {d: ["".join("1" if v else "0" for v in row) for row in masks[d]] for d in dates},
-    }
-    meta = {
-        "fire": name,
-        "width": int(w),
-        "height": int(h),
-        "resolution_m": int(g.attrs["resolution"]),
-        "steps_per_day": steps_per_day,
-        "wind": wind,
-        "burnable_cells": int(sum(1 for n in names.ravel() if n not in ("Inactive",))),
-        "day0_burned": int(day0.sum()),
-        "final_burned": int(masks[dates[-1]].sum()),
+        "format_version": FORMAT_VERSION,
+        "time_unit": "hours_since_t0",
+        "observed_at": hours,
+        "arrival_hours": arrival.ravel().tolist(),
+        "spatial_accuracy_m": 375.0,
+        "accuracy_note": "VIIRS-derived daily cumulative masks; arrival quantized to observation days",
     }
 
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
+    (out / "scenario.json").write_text(json.dumps(scenario, indent=1))
     (out / "config.json").write_text(json.dumps(config))
     (out / "truth.json").write_text(json.dumps(truth))
-    (out / "meta.json").write_text(json.dumps(meta, indent=1))
-    print(f"{name}: {w}x{h}, {len(dates)} days, day0 {meta['day0_burned']} -> final {meta['final_burned']} burned cells")
+    burned_final = int((arrival >= 0).sum())
+    print(f"{name}: {w}x{h}, {len(dates)} observations over {hours[-1]:.0f}h, "
+          f"ignition {int(day0.sum())} -> final {burned_final} burned cells")
 
 
 def main() -> None:
-    steps_per_day = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     with h5py.File(DATA / "dataset.hdf5", "r") as f:
         for name in f.keys():
-            convert_fire(f, name, steps_per_day)
+            convert_fire(f, name)
 
 
 if __name__ == "__main__":
