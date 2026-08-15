@@ -492,6 +492,84 @@ mod packed_wolfram {
     }
 }
 
+// ─── Packed 2D threshold fast path: exact equivalence with the scalar path ───
+
+mod packed_threshold_2d {
+    use cella_lib::{CellType, CountOp, Grid2D, Neighborhood2D, Rule2D, Rule2DSubrule};
+
+    fn life_like(neighborhood: Neighborhood2D, defeat_detection: bool) -> Rule2D {
+        let a = CellType::from("Alive");
+        let inactive = CellType::inactive();
+        let mut subrules = vec![
+            Rule2DSubrule::new(a, a, 4, CountOp::Gt, 1, neighborhood, inactive, None, None),
+            Rule2DSubrule::new(a, a, 2, CountOp::Gt, 1, neighborhood, a, None, None),
+            Rule2DSubrule::new(inactive, a, 3, CountOp::Eq, 1, neighborhood, a, None, None),
+        ];
+        if defeat_detection {
+            // A subrule whose current type never occurs in a two-type world:
+            // semantically inert (it can never match), but its non-two-type
+            // current defeats the packed-shape detection, forcing scalar.
+            let ghost = CellType::from("Ghost");
+            subrules.push(Rule2DSubrule::new(ghost, a, 1, CountOp::Gt, 1, neighborhood, a, None, None));
+        }
+        Rule2D { subrules }
+    }
+
+    fn soup(w: usize, h: usize, seed: u64) -> Vec<CellType> {
+        let a = CellType::from("Alive");
+        (0..w * h)
+            .map(|j| if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 1) < 0.4 { a } else { CellType::inactive() })
+            .collect()
+    }
+
+    #[test]
+    fn packed_matches_scalar_exactly() {
+        for nb in [Neighborhood2D::Moore, Neighborhood2D::VonNeumann, Neighborhood2D::Langton] {
+            for (w, h) in [(9usize, 7usize), (63, 5), (64, 4), (65, 4), (130, 3), (256, 16)] {
+                for hl in [0usize, 2] {
+                    let init = soup(w, h, w as u64 ^ (hl as u64) << 8);
+                    let mut packed = Grid2D::new(w, h, hl, init.clone(), life_like(nb, false));
+                    let mut scalar = Grid2D::new(w, h, hl, init, life_like(nb, true));
+                    for step in 0..10 {
+                        packed.step();
+                        scalar.step();
+                        for j in 0..w * h {
+                            assert_eq!(packed.cell_type(j), scalar.cell_type(j),
+                                "cells nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
+                            assert_eq!(packed.cell_age(j), scalar.cell_age(j),
+                                "ages nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
+                            assert_eq!(packed.cell_history(j), scalar.cell_history(j),
+                                "history nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
+                        }
+                        assert_eq!(packed.counts_current, scalar.counts_current,
+                            "counts nb={nb:?} w={w} h={h} hl={hl} step={step}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_cell_falls_back_to_scalar_semantics() {
+        let (w, h) = (70, 6);
+        let mut g = Grid2D::new(w, h, 0, soup(w, h, 3), life_like(Neighborhood2D::Moore, false));
+        let mut reference = Grid2D::new(w, h, 0, soup(w, h, 3), life_like(Neighborhood2D::Moore, true));
+        g.step();
+        reference.step();
+        let f = CellType::from("Foreign2D");
+        assert!(g.transition_state_and_buffer(3 * w + 65, &f).is_none());
+        assert!(reference.transition_state_and_buffer(3 * w + 65, &f).is_none());
+        for step in 0..4 {
+            g.step();
+            reference.step();
+            for j in 0..w * h {
+                assert_eq!(g.cell_type(j), reference.cell_type(j), "step={step} j={j}");
+            }
+        }
+        assert_eq!(g.cell_type(3 * w + 65), CellType::inactive(), "foreign type decays to inactive");
+    }
+}
+
 #[test]
 fn existing_configs_still_load() {
     // Back-compat: every committed config (no model field) must still build.

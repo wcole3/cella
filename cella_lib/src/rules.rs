@@ -635,6 +635,34 @@ impl Rule2D {
     pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
 }
 
+/// Detected two-state threshold shape for the 2D bit-parallel fast path.
+///
+/// Many 2D rules (Conway-style life-like rules in particular) live in a
+/// two-type world: every cell is either `active` or inactive, every subrule
+/// counts `active` neighbors in the *same* radius-1 neighborhood, and each
+/// output is again `active` or inactive. For such rules the next state of a
+/// cell is a pure function of (its current state, its neighbor count) — which
+/// this struct captures as an 18-entry lookup `table[cur][count]`, built by
+/// running the subrule chain once for each combination at plan time.
+///
+/// `Grid2D::step_packed` then stores the grid one bit per cell and steps 64
+/// cells per word: neighbor counts come from adding eight shifted bit-planes
+/// with carry-save adders, and the table is applied with bitwise masks. Only
+/// valid while every cell on the grid is actually `active` or inactive; the
+/// stepper re-checks that each step and falls back to the scalar path
+/// otherwise, keeping semantics exactly scalar.
+#[derive(Clone, Copy)]
+pub(crate) struct PackedThreshold2D {
+    pub active: CellType,
+    /// `table[cur][count]`: `cur` 0 = inactive, 1 = active; `true` means the
+    /// next state is `active`. Counts above the neighborhood size are
+    /// unreachable but harmlessly populated.
+    pub table: [[bool; 9]; 2],
+    /// Which of the eight Moore-radius-1 slots the shared neighborhood counts,
+    /// in `neighborhood_offsets(Moore, 1)` order (sorted `(dx, dy)`).
+    pub slots: [bool; 8],
+}
+
 /// Per-step "plan" for a 2D rule: everything `Grid2D::step()` can work out
 /// **once** before touching any cells, shared read-only by every chunk and
 /// worker thread of that step.
@@ -685,12 +713,19 @@ pub(crate) struct Rule2DPlan {
     /// splitting into. Deliberately an over-estimate — that direction is safe,
     /// because it never makes a too-small grid look worth parallelizing.
     pub work_per_cell: usize,
+    /// `Some` when the rule matches the [`PackedThreshold2D`] shape and the
+    /// bit-parallel fast path may be attempted.
+    pub packed: Option<PackedThreshold2D>,
 }
 
 impl Rule2DPlan {
     /// Build the plan for `rule` on a grid of the given `width`. Called once
     /// at the top of `Grid2D::step()`.
     pub fn new(rule: &Rule2D, width: usize) -> Self {
+        Self::with_inactive(rule, width, CellType::inactive())
+    }
+
+    pub fn with_inactive(rule: &Rule2D, width: usize, inactive: CellType) -> Self {
         let mut lin_flat = Vec::with_capacity(rule.subrules.iter().map(|s| s.offsets.len()).sum());
         let mut spans = Vec::with_capacity(rule.subrules.len());
         for s in &rule.subrules {
@@ -704,7 +739,51 @@ impl Rule2DPlan {
             pad: rule.subrules.iter().map(|s| s.pad).max().unwrap_or(0),
             needs_rng: rule.needs_rng(),
             work_per_cell: rule.subrules.iter().map(|s| s.offsets.len()).sum::<usize>().max(1),
+            packed: Self::detect_packed(rule, inactive),
         }
+    }
+
+    /// See [`PackedThreshold2D`] for the shape this recognizes: a two-type
+    /// world where every subrule counts the same `active` type over one shared
+    /// radius-1 neighborhood, deterministically.
+    fn detect_packed(rule: &Rule2D, inactive: CellType) -> Option<PackedThreshold2D> {
+        let first = rule.subrules.first()?;
+        let active = first.criteria_type;
+        if active == inactive {
+            return None;
+        }
+        let shape = (first.neighborhood, first.range);
+        for s in &rule.subrules {
+            let two_type = |t: CellType| t == active || t == inactive;
+            if s.pad != 1
+                || (s.neighborhood, s.range) != shape
+                || s.criteria_type != active
+                || s.randomness.is_some()
+                || !two_type(s.current_type)
+                || !two_type(s.output_type)
+            {
+                return None;
+            }
+        }
+        // Which of the eight Moore-1 slots this neighborhood counts.
+        let moore = neighborhood_offsets(Neighborhood2D::Moore, 1);
+        let mut slots = [false; 8];
+        for &(dx, dy) in &first.offsets {
+            let j = moore.iter().position(|&o| o == (dx, dy))?; // pad == 1 makes misses impossible
+            slots[j] = true;
+        }
+        // Build the (current, count) -> next table by running the subrule
+        // chain exactly as the scalar path would.
+        let mut table = [[false; 9]; 2];
+        for (cur_slot, cur) in [(0usize, inactive), (1usize, active)] {
+            for count in 0..=8u32 {
+                let next = rule.subrules.iter()
+                    .find(|s| s.current_type == cur && s.eval_condition(count))
+                    .map_or(inactive, |s| s.output_type);
+                table[cur_slot][count as usize] = next == active;
+            }
+        }
+        Some(PackedThreshold2D { active, table, slots })
     }
 
     /// The linear neighbor offsets for subrule `i` (same index as

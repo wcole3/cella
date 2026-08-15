@@ -369,6 +369,136 @@ impl Grid2D {
         count_map
     }
 
+    /// Bit-parallel step for a [`PackedThreshold2D`] rule: one bit per cell,
+    /// rows padded to whole words, 64 cells stepped per word. Returns `None`
+    /// (caller falls back to the scalar path) if any cell is neither `active`
+    /// nor inactive — checked every step, so painting a foreign type mid-run
+    /// stays exactly scalar-correct.
+    ///
+    /// Per word of a row: the eight neighbor bit-planes are the rows above /
+    /// below and the row itself, shifted one bit with cross-word carries (row
+    /// ends and the grid border shift in zeros — matching the scalar path's
+    /// out-of-bounds-reads-as-inactive). Selected planes are summed into four
+    /// count bit-planes with carry-save adder steps, and the rule's
+    /// `(current, count) -> next` table is applied with equality masks.
+    /// Engine bookkeeping (next types, ages, history, counts) stays a per-cell
+    /// sweep, identical to the scalar path's minus all rule evaluation.
+    fn step_packed(&mut self, pt: crate::rules::PackedThreshold2D) -> Option<TypeCounter> {
+        let (w, h) = (self.width, self.height);
+        let active = pt.active;
+        let inactive = self.inactive;
+        if self.cells.iter().any(|&c| c != active && c != inactive) {
+            return None;
+        }
+        let wpr = w.div_ceil(64); // words per row
+        let mut bits = vec![0u64; wpr * h];
+        for y in 0..h {
+            for x in 0..w {
+                if self.cells[y * w + x] == active {
+                    bits[y * wpr + x / 64] |= 1 << (x % 64);
+                }
+            }
+        }
+        let zero_row = vec![0u64; wpr];
+        let mut next_bits = vec![0u64; wpr * h];
+        let tail_mask = if w % 64 != 0 { (1u64 << (w % 64)) - 1 } else { !0u64 };
+        for y in 0..h {
+            let cur_row = &bits[y * wpr..(y + 1) * wpr];
+            let up: &[u64] = if y > 0 { &bits[(y - 1) * wpr..y * wpr] } else { &zero_row };
+            let dn: &[u64] = if y + 1 < h { &bits[(y + 1) * wpr..(y + 2) * wpr] } else { &zero_row };
+            for k in 0..wpr {
+                let shl = |r: &[u64]| (r[k] << 1) | if k > 0 { r[k - 1] >> 63 } else { 0 };
+                let shr = |r: &[u64]| (r[k] >> 1) | if k + 1 < wpr { r[k + 1] << 63 } else { 0 };
+                // In neighborhood_offsets(Moore, 1) order — sorted (dx, dy):
+                // (-1,-1) (-1,0) (-1,1) (0,-1) (0,1) (1,-1) (1,0) (1,1).
+                // dx = -1 means "west neighbor": bit j reads bit j-1 => shl.
+                let planes = [
+                    shl(up), shl(cur_row), shl(dn),
+                    up[k], dn[k],
+                    shr(up), shr(cur_row), shr(dn),
+                ];
+                // Sum the selected 1-bit planes into count bit-planes c3..c0.
+                let (mut c0, mut c1, mut c2, mut c3) = (0u64, 0u64, 0u64, 0u64);
+                for (j, &p) in planes.iter().enumerate() {
+                    if !pt.slots[j] {
+                        continue;
+                    }
+                    let carry0 = c0 & p;
+                    c0 ^= p;
+                    let carry1 = c1 & carry0;
+                    c1 ^= carry0;
+                    let carry2 = c2 & carry1;
+                    c2 ^= carry1;
+                    c3 |= carry2;
+                }
+                // Apply table[cur][count] with per-count equality masks.
+                let m = cur_row[k];
+                let mut next = 0u64;
+                for (count, (&t_act, &t_ina)) in pt.table[1].iter().zip(&pt.table[0]).enumerate() {
+                    if !t_act && !t_ina {
+                        continue;
+                    }
+                    let b0 = if count & 1 != 0 { c0 } else { !c0 };
+                    let b1 = if count & 2 != 0 { c1 } else { !c1 };
+                    let b2 = if count & 4 != 0 { c2 } else { !c2 };
+                    let b3 = if count & 8 != 0 { c3 } else { !c3 };
+                    let eq = b0 & b1 & b2 & b3;
+                    let src = match (t_act, t_ina) {
+                        (true, true) => !0u64,
+                        (true, false) => m,
+                        _ => !m,
+                    };
+                    next |= eq & src;
+                }
+                next_bits[y * wpr + k] = next;
+            }
+            // Padding bits of the row's last word are not real cells; clear
+            // them so a count-0-fires table row can't invent activity there.
+            next_bits[y * wpr + wpr - 1] &= tail_mask;
+        }
+
+        let hl = self.history_limit;
+        let mut active_count = 0u64;
+        for y in 0..h {
+            let base = y * wpr;
+            for x in 0..w {
+                let j = y * w + x;
+                let cur = self.cells[j];
+                let nb = (next_bits[base + x / 64] >> (x % 64)) & 1 == 1;
+                let new_type = if nb { active } else { inactive };
+                self.next_cells[j] = new_type;
+                if hl > 0 {
+                    let hb = j * hl;
+                    let hd = self.history_heads[j] as usize;
+                    self.history_data[hb + hd] = cur;
+                    self.history_heads[j] = if hd + 1 == hl { 0 } else { (hd + 1) as u8 };
+                    let c = self.history_counts[j] as usize;
+                    if c < hl {
+                        self.history_counts[j] = (c + 1) as u8;
+                    }
+                }
+                if cur == new_type {
+                    self.ages[j] = self.ages[j].saturating_add(1);
+                } else {
+                    self.ages[j] = 0;
+                }
+                active_count += nb as u64;
+            }
+        }
+
+        // Same shape the per-cell path produces: count everything except the
+        // dominant type (apply_counts back-fills it by subtraction).
+        let dt = self.dominant_type;
+        let mut count_map = TypeCounter::new();
+        if active != dt {
+            count_map.add_n(active, active_count);
+        }
+        if inactive != dt {
+            count_map.add_n(inactive, (w * h) as u64 - active_count);
+        }
+        Some(count_map)
+    }
+
     /// Advance the automaton by one step using double-buffering.
     ///
     /// When an [`crate::external::ExternalModel`] is attached, it drives the
@@ -381,7 +511,24 @@ impl Grid2D {
         let height = self.height;
         let total = width * height;
         let hl = self.history_limit;
-        let plan = Rule2DPlan::new(&self.rule, width);
+
+        // Bit-parallel fast path for two-state threshold rules (see
+        // PackedThreshold2D). Runs regardless of thread count — it is a
+        // single-pass whole-grid stepper and deterministic by construction.
+        if total > 0 {
+            let packed = Rule2DPlan::with_inactive(&self.rule, width, self.inactive).packed;
+            if let Some(pt) = packed {
+                if let Some(count_map) = self.step_packed(pt) {
+                    std::mem::swap(&mut self.cells, &mut self.next_cells);
+                    apply_counts(&mut self.counts_current, &mut self.peak_counts,
+                        &mut self.dominant_type, total as u64, &count_map);
+                    self.step = self.step.saturating_add(1);
+                    return;
+                }
+            }
+        }
+
+        let plan = Rule2DPlan::with_inactive(&self.rule, width, self.inactive);
         let nchunks = chunks_for_work(total.saturating_mul(plan.work_per_cell));
         let cells = &self.cells;
         let rule = &self.rule;
