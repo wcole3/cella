@@ -341,7 +341,7 @@ increasing order of change, are `FxHashMap<Spur, u64>`, syncing the public maps
 on demand instead of every step, or a dense `Vec<u64>` indexed by
 `Spur::into_inner()`.
 
-### 3.5 Small-buffer offsets *(open)*
+### 3.5 Small-buffer offsets *(closed — subsumed by §3.12/§8 E2's flat plan, no SmallVec dependency)*
 
 `sr.offsets` remains a heap `Vec<(i32,i32)>`, and `Rule2DPlan::lin` a
 `Vec<Vec<isize>>`. Common shapes are tiny (Moore n=1 → 8, VonNeumann n=1 → 4), so
@@ -389,7 +389,7 @@ deterministic (the same detection Hashlife would need, §6).
   unsupported-`n` case is handled in one place (`applies_*` reports no match)
   rather than being a silent `continue` in the middle of the dispatch.
 
-### 3.9 Open regression: 1D `n = 1` rules *(open)*
+### 3.9 Open regression: 1D `n = 1` rules *(largely resolved — see the addendum and §8 E1)*
 
 Three 1D benchmarks are slower than before this work, and the pattern is precise:
 `n = 1` rules regressed 13–23 %, while `n = 2` and `n = 3` rules improved.
@@ -433,8 +433,11 @@ loop. The natural fix is a `Rule1DPlan` built per step in `Grid1D::step`
 (mirroring `Rule2DPlan` — `Rule1DSubrule` has no constructor, so derived state
 cannot be cached on the subrule itself) that downcasts the code per subrule:
 `u8` for n = 1, `u32` for n = 2, `u128` only for n = 3, hoisting the `n`
-validity check out of the cell loop. Sequenced after the criterion migration so
-the result is attributable; §3.7's packed-`u64` path would subsume it entirely.
+validity check out of the cell loop. **Implemented and confirmed (§8 E1)**:
+`1d_three_state_cycle` −13.4 %, `1d_n2_alt` −13 %, `1d_rule30_center` −8 %,
+n=3 unchanged — the u128 shift was the missing suspect. `1d_large_rule30_2049`
+only moved −1 %, so its remaining cost is elsewhere; §3.7's packed-`u64` path
+is still the fix for that case.
 
 ### 3.10 `pool()` registry lock removed *(done)*
 
@@ -467,10 +470,10 @@ the same change. Measured effect on the 40 pre-existing entries: **820.78 →
 800.01 ms (−2.5 %)** — at the edge of the harness noise band but consistently
 downward, with no per-case regression outside noise. Snapshots byte-identical.
 
-### 3.12 Per-step allocations and loop-invariant dispatch *(open)*
+### 3.12 Per-step allocations and loop-invariant dispatch *(mostly done — §8 E2)*
 
-Fresh findings, unmeasurable under the old ±5–8 % noise floor; queued behind
-the §4 criterion migration:
+The first three items below shipped as experiment E2 (measured −7 to −12 %
+across the threshold benches, see §8); the output-write item remains open:
 
 - `Rule2DPlan::new` allocates `Vec<Vec<isize>>` — one malloc per subrule per
   step, and the innermost loop's `zip(lin)` chases a `&Vec` pointer per
@@ -578,6 +581,8 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-08-14 | 46 | 1 358.11 | §8 round 2: packed-u64 1D Wolfram path (E6, rule30 −34/−43 %); comparable-40 total **764.34** |
+| *(this change)* | 2026-08-14 | 46 | 1 365.45 | §8 experiments E1/E2/E3c (1D code downcast, 2D plan flatten + condition ranges, Gt-0 scan skip); comparable-40 total **785.46** |
 | *(this change)* | 2026-08-14 | 46 | 1 335.37 | Thin-LTO/codegen-units profile + six wildfire entries *(set)*; the 40 pre-existing entries sum to **800.01** (−2.5 % vs 820.78) |
 | `b67acbf` | 2026-07-27 | 40 | 820.78 | Interior/edge fast path + persistent rayon pool + work-sized chunking (§3.1/§3.2) |
 | `5dbda2c` | 2026-06-24 | 40 | 1 536.82 | Revert grid1d fixed-array experiment back to `Vec` |
@@ -778,6 +783,158 @@ pass).
 
 ---
 
+## 8. Experiment Log (2026-08-14 optimization session)
+
+Protocol: `CELLA_BENCH=1 CELLA_BENCH_RUNS=10 cargo test --release --test
+long_suite -- --ignored --test-threads=1 --nocapture <filter>`, comparing
+**min-of-runs** (far more stable than the mean on this WSL2 box); FNV
+snapshots byte-identical after every experiment — including the two wildfire
+snapshots, which pin the stochastic path across thread counts. Numbers below
+are t1 mins in ms unless noted. Kept and rejected experiments both recorded.
+
+### E1 — 1D `Rule1DPlan` code downcast ✅ KEPT (resolves most of §3.9)
+
+Per-step plan (`rules.rs::Rule1DPlan`) downcasts `wolfram_code` to `u64` for
+`n <= 2` (window index ≤ 31) and hoists the `1 <= n <= 3` validity check out
+of the cell loop; only `n = 3` still pays the 128-bit variable shift.
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `1d_three_state_cycle` | 7.42 | 6.42 | **−13.4 %** |
+| `1d_n2_alt` | 1.11 | 0.96 | **−13 %** |
+| `1d_rule30_center` | 1.42 | 1.31 | −8 % |
+| `1d_large_rule30_2049` | 25.87 | 25.55 | −1.2 % |
+| `1d_n3_custom` | 0.88 | 0.88 | flat (still u128, as expected) |
+
+The §3.9 regression was +13–23 % on n=1 cases; this recovers most of it. The
+u128 variable shift was indeed the untested suspect. `1d_large_rule30_2049`
+moving least suggests its remaining cost is elsewhere (likely memory-bound;
+the §3.7 packed-u64 path remains the real fix there).
+
+### E2 — 2D plan flatten + `(lo, hi)` ranges + lazy `TypeCounter` ✅ KEPT
+
+Three §3.12 items landed together: `Rule2DPlan.lin` flattened to
+`lin_flat + spans` (2 allocations/step instead of subrules+1, slice indexing
+instead of `&Vec` chase in the inner loop); `eval_condition`'s six-arm
+`(op, limit)` match folded into precomputed inclusive `cond_lo..=cond_hi`
+fields on `Rule2DSubrule` (serde-skipped, like `early_exit`); `TypeCounter::new`
+allocation-free until first `add` (rayon reduce identity is now free).
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `2d_three_state_cycle` | 45.67 | 40.00 | **−12.4 %** |
+| `2d_vonneumann_threshold` | 3.29 | 2.92 | −11 % |
+| `2d_langton_diagonals` | 2.04 | 1.83 | −10 % |
+| `2d_straightline_threshold` | 2.15 | 1.93 | −10 % |
+| `2d_knight_neighborhood` | 3.57 | 3.24 | −9 % |
+| `2d_large_moore_256` | 150.36 | 138.15 | **−8.1 %** |
+| `2d_large_vn_256` | 68.26 | 63.24 | −7.4 % |
+| `stress_config_100x100` (t4) | 3.00 | 2.79 | −7 % |
+| `2d_life_like_moore` | 5.25 | 4.89 | −7 % |
+
+Broad win across every threshold bench. This closes §3.5 (no SmallVec
+dependency needed) and the plan/condition/counter parts of §3.12.
+
+### E3a/E3b — hoisted early-exit loop restructure ❌ REJECTED
+
+Splitting the neighbor loop into separate early-exit and branchless-accumulate
+variants (`if early { counting loop with break } else { pure += (t==crit) }`)
+helped `2d_three_state_cycle` (−5–8 %) but **regressed `2d_large_moore_256`
+by 4–6 %** (143.5–146.4 vs 138.2) in both the accumulate (E3a) and branchy
+(E3b) variants — a code-layout effect, not the accumulate itself. Reverted.
+
+### E3c — `Gt 0` scan skip ✅ KEPT
+
+Keeping the inner loop byte-identical and only adding a pre-check — a subrule
+with `early_exit && count == 0` is satisfied with zero neighbors, so the scan
+is skipped entirely:
+
+| Bench | E2 | E3c | Δ |
+|---|---|---|---|
+| `2d_three_state_cycle` | 40.00 | 35.76 | **−10.6 %** |
+| `2d_large_vn_256` | 63.24 | 60.57 | −4.2 % |
+| `2d_life_like_moore` | 4.89 | 4.94 | +1 % (noise) |
+| `2d_large_moore_256` | 138.15 | ~141.5 | **+2.4 %** (isolated 15-run re-check) |
+
+The `2d_large_moore_256` cost is persistent but small and bought a 4.2 ms win
+on `three_state` plus smaller wins elsewhere; net suite-positive, kept. The
+three-state-cycle family (`Gt 0` transition rules) no longer scans neighbors
+at all.
+
+### Not attempted, with reasons
+
+- **Wildfire branchless neighbor loop** (`p_no *= 1 − is_burning · p` always):
+  most fuel cells have zero burning neighbors and take a well-predicted branch;
+  branchless would charge 8 f32 multiplies to every fuel cell to help only the
+  fire front. Expected net loss.
+- **Run-based interior counting (§3.13)**: every committed bench uses range
+  1–2, where per-`dy` runs are 1–3 cells long — slice-per-run overhead would
+  dominate. Becomes interesting only with larger-radius workloads; left open.
+- **Hashlife**: excluded by request (§6 unchanged).
+
+### Round 2
+
+### E5 — history-branch monomorphization ❌ REJECTED (badly)
+
+Splitting `Grid2D::step_chunk` into `<const HIST: bool>` variants so the
+per-cell `history_limit > 0` test disappears regressed **every** 2D bench by
+**+30–46 %** (`large_moore` 141→185, `large_vn` 60.6→88.5, `three_state`
+35.8→48.5, `life_like` 4.9→6.4). The doubled loop body blows the inliner
+budget for `next_type_interior`; the branch it removed was perfectly
+predicted anyway. Reverted; a warning comment now sits on `step_chunk`.
+Together with the doc's earlier 1D tri-split ablation and §8 E3a/b, that is
+three independent data points that this hot loop is **code-size-bound** —
+any experiment that grows it needs to expect a regression. The 2D row-based
+loop restructure was skipped on the same evidence.
+
+### Probe — where does `1d_large_rule30_2049` spend its time?
+
+Throwaway `#[ignore]` test, min-of-8, t1: `hist = 4` → 23.2 ms, `hist = 0` →
+21.1 ms. History is only ~9 % — the window fold + dispatch dominates, which
+green-lit E6 (a packed fast path would have been pointless if bookkeeping
+dominated).
+
+### E6 — packed-`u64` 1D Wolfram fast path ✅ KEPT (§3.7 stage 1)
+
+`Rule1DPlan` now detects the **pure two-state Wolfram shape** (exactly two
+`n = 1` subrules — `{current: active}` and `{current: inactive}` — same
+criteria/code/output, no randomness; both committed rule30 scenarios match
+it). Eligible serial steps run `Grid1D::step_packed`: the row packed one bit
+per cell, neighbors as whole-word shifts with cross-word carries, and the
+8-entry transition table evaluated for 64 cells at once by OR-ing the AND of
+(possibly complemented) `l`/`m`/`r` words per set code bit. The engine
+bookkeeping (next types, ages, history, counts) stays a per-cell sweep.
+
+Exactness guarantees: a per-step scan falls back to the scalar path if any
+cell is neither `active` nor inactive (so painting a foreign type mid-run
+cannot diverge), parallel-width grids fall back (word carries don't cross
+chunk boundaries), and a property test drives packed vs scalar grids
+(detection defeated by a semantically-inert third subrule) across codes
+{0, 30, 110, 129, 255} × widths {1, 63, 64, 65, 130, 2049} × `hl` {0, 2},
+asserting cells, ages, history, and counts equal every step. The FNV
+snapshots for both rule30 scenarios pass unchanged.
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `1d_large_rule30_2049` | 25.55 | 14.66 | **−43 %** |
+| `1d_rule30_center` | 1.31 | 0.86 | **−34 %** |
+| `1d_three_state_cycle` (3 types, ineligible) | 6.42 | 6.34 | unchanged ✓ |
+| `1d_n2_alt` / `1d_n3_custom` (ineligible) | — | — | unchanged ✓ |
+
+Remaining cost in the eligible benches is the per-cell bookkeeping sweep and
+the bits↔cells conversions each step. Follow-on if ever needed: keep the bit
+row alive across steps (invalidate on paint) and vectorize the age update —
+diminishing returns until bookkeeping itself is the bottleneck.
+
+### Net effect (both rounds)
+
+Comparable-40-entry suite total (sum of avgs): **800.01 → 785.46 → 764.34 ms**
+(−4.5 % across the two experiment rounds, on top of LTO); per-bench mins above
+are the honest per-case numbers. Baselines refreshed after each round;
+snapshots byte-identical throughout, including both wildfire scenarios.
+
+---
+
 ## Summary of Priorities
 
 Done:
@@ -812,14 +969,18 @@ Next, in order:
     particular a randomness benchmark, without which §3.3 cannot be measured,
     a 1D case large enough to exercise the parallel path, and the
     threshold-straddling sizes §3.14 needs.
-11. §3.9 via the `Rule1DPlan` downcast (addendum there) — the one item above
-    today's noise floor, and the last untested suspect.
-12. §3.12 per-step allocation and dispatch cleanups (subsumes §3.5, no
-    SmallVec dependency).
-13. §3.13 interior bounds-check elision via contiguous-run slices — the safe
-    stepping stone to the bit-packed / SIMD fast path (3.7), which remains the
-    largest projected win. (`std::simd` is still nightly-only; SWAR
-    bit-packing and autovectorization are the stable routes.)
+11. ✅ §3.9 via the `Rule1DPlan` downcast — done, §8 E1 (−8 to −13 % on n≤2
+    1D cases; `1d_large_rule30_2049` still wants §3.7).
+12. ✅ §3.12 plan flatten, condition ranges, lazy counter — done, §8 E2
+    (−7 to −12 % across threshold benches; subsumes §3.5). The output-write
+    bounds item stays open. §8 E3c added the `Gt 0` scan skip on top.
+13. §3.7 **1D stage shipped** (§8 E6): packed-u64 Wolfram path, −43 % on the
+    eligible flagship bench. The 2D bit-plane/SWAR stage remains open, but the
+    E5/E3 evidence says the 2D loop is code-size-bound — approach it as a
+    *separate* stepper function selected per rule shape (like the 1D packed
+    path), never as growth of `step_chunk` itself. §3.13's contiguous-run idea
+    stays parked for large-radius workloads. (`std::simd` is still
+    nightly-only; SWAR and autovectorization are the stable routes.)
 14. Migrate the subrule `randomness` draw to the stateless hash RNG (§7) —
     a deliberate behavior change to schedule, not sneak in.
 15. Revisit a spin-then-park worker pool (§3.2) only after measuring fork/join
