@@ -434,6 +434,28 @@ impl ExternalModel for WildfireModel {
         20
     }
 
+    /// Fire only moves at its edges, and this loop exploits that.
+    ///
+    /// A cell's type can only change this step if it is Burning (it ages or
+    /// burns out) or if it has at least one Burning neighbor (it might
+    /// ignite). Everything else — unburned fuel far from the fire, burned
+    /// ground, water — stays exactly as it is. On a big grid the fire front
+    /// is a thin line, so "might change" is a tiny fraction of all cells.
+    ///
+    /// So instead of running the transition math for every cell:
+    ///
+    /// 1. Copy the current types over as the default next state.
+    /// 2. Build a bitmap with one bit per cell: 1 = Burning. (The rows this
+    ///    chunk covers, plus one halo row above and below.)
+    /// 3. OR together the bitmap's eight one-cell shifts (plus itself). A set
+    ///    bit now means "this cell is Burning or touches a Burning cell" —
+    ///    the only cells worth visiting.
+    /// 4. Walk just those set bits and run the normal per-cell transition
+    ///    ([`Self::next_type`]) and spotting draw for them.
+    ///
+    /// Results are identical to visiting every cell: skipped cells could not
+    /// have changed, and they never consumed randomness in the first place
+    /// (the ignition draw only happens when a burning neighbor exists).
     fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
         let dir = self.dir_factors();
@@ -441,36 +463,86 @@ impl ExternalModel for WildfireModel {
         let width = ctx.width;
         let height = ctx.height;
         let cells = ctx.cells;
-        let mut x = ctx.start % width;
-        let mut y = ctx.start / width;
-        let mut row_interior = y >= 1 && y + 1 < height;
-        for (local, slot) in next.iter_mut().enumerate() {
-            let idx = ctx.start + local;
-            let cur = cells[idx];
-            let new_type = if row_interior && x >= 1 && x + 1 < width {
-                self.next_type(ctx, idx, local, cur, &dir, |j| cells[idx.wrapping_add_signed(d.lin[j])])
-            } else {
-                self.next_type(ctx, idx, local, cur, &dir, |j| {
-                    let (dx, dy) = d.offsets[j];
-                    let (nx, ny) = (x as i64 + dx as i64, y as i64 + dy as i64);
-                    if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
-                        d.inactive
-                    } else {
-                        cells[ny as usize * width + nx as usize]
-                    }
-                })
-            };
-            *slot = new_type;
-            if cur == d.burning {
-                if let Some(target) = self.spot_target(ctx, idx, x, y) {
-                    events.push(ModelEvent { target, new_type: d.burning });
+        let start = ctx.start;
+        let len = next.len();
+        if len == 0 {
+            return events;
+        }
+        // 1. Default: cells untouched by fire keep their type.
+        next.copy_from_slice(&cells[start..start + len]);
+
+        // 2. Burning bitmap for the chunk's rows plus a one-row halo.
+        let wpr = width.div_ceil(64); // words per row
+        let y_first = start / width;
+        let y_last = (start + len - 1) / width;
+        let y_lo = y_first.saturating_sub(1);
+        let y_hi = (y_last + 1).min(height - 1);
+        let nrows = y_hi - y_lo + 1;
+        let mut burn = vec![0u64; nrows * wpr];
+        for r in 0..nrows {
+            let row = (y_lo + r) * width;
+            for x in 0..width {
+                if cells[row + x] == d.burning {
+                    burn[r * wpr + x / 64] |= 1 << (x % 64);
                 }
             }
-            x += 1;
-            if x == width {
-                x = 0;
-                y += 1;
-                row_interior = y >= 1 && y + 1 < height;
+        }
+        let zero = vec![0u64; wpr];
+
+        for y in y_first..=y_last {
+            let r = y - y_lo;
+            let cur_b = &burn[r * wpr..(r + 1) * wpr];
+            let up: &[u64] = if y > 0 { &burn[(r - 1) * wpr..r * wpr] } else { &zero };
+            let dn: &[u64] = if y + 1 < height { &burn[(r + 1) * wpr..(r + 2) * wpr] } else { &zero };
+            // The chunk may start or end mid-row; only visit its own cells.
+            let row_start = y * width;
+            let x_lo = start.saturating_sub(row_start);
+            let x_hi = (start + len - row_start).min(width);
+            let row_interior = y >= 1 && y + 1 < height;
+            for k in (x_lo / 64)..=((x_hi - 1) / 64) {
+                let shl = |row: &[u64]| (row[k] << 1) | if k > 0 { row[k - 1] >> 63 } else { 0 };
+                let shr = |row: &[u64]| (row[k] >> 1) | if k + 1 < wpr { row[k + 1] << 63 } else { 0 };
+                // 3. Burning-or-touching-Burning mask for these 64 cells.
+                let mut m = shl(up) | up[k] | shr(up)
+                    | shl(cur_b) | cur_b[k] | shr(cur_b)
+                    | shl(dn) | dn[k] | shr(dn);
+                // Clip to this chunk's cells within the row.
+                if k == x_lo / 64 {
+                    m &= !0u64 << (x_lo % 64);
+                }
+                if k == (x_hi - 1) / 64 {
+                    let t = x_hi - k * 64;
+                    if t < 64 {
+                        m &= (1u64 << t) - 1;
+                    }
+                }
+                // 4. Visit only the set bits.
+                while m != 0 {
+                    let x = k * 64 + m.trailing_zeros() as usize;
+                    m &= m - 1; // clear that bit
+                    let idx = y * width + x;
+                    let local = idx - start;
+                    let cur = cells[idx];
+                    let new_type = if row_interior && x >= 1 && x + 1 < width {
+                        self.next_type(ctx, idx, local, cur, &dir, |j| cells[idx.wrapping_add_signed(d.lin[j])])
+                    } else {
+                        self.next_type(ctx, idx, local, cur, &dir, |j| {
+                            let (dx, dy) = d.offsets[j];
+                            let (nx, ny) = (x as i64 + dx as i64, y as i64 + dy as i64);
+                            if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                                d.inactive
+                            } else {
+                                cells[ny as usize * width + nx as usize]
+                            }
+                        })
+                    };
+                    next[local] = new_type;
+                    if cur == d.burning {
+                        if let Some(target) = self.spot_target(ctx, idx, x, y) {
+                            events.push(ModelEvent { target, new_type: d.burning });
+                        }
+                    }
+                }
             }
         }
         events
