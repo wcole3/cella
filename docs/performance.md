@@ -581,6 +581,7 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-08-14 | 46 | 1 134.49 | §8 round 3: 2D bit-plane fast path (E7, life-like −58/−59 %); comparable-40 total **580.67** |
 | *(this change)* | 2026-08-14 | 46 | 1 358.11 | §8 round 2: packed-u64 1D Wolfram path (E6, rule30 −34/−43 %); comparable-40 total **764.34** |
 | *(this change)* | 2026-08-14 | 46 | 1 365.45 | §8 experiments E1/E2/E3c (1D code downcast, 2D plan flatten + condition ranges, Gt-0 scan skip); comparable-40 total **785.46** |
 | *(this change)* | 2026-08-14 | 46 | 1 335.37 | Thin-LTO/codegen-units profile + six wildfire entries *(set)*; the 40 pre-existing entries sum to **800.01** (−2.5 % vs 820.78) |
@@ -926,12 +927,46 @@ the bits↔cells conversions each step. Follow-on if ever needed: keep the bit
 row alive across steps (invalidate on paint) and vectorize the age update —
 diminishing returns until bookkeeping itself is the bottleneck.
 
-### Net effect (both rounds)
+### Round 3
 
-Comparable-40-entry suite total (sum of avgs): **800.01 → 785.46 → 764.34 ms**
-(−4.5 % across the two experiment rounds, on top of LTO); per-bench mins above
-are the honest per-case numbers. Baselines refreshed after each round;
-snapshots byte-identical throughout, including both wildfire scenarios.
+### E7 — 2D bit-plane fast path ✅ KEPT (§3.7 stage 2)
+
+`Rule2DPlan` now detects the **two-state threshold shape** (every subrule
+counts the same `active` type over one shared radius-1 neighborhood, no
+randomness, currents/outputs all `active`/inactive — life-like rules). For
+such rules the next state is a pure function of `(current, neighbor count)`,
+captured as an 18-entry table built by running the subrule chain once per
+combination at plan time. Eligible steps run `Grid2D::step_packed`: one bit
+per cell with rows padded to whole words, the eight neighbor planes formed by
+word shifts with cross-word carries (row ends and borders shift in zeros),
+counts accumulated into four bit-planes with carry-save adder steps, and the
+table applied via equality masks — 64 cells per word. Applied at every thread
+count (measured faster than the 8-thread scalar path). Same exactness recipe
+as E6: per-step content scan with scalar fallback, and packed-vs-scalar
+property tests (detection defeated by a semantically-inert ghost subrule)
+across Moore/VonNeumann/Langton × six sizes straddling word boundaries × `hl`
+{0, 2}, asserting cells/ages/history/counts equal every step.
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `2d_large_moore_256_t1` | 141.5 | 58.2 | **−59 %** |
+| `2d_large_moore_256_t8` (was parallel scalar) | 81.1 | 59.7 | **−26 %** |
+| `2d_life_like_moore` | 4.94 | 2.06 | **−58 %** |
+| `2d_three_state_cycle` (3 types, ineligible) | 35.8 | 34.6 | unchanged ✓ |
+| `2d_large_vn_256` (range 2, ineligible) | — | — | unchanged ✓ |
+| wildfire scenarios (model path) | — | — | unchanged ✓ |
+
+Remaining cost in eligible benches is the per-cell bookkeeping sweep
+(history depth 4 on `large_moore`) and the bits↔cells conversions — same
+follow-on as E6 (keep bit rows alive across steps) if ever needed.
+
+### Net effect (three rounds)
+
+Comparable-40-entry suite total (sum of avgs):
+**800.01 → 785.46 → 764.34 → 580.67 ms** (−27 % across the experiment rounds,
+on top of LTO); per-bench mins above are the honest per-case numbers.
+Baselines refreshed after each round; snapshots byte-identical throughout,
+including both wildfire scenarios.
 
 ---
 
@@ -974,13 +1009,15 @@ Next, in order:
 12. ✅ §3.12 plan flatten, condition ranges, lazy counter — done, §8 E2
     (−7 to −12 % across threshold benches; subsumes §3.5). The output-write
     bounds item stays open. §8 E3c added the `Gt 0` scan skip on top.
-13. §3.7 **1D stage shipped** (§8 E6): packed-u64 Wolfram path, −43 % on the
-    eligible flagship bench. The 2D bit-plane/SWAR stage remains open, but the
-    E5/E3 evidence says the 2D loop is code-size-bound — approach it as a
-    *separate* stepper function selected per rule shape (like the 1D packed
-    path), never as growth of `step_chunk` itself. §3.13's contiguous-run idea
-    stays parked for large-radius workloads. (`std::simd` is still
-    nightly-only; SWAR and autovectorization are the stable routes.)
+13. §3.7 **both stages shipped** (§8 E6/E7): packed-u64 1D Wolfram path
+    (−43 % rule30) and the 2D bit-plane threshold path (−58/−59 % life-like),
+    each a separate stepper selected per rule shape with per-step scalar
+    fallback — exactly the structure the E5/E3 code-size evidence demanded.
+    Remaining headroom in eligible workloads is the bookkeeping sweep and
+    per-step bits↔cells conversion (keep bit rows alive across steps if it
+    ever matters). §3.13's contiguous-run idea stays parked for large-radius
+    scalar workloads. (`std::simd` is still nightly-only; SWAR and
+    autovectorization are the stable routes.)
 14. Migrate the subrule `randomness` draw to the stateless hash RNG (§7) —
     a deliberate behavior change to schedule, not sneak in.
 15. Revisit a spin-then-park worker pool (§3.2) only after measuring fork/join
