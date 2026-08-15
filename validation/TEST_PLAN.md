@@ -10,6 +10,10 @@ the parameter search space are fixed here **before** results are collected.
 Changing them afterwards requires a new plan version with the change and its
 reason logged in §9.
 
+*Reading this for the first time, or not deep in the code?
+[ANALYSIS.md](ANALYSIS.md) explains the scores, the baselines, and the
+current results in plain language.*
+
 ---
 
 ## 1. What is under test

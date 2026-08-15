@@ -5,6 +5,11 @@ real, observed fires. The code and docs here are committed; the inputs and
 outputs (`data/`, `papers/`, `results/`, `.venv/`) are gitignored — they are
 pulled by scripts and can always be recreated.
 
+**New here, or non-technical? Start with [ANALYSIS.md](ANALYSIS.md)** — the
+plain-language guide to what the scores mean, what the model's current
+shortcomings are, and how to read a results table without fooling yourself.
+The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md).
+
 ## The pipeline, start to finish
 
 ```
