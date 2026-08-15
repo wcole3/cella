@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use crate::chunking::{split_chunks, OutChunk};
 use crate::types::{CellState, CellType};
-use crate::rules::{apply_counts, Rule1D, Rule1DSubrule, TypeCounter};
+use crate::rules::{apply_counts, PackedWolfram, Rule1D, Rule1DPlan, Rule1DSubrule, Sub1DPlan, TypeCounter};
 use crate::threads::{chunks_for_work, pool};
 
 /// 1D grid containing cells and a 1D rule.
@@ -213,30 +213,34 @@ impl Grid1D {
     /// The `n` arms are spelled out rather than looped so each window folds into
     /// straight-line code — a loop bounded by the runtime `n` does not unroll and
     /// measurably costs more than the bounds checks it removes.
+    /// `n <= 2` windows index at most bit 31, so the shift runs on the plan's
+    /// 64-bit `code_lo`; only `n = 3` (up to bit 127) pays for a 128-bit shift.
+    /// The caller has already checked `plan.valid`, so no `n` re-validation.
     #[inline]
-    fn applies_interior(s: &Rule1DSubrule, cells: &[CellType], idx: usize,
+    fn applies_interior(s: &Rule1DSubrule, plan: &Sub1DPlan, cells: &[CellType], idx: usize,
                         current: CellType) -> bool {
         let crit = s.criteria_type;
-        let hit = |j: usize| (cells[j] == crit) as u128;
+        let hit = |j: usize| (cells[j] == crit) as u64;
         // The centre slot is the caller's already-loaded `current`, not a re-read.
-        let mid = (current == crit) as u128;
-        let bits: u128 = match s.n {
+        let mid = (current == crit) as u64;
+        let bits: u64 = match s.n {
             1 => (hit(idx - 1) << 2) | (mid << 1) | hit(idx + 1),
             2 => (hit(idx - 2) << 4) | (hit(idx - 1) << 3) | (mid << 2)
                  | (hit(idx + 1) << 1) | hit(idx + 2),
-            3 => (hit(idx - 3) << 6) | (hit(idx - 2) << 5) | (hit(idx - 1) << 4)
-                 | (mid << 3) | (hit(idx + 1) << 2) | (hit(idx + 2) << 1)
-                 | hit(idx + 3),
-            _ => return false,
+            _ => {
+                let bits = (hit(idx - 3) << 6) | (hit(idx - 2) << 5) | (hit(idx - 1) << 4)
+                    | (mid << 3) | (hit(idx + 1) << 2) | (hit(idx + 2) << 1)
+                    | hit(idx + 3);
+                return (s.wolfram_code >> bits) & 1u128 == 1u128;
+            }
         };
-        (s.wolfram_code >> bits) & 1u128 == 1u128
+        (plan.code_lo >> bits) & 1u64 == 1u64
     }
 
     /// Same as `applies_interior` but treats out-of-bounds slots as `inactive`.
     #[inline]
     fn applies_edge(s: &Rule1DSubrule, cells: &[CellType], inactive: CellType,
                     width: usize, idx: usize) -> bool {
-        if s.n < 1 || s.n > 3 { return false; }
         let n = s.n as isize;
         let crit = s.criteria_type;
         let mut bits: u128 = 0;
@@ -255,12 +259,12 @@ impl Grid1D {
     /// never match; [`Rule1DSubrule::validate`] rejects them, and `applies_*`
     /// reports no match for them here.
     #[inline]
-    fn next_type_interior(cells: &[CellType], rule: &Rule1D, inactive: CellType,
+    fn next_type_interior(cells: &[CellType], rule: &Rule1D, plan: &Rule1DPlan, inactive: CellType,
                           idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
         let current_type = cells[idx];
-        for s in &rule.subrules {
-            if current_type != s.current_type { continue; }
-            if !Self::applies_interior(s, cells, idx, current_type) { continue; }
+        for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
+            if current_type != s.current_type || !ps.valid { continue; }
+            if !Self::applies_interior(s, ps, cells, idx, current_type) { continue; }
             if let Some(r) = s.randomness {
                 if let Some(rng) = rng.as_deref_mut() {
                     if rng.r#gen::<f64>() < r { continue; }
@@ -275,11 +279,11 @@ impl Grid1D {
     /// window slots as `inactive`.
     ///
     #[inline]
-    fn next_type_edge(cells: &[CellType], rule: &Rule1D, inactive: CellType,
+    fn next_type_edge(cells: &[CellType], rule: &Rule1D, plan: &Rule1DPlan, inactive: CellType,
                       width: usize, idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
         let current_type = cells[idx];
-        for s in &rule.subrules {
-            if current_type != s.current_type { continue; }
+        for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
+            if current_type != s.current_type || !ps.valid { continue; }
             if !Self::applies_edge(s, cells, inactive, width, idx) { continue; }
             if let Some(r) = s.randomness {
                 if let Some(rng) = rng.as_deref_mut() {
@@ -292,9 +296,10 @@ impl Grid1D {
     }
 
     /// Compute the next state for one chunk, writing into disjoint output slices.
+    #[allow(clippy::too_many_arguments)]
     fn step_chunk(
         cells: &[CellType], out: &mut OutChunk<'_>, history_limit: usize,
-        rule: &Rule1D, pad: usize, needs_rng: bool,
+        rule: &Rule1D, plan: &Rule1DPlan, pad: usize, needs_rng: bool,
         inactive: CellType, dt: CellType, width: usize,
     ) -> TypeCounter {
         let mut count_map = TypeCounter::new();
@@ -312,9 +317,9 @@ impl Grid1D {
         for local in 0..next_cells.len() {
             let idx = start + local;
             let new_type = if idx >= pad && idx < hi {
-                Self::next_type_interior(cells, rule, inactive, idx, rng.as_mut())
+                Self::next_type_interior(cells, rule, plan, inactive, idx, rng.as_mut())
             } else {
-                Self::next_type_edge(cells, rule, inactive, width, idx, rng.as_mut())
+                Self::next_type_edge(cells, rule, plan, inactive, width, idx, rng.as_mut())
             };
             next_cells[local] = new_type;
             let cur = cells[idx];
@@ -343,6 +348,96 @@ impl Grid1D {
         count_map
     }
 
+    /// Bit-parallel step for a [`PackedWolfram`] rule: one bit per cell, 64
+    /// cells per word. Returns `None` (caller falls back to the scalar path)
+    /// if any cell is neither `active` nor inactive — that check runs every
+    /// step, so painting a foreign type mid-run stays exactly scalar-correct.
+    ///
+    /// How it works, per word `m` of the packed row:
+    /// - `l`/`r` are the row shifted so bit `j` holds cell `j-1` / `j+1`
+    ///   (carrying across word boundaries; the grid edges shift in zeros,
+    ///   which matches the scalar path's "out of bounds reads as inactive").
+    /// - The 8-entry Wolfram table is evaluated for all 64 cells at once:
+    ///   for each pattern `p` with a 1 in the code, AND together `l`/`m`/`r`
+    ///   (complemented where `p` has a 0 bit) and OR the result in.
+    ///
+    /// The engine bookkeeping (next types, ages, history, counts) still runs
+    /// as a per-cell sweep afterwards — identical to the scalar path's, minus
+    /// all rule evaluation.
+    fn step_packed(&mut self, pw: PackedWolfram) -> Option<TypeCounter> {
+        let width = self.width;
+        let active = pw.active;
+        let inactive = self.inactive;
+        if self.cells.iter().any(|&c| c != active && c != inactive) {
+            return None;
+        }
+        let nwords = width.div_ceil(64);
+        let mut bits = vec![0u64; nwords];
+        for (j, &c) in self.cells.iter().enumerate() {
+            bits[j / 64] |= ((c == active) as u64) << (j % 64);
+        }
+        let code = pw.code;
+        let mut next_bits = vec![0u64; nwords];
+        for k in 0..nwords {
+            let m = bits[k];
+            let l = (m << 1) | if k > 0 { bits[k - 1] >> 63 } else { 0 };
+            let r = (m >> 1) | if k + 1 < nwords { bits[k + 1] << 63 } else { 0 };
+            let mut out = 0u64;
+            for p in 0..8u8 {
+                if (code >> p) & 1 == 1 {
+                    let lp = if p & 4 != 0 { l } else { !l };
+                    let mp = if p & 2 != 0 { m } else { !m };
+                    let rp = if p & 1 != 0 { r } else { !r };
+                    out |= lp & mp & rp;
+                }
+            }
+            next_bits[k] = out;
+        }
+        // Bits past `width` in the last word are not real cells; clear them so
+        // the pattern-000 case can't invent activity there.
+        let tail = width % 64;
+        if tail != 0 {
+            next_bits[nwords - 1] &= (1u64 << tail) - 1;
+        }
+
+        let hl = self.history_limit;
+        let mut active_count = 0u64;
+        for j in 0..width {
+            let cur = self.cells[j];
+            let nb = (next_bits[j / 64] >> (j % 64)) & 1 == 1;
+            let new_type = if nb { active } else { inactive };
+            self.next_cells[j] = new_type;
+            if hl > 0 {
+                let base = j * hl;
+                let h = self.history_heads[j] as usize;
+                self.history_data[base + h] = cur;
+                self.history_heads[j] = if h + 1 == hl { 0 } else { (h + 1) as u8 };
+                let c = self.history_counts[j] as usize;
+                if c < hl {
+                    self.history_counts[j] = (c + 1) as u8;
+                }
+            }
+            if cur == new_type {
+                self.ages[j] = self.ages[j].saturating_add(1);
+            } else {
+                self.ages[j] = 0;
+            }
+            active_count += nb as u64;
+        }
+
+        // Same shape the per-cell path produces: count everything except the
+        // dominant type (which apply_counts back-fills by subtraction).
+        let dt = self.dominant_type;
+        let mut count_map = TypeCounter::new();
+        if active != dt {
+            count_map.add_n(active, active_count);
+        }
+        if inactive != dt {
+            count_map.add_n(inactive, width as u64 - active_count);
+        }
+        Some(count_map)
+    }
+
     /// Advance the automaton by one step using double-buffering.
     pub fn step(&mut self) {
         let width = self.width;
@@ -353,6 +448,25 @@ impl Grid1D {
         let work_per_cell: usize = self.rule.subrules.iter()
             .map(|s| 2 * s.n as usize + 1).sum::<usize>().max(1);
         let nchunks = chunks_for_work(width.saturating_mul(work_per_cell));
+
+        // Bit-parallel fast path for pure two-state Wolfram rules (serial
+        // only — word carries don't cross chunk boundaries). Falls back to
+        // the scalar path when the grid holds any foreign cell type.
+        if nchunks <= 1 && width > 0 {
+            let packed = Rule1DPlan::new(&self.rule, self.inactive).packed;
+            if let Some(pw) = packed {
+                if let Some(count_map) = self.step_packed(pw) {
+                    std::mem::swap(&mut self.cells, &mut self.next_cells);
+                    apply_counts(&mut self.counts_current, &mut self.peak_counts,
+                        &mut self.dominant_type, width as u64, &count_map);
+                    self.step = self.step.saturating_add(1);
+                    return;
+                }
+            }
+        }
+
+        let plan = Rule1DPlan::new(&self.rule, self.inactive);
+        let plan = &plan;
         let cells = &self.cells;
         let rule = &self.rule;
         let inactive = self.inactive;
@@ -367,7 +481,7 @@ impl Grid1D {
                 history_heads: &mut self.history_heads,
                 history_counts: &mut self.history_counts,
             };
-            Self::step_chunk(cells, &mut out, hl, rule, pad, needs_rng, inactive, dt, width)
+            Self::step_chunk(cells, &mut out, hl, rule, plan, pad, needs_rng, inactive, dt, width)
         } else {
             let chunk = width.div_ceil(nchunks);
             let mut chunks = split_chunks(
@@ -378,7 +492,7 @@ impl Grid1D {
             // Persistent pool: no thread spawn/join per step.
             pool(nchunks).install(|| {
                 chunks.par_iter_mut()
-                    .map(|c| Self::step_chunk(cells, c, hl, rule, pad, needs_rng, inactive, dt, width))
+                    .map(|c| Self::step_chunk(cells, c, hl, rule, plan, pad, needs_rng, inactive, dt, width))
                     .reduce(TypeCounter::new, |mut a, b| { a.merge(&b); a })
             })
         };
@@ -546,14 +660,22 @@ mod tests {
             randomness: None,
             output_type: b,
         };
-        assert!(!Grid1D::applies_interior(&invalid_n, &cells, 1, a));
+        // Invalid n is rejected at plan level; the subrule can never match.
+        let invalid_rule = Rule1D { subrules: vec![invalid_n.clone()] };
+        let invalid_plan = Rule1DPlan::new(&invalid_rule, CellType::inactive());
+        assert!(!invalid_plan.subs[0].valid);
+        assert_eq!(
+            Grid1D::next_type_interior(&cells, &invalid_rule, &invalid_plan, CellType::inactive(), 1, None),
+            CellType::inactive()
+        );
 
         let random_sub = Rule1DSubrule { randomness: Some(0.5), n: 1, ..invalid_n.clone() };
         let rule = Rule1D { subrules: vec![random_sub] };
+        let plan = Rule1DPlan::new(&rule, CellType::inactive());
         // Call internals directly with rng=None to cover that branch.
-        let got_interior = Grid1D::next_type_interior(&cells, &rule, CellType::inactive(), 1, None);
+        let got_interior = Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, None);
         assert_eq!(got_interior, b);
-        let got_edge = Grid1D::next_type_edge(&cells, &rule, CellType::inactive(), cells.len(), 0, None);
+        let got_edge = Grid1D::next_type_edge(&cells, &rule, &plan, CellType::inactive(), cells.len(), 0, None);
         assert_eq!(got_edge, b);
     }
 
@@ -594,19 +716,27 @@ mod tests {
             randomness: Some(1.0),
             output_type: CellType::from("B"),
         };
-        let out = Grid1D::next_type_edge(&[CellType::from("A")], &Rule1D { subrules: vec![sub] }, CellType::inactive(), 1, 0, Some(&mut rng));
+        let rng_rule = Rule1D { subrules: vec![sub] };
+        let rng_plan = Rule1DPlan::new(&rng_rule, CellType::inactive());
+        let out = Grid1D::next_type_edge(&[CellType::from("A")], &rng_rule, &rng_plan, CellType::inactive(), 1, 0, Some(&mut rng));
         assert_eq!(out, CellType::inactive());
 
-        // Also cover the n<1 rejection in applies_edge.
-        let invalid = Rule1DSubrule { n: 0, randomness: None, ..Rule1DSubrule {
+        // n < 1 is rejected at plan level, so the subrule never matches.
+        let invalid = Rule1DSubrule {
             current_type: CellType::from("A"),
             criteria_type: CellType::from("A"),
             wolfram_code: 1,
-            n: 1,
+            n: 0,
             randomness: None,
             output_type: CellType::from("B"),
-        }};
-        assert!(!Grid1D::applies_edge(&invalid, &[CellType::from("A")], CellType::inactive(), 1, 0));
+        };
+        let invalid_rule = Rule1D { subrules: vec![invalid] };
+        let invalid_plan = Rule1DPlan::new(&invalid_rule, CellType::inactive());
+        assert!(!invalid_plan.subs[0].valid);
+        assert_eq!(
+            Grid1D::next_type_edge(&[CellType::from("A")], &invalid_rule, &invalid_plan, CellType::inactive(), 1, 0, None),
+            CellType::inactive()
+        );
         g.step();
     }
 
@@ -624,7 +754,9 @@ mod tests {
             output_type: b,
         };
         let cells = vec![a; 7];
-        assert!(Grid1D::applies_interior(&sub_n3, &cells, 3, a));
+        let n3_rule = Rule1D { subrules: vec![sub_n3.clone()] };
+        let n3_plan = Rule1DPlan::new(&n3_rule, CellType::inactive());
+        assert!(Grid1D::applies_interior(&sub_n3, &n3_plan.subs[0], &cells, 3, a));
 
         let mut g_hist = Grid1D::new(1, 2, vec![a], Rule1D { subrules: vec![] });
         assert!(g_hist.transition_state_and_buffer(99, &b).is_some());
@@ -657,16 +789,18 @@ mod tests {
             output_type: b,
         };
         let rule = Rule1D { subrules: vec![sub] };
+        let plan = Rule1DPlan::new(&rule, CellType::inactive());
         let cells = vec![a, a, a];
         let mut rng = SmallRng::seed_from_u64(123);
-        let out = Grid1D::next_type_interior(&cells, &rule, CellType::inactive(), 1, Some(&mut rng));
+        let out = Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, Some(&mut rng));
         assert_eq!(out, CellType::inactive());
 
         // Use r>1 to make the continue branch deterministic for internal-path coverage.
         let sub_force = Rule1DSubrule { randomness: Some(2.0), ..rule.subrules[0].clone() };
         let force_rule = Rule1D { subrules: vec![sub_force] };
+        let force_plan = Rule1DPlan::new(&force_rule, CellType::inactive());
         let mut rng2 = SmallRng::seed_from_u64(7);
-        let out2 = Grid1D::next_type_interior(&cells, &force_rule, CellType::inactive(), 1, Some(&mut rng2));
+        let out2 = Grid1D::next_type_interior(&cells, &force_rule, &force_plan, CellType::inactive(), 1, Some(&mut rng2));
         assert_eq!(out2, CellType::inactive());
     }
 }

@@ -229,19 +229,25 @@ impl Grid2D {
     /// per-neighbor bounds comparisons and no `y * width + x` multiply.
     #[inline]
     fn next_type_interior(
-        cells: &[CellType], rule: &Rule2D, lin: &[Vec<isize>], inactive: CellType,
+        cells: &[CellType], rule: &Rule2D, plan: &Rule2DPlan, inactive: CellType,
         idx: usize, mut rng: Option<&mut SmallRng>,
     ) -> CellType {
         let current_type = cells[idx];
-        for (sr, offsets) in rule.subrules.iter().zip(lin) {
+        for (i, sr) in rule.subrules.iter().enumerate() {
             if current_type != sr.current_type { continue; }
+            let offsets = plan.lin(i);
             let crit = sr.criteria_type;
             let early = sr.early_exit;
             let target = sr.count;
             let mut neighbors = 0u32;
-            for &off in offsets {
-                if cells[idx.wrapping_add_signed(off)] == crit { neighbors += 1; }
-                if early && neighbors >= target { break; }
+            // A `Gt 0` subrule is satisfied with zero neighbors — skip the scan
+            // entirely. (Restructuring the loop itself was tried and regressed
+            // the Moore benches; see performance.md §8.)
+            if !(early && target == 0) {
+                for &off in offsets {
+                    if cells[idx.wrapping_add_signed(off)] == crit { neighbors += 1; }
+                    if early && neighbors >= target { break; }
+                }
             }
             if sr.eval_condition(neighbors) {
                 if let Some(r) = sr.randomness {
@@ -271,11 +277,13 @@ impl Grid2D {
             let early = sr.early_exit;
             let target = sr.count;
             let mut neighbors = 0u32;
-            for off in &sr.offsets {
-                if Self::neighbor(cells, inactive, width, height, x + off.0 as isize, y + off.1 as isize) == crit {
-                    neighbors += 1;
+            if !(early && target == 0) {
+                for off in &sr.offsets {
+                    if Self::neighbor(cells, inactive, width, height, x + off.0 as isize, y + off.1 as isize) == crit {
+                        neighbors += 1;
+                    }
+                    if early && neighbors >= target { break; }
                 }
-                if early && neighbors >= target { break; }
             }
             if sr.eval_condition(neighbors) {
                 if let Some(r) = sr.randomness {
@@ -290,6 +298,12 @@ impl Grid2D {
     }
 
     /// Compute the next state for one chunk of the grid.
+    ///
+    /// The `history_limit > 0` test stays *inside* the per-cell loop on
+    /// purpose: splitting the loop into with/without-history monomorphized
+    /// variants was measured at +30–46 % across every 2D bench (the doubled
+    /// body blows the inliner budget for `next_type_interior`) — see
+    /// performance.md §8 E5. The branch itself is perfectly predicted.
     fn step_chunk(
         cells: &[CellType], out: &mut OutChunk<'_>, history_limit: usize,
         rule: &Rule2D, plan: &Rule2DPlan, inactive: CellType, dt: CellType,
@@ -318,7 +332,7 @@ impl Grid2D {
             let idx = start + local;
             let cur = cells[idx];
             let new_type = if row_interior && x >= pad && x < x_hi {
-                Self::next_type_interior(cells, rule, &plan.lin, inactive, idx, rng.as_mut())
+                Self::next_type_interior(cells, rule, plan, inactive, idx, rng.as_mut())
             } else {
                 Self::next_type_edge(cells, rule, inactive, width, height,
                     x as isize, y as isize, idx, rng.as_mut())
@@ -543,7 +557,7 @@ mod tests {
 
         let cells = vec![a; 9];
         let plan = Rule2DPlan::new(&rule, 3);
-        let interior = Grid2D::next_type_interior(&cells, &rule, &plan.lin, CellType::inactive(), 4, None);
+        let interior = Grid2D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 4, None);
         assert_eq!(interior, b);
 
         let edge = Grid2D::next_type_edge(&cells, &rule, CellType::inactive(), 3, 3, 0, 0, 0, None);
@@ -578,7 +592,7 @@ mod tests {
         let plan = Rule2DPlan::new(&rule, 3);
         let mut rng1 = SmallRng::seed_from_u64(7);
         let mut rng2 = SmallRng::seed_from_u64(9);
-        let interior = Grid2D::next_type_interior(&cells, &rule, &plan.lin, CellType::inactive(), 4, Some(&mut rng1));
+        let interior = Grid2D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 4, Some(&mut rng1));
         let edge = Grid2D::next_type_edge(&cells, &rule, CellType::inactive(), 3, 3, 0, 0, 0, Some(&mut rng2));
         assert_eq!(interior, CellType::inactive());
         assert_eq!(edge, CellType::inactive());
@@ -589,7 +603,7 @@ mod tests {
         let plan_force = Rule2DPlan::new(&rule_force, 3);
         let mut rng3 = SmallRng::seed_from_u64(11);
         let mut rng4 = SmallRng::seed_from_u64(13);
-        let interior2 = Grid2D::next_type_interior(&cells, &rule_force, &plan_force.lin, CellType::inactive(), 4, Some(&mut rng3));
+        let interior2 = Grid2D::next_type_interior(&cells, &rule_force, &plan_force, CellType::inactive(), 4, Some(&mut rng3));
         let edge2 = Grid2D::next_type_edge(&cells, &rule_force, CellType::inactive(), 3, 3, 0, 0, 0, Some(&mut rng4));
         assert_eq!(interior2, CellType::inactive());
         assert_eq!(edge2, CellType::inactive());

@@ -167,11 +167,11 @@ fn wildfire_grid(w: usize, h: usize, seed: u64, history_limit: usize) -> Grid2D 
     let forest = CellType::new("Forest");
     let shrub = CellType::new("Shrub");
     let mut init = vec![forest; w * h];
-    for idx in 0..w * h {
+    for (idx, cell) in init.iter_mut().enumerate() {
         // Deterministic fuel mosaic with some unburnable water cells.
         match cell_rand(999, 0, idx as u64, 7) {
-            v if v < 0.2 => init[idx] = shrub,
-            v if v < 0.25 => init[idx] = CellType::inactive(),
+            v if v < 0.2 => *cell = shrub,
+            v if v < 0.25 => *cell = CellType::inactive(),
             _ => {}
         }
     }
@@ -408,6 +408,88 @@ fn config_with_invalid_model_returns_none() {
     }"#;
     let cfg: cella_lib::config::CellaConfig = serde_json::from_str(json).unwrap();
     assert!(cfg.build_grid2d().is_none(), "invalid model p0 rejects the build");
+}
+
+// ─── Packed 1D Wolfram fast path: exact equivalence with the scalar path ───
+
+mod packed_wolfram {
+    use cella_lib::{CellType, Grid1D, Rule1D, Rule1DSubrule};
+
+    fn wolfram_rule(code: u128, extra_dummy: bool) -> Rule1D {
+        let x = CellType::from("X");
+        let inactive = CellType::inactive();
+        let sub = |current: CellType| Rule1DSubrule {
+            current_type: current, criteria_type: x, wolfram_code: code, n: 1,
+            randomness: None, output_type: x,
+        };
+        let mut subrules = vec![sub(x), sub(inactive)];
+        if extra_dummy {
+            // A third, unreachable duplicate defeats the packed-shape detection
+            // without changing semantics (first match wins) — this is how the
+            // reference grid is forced onto the scalar path.
+            subrules.push(sub(inactive));
+        }
+        Rule1D { subrules }
+    }
+
+    fn seeded_init(width: usize, seed: u64) -> Vec<CellType> {
+        let x = CellType::from("X");
+        (0..width)
+            .map(|j| if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 0) < 0.35 { x } else { CellType::inactive() })
+            .collect()
+    }
+
+    #[test]
+    fn packed_matches_scalar_exactly() {
+        // Codes cover: rule 30, rule 110, a pattern-000-fires code (odd), 0 and 255.
+        for code in [30u128, 110, 129, 0, 255] {
+            // Widths straddle word boundaries.
+            for width in [1usize, 63, 64, 65, 130, 2049] {
+                for hl in [0usize, 2] {
+                    let init = seeded_init(width, code as u64 ^ width as u64);
+                    let mut packed = Grid1D::new(width, hl, init.clone(), wolfram_rule(code, false));
+                    let mut scalar = Grid1D::new(width, hl, init, wolfram_rule(code, true));
+                    for step in 0..12 {
+                        packed.step();
+                        scalar.step();
+                        for j in 0..width {
+                            assert_eq!(packed.cell_type(j), scalar.cell_type(j),
+                                "cells code={code} w={width} hl={hl} step={step} j={j}");
+                            assert_eq!(packed.cell_age(j), scalar.cell_age(j),
+                                "ages code={code} w={width} hl={hl} step={step} j={j}");
+                            assert_eq!(packed.cell_history(j), scalar.cell_history(j),
+                                "history code={code} w={width} hl={hl} step={step} j={j}");
+                        }
+                        assert_eq!(packed.counts_current, scalar.counts_current,
+                            "counts code={code} w={width} hl={hl} step={step}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_cell_falls_back_to_scalar_semantics() {
+        // Paint a third type mid-run: the packed path must decline that step
+        // and the foreign cell must become inactive (no subrule matches it),
+        // exactly as the scalar path dictates.
+        let width = 130;
+        let mut g = Grid1D::new(width, 0, seeded_init(width, 9), wolfram_rule(30, false));
+        let mut reference = Grid1D::new(width, 0, seeded_init(width, 9), wolfram_rule(30, true));
+        g.step();
+        reference.step();
+        let c = CellType::from("Foreign");
+        assert!(g.transition_state_and_buffer(65, &c).is_none());
+        assert!(reference.transition_state_and_buffer(65, &c).is_none());
+        for step in 0..4 {
+            g.step();
+            reference.step();
+            for j in 0..width {
+                assert_eq!(g.cell_type(j), reference.cell_type(j), "step={step} j={j}");
+            }
+        }
+        assert_eq!(g.cell_type(65), CellType::inactive(), "foreign type decays to inactive");
+    }
 }
 
 #[test]

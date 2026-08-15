@@ -22,8 +22,10 @@ pub struct TypeCounter {
 }
 
 impl TypeCounter {
+    /// Allocation-free until the first `add` — the rayon `reduce` identity and
+    /// empty chunks then cost nothing.
     pub fn new() -> Self {
-        Self { entries: Vec::with_capacity(16) }
+        Self { entries: Vec::new() }
     }
 
     pub fn add(&mut self, t: CellType) {
@@ -34,6 +36,21 @@ impl TypeCounter {
             }
         }
         self.entries.push((t, 1));
+    }
+
+    /// Add `n` counts of `t` at once (no-op for `n == 0`, matching the
+    /// per-cell path, which never creates zero-count entries).
+    pub(crate) fn add_n(&mut self, t: CellType, n: u64) {
+        if n == 0 {
+            return;
+        }
+        for e in &mut self.entries {
+            if e.0 == t {
+                e.1 += n;
+                return;
+            }
+        }
+        self.entries.push((t, n));
     }
 
     /// Remove one count of `t`, dropping the entry when it reaches zero.
@@ -334,6 +351,129 @@ impl Rule1D {
     pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
 }
 
+/// Precomputed helper data for **one subrule** during a single 1D step.
+///
+/// See [`Rule1DPlan`] for what a "plan" is and why it exists. This struct
+/// holds the two things we don't want to recompute for every cell:
+///
+/// - `code_lo`: a faster-to-use copy of the subrule's `wolfram_code`.
+///   The code is stored on the subrule as a `u128` because an `n = 3` window
+///   has 128 possible patterns. But for `n <= 2` there are at most 32
+///   patterns, so the whole transition table fits in the low 64 bits — and a
+///   64-bit shift is a single CPU instruction, while a 128-bit shift with a
+///   runtime shift amount compiles to several. The stepper uses `code_lo` for
+///   `n <= 2` and falls back to the full `u128` only for `n = 3`.
+/// - `valid`: whether `n` is in the supported `1..=3` range. Checking this
+///   once per step (instead of once per cell) keeps the per-cell loop free of
+///   re-validation. An invalid subrule simply never matches.
+#[derive(Clone, Copy)]
+pub(crate) struct Sub1DPlan {
+    /// Low 64 bits of `wolfram_code`; the complete transition table for `n <= 2`.
+    pub code_lo: u64,
+    /// `1 <= n <= 3`. Hoisted out of the per-cell loop.
+    pub valid: bool,
+}
+
+/// Detected "pure Wolfram" shape for the packed bit-parallel 1D fast path.
+///
+/// Some 1D rules are exactly a classic two-state Wolfram automaton: the next
+/// type of every cell is `active` when the rule's transition table fires for
+/// the 3-bit window, `inactive` otherwise — regardless of the cell's own type.
+/// That happens when the rule is two subrules of this exact shape:
+///
+/// ```text
+/// { current: active,   criteria: active, code: C, n: 1, output: active }
+/// { current: inactive, criteria: active, code: C, n: 1, output: active }
+/// ```
+///
+/// (Cells match the first subrule when active, the second when inactive; both
+/// apply the same table `C`, both output `active` on a hit, and a miss falls
+/// through to the engine's "no match → inactive" default.)
+///
+/// For such rules the whole row can be stored as one bit per cell and 64
+/// cells stepped per machine word — see `Grid1D::step_packed`. Only valid if
+/// every cell on the grid is actually `active` or `inactive`; the stepper
+/// re-checks that each step (a painted foreign type falls back to the scalar
+/// path, keeping semantics identical).
+#[derive(Clone, Copy)]
+pub(crate) struct PackedWolfram {
+    pub active: CellType,
+    /// Low 8 bits of the shared `wolfram_code` (n = 1 → 8 window patterns).
+    pub code: u8,
+}
+
+/// Per-step "plan" for a 1D rule: everything the stepper can work out **once**
+/// before touching any cells.
+///
+/// # What is a plan?
+///
+/// When `Grid1D::step()` runs, the same rule is applied to every cell — often
+/// tens of thousands of them. Some values the stepper needs depend only on the
+/// *rule*, not on the *cell*, so computing them per cell would repeat identical
+/// work thousands of times. A plan gathers those values in one small struct
+/// that is built at the top of `step()` and then shared (read-only) by every
+/// cell and every worker thread in that step.
+///
+/// # Why rebuild it every step instead of caching it on the grid?
+///
+/// Two reasons:
+///
+/// 1. `rule` is a public field, so a caller can mutate it between steps. A
+///    cached plan could then be stale and silently disagree with the rule.
+///    Rebuilding each step makes that bug impossible.
+/// 2. Building the plan is O(number of subrules) — a handful of operations —
+///    while a step is O(number of cells). The cost is unmeasurable.
+///
+/// The same pattern exists for 2D as [`Rule2DPlan`], which carries more data
+/// (neighbor offsets converted to linear indices). One entry in `subs` lines
+/// up with one entry in `rule.subrules`, matched by index.
+pub(crate) struct Rule1DPlan {
+    /// One [`Sub1DPlan`] per subrule, in the same order as `rule.subrules`.
+    pub subs: Vec<Sub1DPlan>,
+    /// `Some` when the rule matches the [`PackedWolfram`] shape and the
+    /// bit-parallel fast path may be attempted.
+    pub packed: Option<PackedWolfram>,
+}
+
+impl Rule1DPlan {
+    /// Build the plan for `rule`. Called once at the top of `Grid1D::step()`.
+    ///
+    /// (Derived data cannot live on `Rule1DSubrule` itself: its fields are
+    /// public and it has no constructor, so anyone building one with struct
+    /// literal syntax would skip the precomputation.)
+    pub fn new(rule: &Rule1D, inactive: CellType) -> Self {
+        let subs = rule.subrules.iter()
+            .map(|s| Sub1DPlan {
+                // Truncating to u64 is safe for the n <= 2 fast path: those
+                // windows only ever index bits 0..=31.
+                code_lo: s.wolfram_code as u64,
+                valid: (1..=3).contains(&s.n),
+            })
+            .collect();
+        Self { subs, packed: Self::detect_packed(rule, inactive) }
+    }
+
+    /// See [`PackedWolfram`] for the shape this recognizes.
+    fn detect_packed(rule: &Rule1D, inactive: CellType) -> Option<PackedWolfram> {
+        let [a, b] = rule.subrules.as_slice() else { return None };
+        let active = a.current_type;
+        let eligible = |s: &Rule1DSubrule| {
+            s.n == 1 && s.randomness.is_none() && s.criteria_type == active
+                && s.output_type == active && s.wolfram_code < 256
+        };
+        if active != inactive
+            && b.current_type == inactive
+            && eligible(a)
+            && eligible(b)
+            && a.wolfram_code == b.wolfram_code
+        {
+            Some(PackedWolfram { active, code: a.wolfram_code as u8 })
+        } else {
+            None
+        }
+    }
+}
+
 /// One subrule for a 2D automaton using threshold counts in a neighborhood.
 ///
 /// Example
@@ -372,6 +512,14 @@ pub struct Rule2DSubrule {
     /// can read all their neighbors without bounds checks.
     #[serde(skip)]
     pub(crate) pad: usize,
+    /// Precomputed inclusive `(lo, hi)` neighbor-count range equivalent to
+    /// `(op, count, limit)` — `eval_condition` becomes two compares instead of a
+    /// six-arm match per matching cell. `Eq + limit` (rejected by `validate`)
+    /// maps to the empty range `(1, 0)`.
+    #[serde(skip)]
+    pub(crate) cond_lo: u32,
+    #[serde(skip)]
+    pub(crate) cond_hi: u32,
     /// Optional randomness in (0-1); pass only if random >= value.
     pub randomness: Option<f64>,
     /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
@@ -401,9 +549,17 @@ impl Rule2DSubrule {
         let offsets = neighborhood_offsets(neighborhood, range as i32);
         let pad = offsets.iter().map(|(dx, dy)| dx.abs().max(dy.abs()) as usize).max().unwrap_or(0);
         let early_exit = matches!(op, CountOp::Gt) && limit.is_none();
+        let (cond_lo, cond_hi) = match (op, limit) {
+            (CountOp::Eq, None) => (count, count),
+            (CountOp::Gt, None) => (count, u32::MAX),
+            (CountOp::Lt, None) => (0, count),
+            (CountOp::Gt, Some(hi)) => (count, hi),
+            (CountOp::Lt, Some(lo)) => (lo, count),
+            (CountOp::Eq, Some(_)) => (1, 0), // invalid; never matches
+        };
         // make the struct
         Self { current_type, criteria_type, count, op, limit, range,
-            neighborhood, randomness, output_type, offsets, early_exit, pad }
+            neighborhood, randomness, output_type, offsets, early_exit, pad, cond_lo, cond_hi }
     }
 
     /// Linear index offsets into a row-major grid of the given width.
@@ -432,16 +588,15 @@ impl Rule2DSubrule {
 
     /// Check whether `neighbors` satisfies the subrule's count condition.
     /// Caller already verified `current_type` and counted neighbors.
+    ///
+    /// The `(op, count, limit)` semantics are folded into the precomputed
+    /// inclusive `cond_lo..=cond_hi` range at construction. Only usable on
+    /// subrules built via [`Rule2DSubrule::new`] (which deserialization also
+    /// routes through) — a struct literal skips the precomputation, like the
+    /// other derived fields.
     #[inline]
     pub fn eval_condition(&self, neighbors: u32) -> bool {
-        match (self.op, self.limit) {
-            (CountOp::Eq, None) => neighbors == self.count,
-            (CountOp::Gt, None) => neighbors >= self.count,
-            (CountOp::Lt, None) => neighbors <= self.count,
-            (CountOp::Gt, Some(hi)) => neighbors >= self.count && neighbors <= hi,
-            (CountOp::Lt, Some(lo)) => neighbors <= self.count && neighbors >= lo,
-            (CountOp::Eq, Some(_)) => false,
-        }
+        self.cond_lo <= neighbors && neighbors <= self.cond_hi
     }
 }
 
@@ -480,39 +635,137 @@ impl Rule2D {
     pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
 }
 
-/// Per-step precomputation shared by every chunk of a 2D step.
+/// Per-step "plan" for a 2D rule: everything `Grid2D::step()` can work out
+/// **once** before touching any cells, shared read-only by every chunk and
+/// worker thread of that step.
 ///
-/// Built once in `Grid2D::step` (cost is O(subrules × neighbors), i.e. tens of
-/// operations against tens of thousands of cells) rather than cached on the grid,
-/// so a caller mutating `grid.rule` between steps can never see a stale plan.
+/// # What is a plan, and why does it exist?
+///
+/// A step applies the same rule to every cell — commonly tens of thousands.
+/// Several values the stepper needs depend only on the *rule* and the *grid
+/// width*, never on the individual cell, so computing them per cell would
+/// repeat identical work thousands of times. The plan is where that shared,
+/// rule-level work happens exactly once. (The 1D equivalent is
+/// [`Rule1DPlan`], which has the longer general explanation.)
+///
+/// The most important piece is the neighbor-offset conversion. A subrule
+/// stores its neighborhood as `(dx, dy)` pairs; to read a neighbor you would
+/// normally compute `(y + dy) * width + (x + dx)` — a multiply per neighbor
+/// per cell. The plan converts each pair once into a *linear* offset
+/// (`dy * width + dx`) that interior cells can simply add to their own flat
+/// index: `cells[idx + offset]`. No multiply, no coordinate math in the hot
+/// loop.
+///
+/// # Why rebuild it every step instead of caching it on the grid?
+///
+/// `grid.rule` is a public field, so a caller can change the rule between
+/// steps; a cached plan could then be stale and silently disagree with it.
+/// Rebuilding costs O(subrules × neighbors) — tens of operations against tens
+/// of thousands of cells — so it is effectively free and makes stale-plan bugs
+/// impossible.
 pub(crate) struct Rule2DPlan {
-    /// Per subrule: neighbor offsets as linear indices for the grid's width.
-    pub lin: Vec<Vec<isize>>,
-    /// Chebyshev radius of the widest subrule; the interior margin.
+    /// Every subrule's linear neighbor offsets, concatenated into one flat
+    /// buffer (one allocation per step instead of one `Vec` per subrule; the
+    /// inner loop walks a plain slice instead of chasing a `&Vec` pointer).
+    /// Use [`Rule2DPlan::lin`] to get subrule `i`'s slice.
+    lin_flat: Vec<isize>,
+    /// Where each subrule's offsets sit inside `lin_flat`:
+    /// subrule `i` owns `lin_flat[spans[i].0 as usize .. spans[i].1 as usize]`.
+    spans: Vec<(u32, u32)>,
+    /// The widest subrule's Chebyshev radius (max of `|dx|`, `|dy|`). Cells at
+    /// least this far from every border are "interior": all their neighbors
+    /// are guaranteed in bounds, so they take the fast path with no bounds
+    /// checks. Cells closer to a border take the checked "edge" path.
     pub pad: usize,
-    /// Whether any subrule needs an RNG.
+    /// Whether any subrule uses `randomness`. When false, the stepper skips
+    /// RNG construction entirely.
     pub needs_rng: bool,
-    /// Upper bound on neighbor visits per cell, summed over subrules. Used only
-    /// to size the parallel split — an over-estimate for rules that early-exit or
-    /// whose subrules rarely match, which is the safe direction (it never turns a
-    /// grid that is too small to parallelize into one that is).
+    /// Rough estimate of work per cell (total neighbor visits across all
+    /// subrules). Only used to decide how many parallel chunks a step is worth
+    /// splitting into. Deliberately an over-estimate — that direction is safe,
+    /// because it never makes a too-small grid look worth parallelizing.
     pub work_per_cell: usize,
 }
 
 impl Rule2DPlan {
+    /// Build the plan for `rule` on a grid of the given `width`. Called once
+    /// at the top of `Grid2D::step()`.
     pub fn new(rule: &Rule2D, width: usize) -> Self {
+        let mut lin_flat = Vec::with_capacity(rule.subrules.iter().map(|s| s.offsets.len()).sum());
+        let mut spans = Vec::with_capacity(rule.subrules.len());
+        for s in &rule.subrules {
+            let start = lin_flat.len() as u32;
+            lin_flat.extend(s.offsets.iter().map(|&(dx, dy)| dy as isize * width as isize + dx as isize));
+            spans.push((start, lin_flat.len() as u32));
+        }
         Self {
-            lin: rule.subrules.iter().map(|s| s.linear_offsets(width)).collect(),
+            lin_flat,
+            spans,
             pad: rule.subrules.iter().map(|s| s.pad).max().unwrap_or(0),
             needs_rng: rule.needs_rng(),
             work_per_cell: rule.subrules.iter().map(|s| s.offsets.len()).sum::<usize>().max(1),
         }
+    }
+
+    /// The linear neighbor offsets for subrule `i` (same index as
+    /// `rule.subrules`). An interior cell at flat index `idx` reads neighbor
+    /// `k` as `cells[idx.wrapping_add_signed(plan.lin(i)[k])]`.
+    #[inline]
+    pub fn lin(&self, i: usize) -> &[isize] {
+        let (a, b) = self.spans[i];
+        &self.lin_flat[a as usize..b as usize]
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_wolfram_detection_arms() {
+        let x = CellType::from("X");
+        let y = CellType::from("Y");
+        let inactive = CellType::inactive();
+        let sub = |current: CellType, criteria: CellType, code: u128, n: u8,
+                   randomness: Option<f64>, output: CellType| Rule1DSubrule {
+            current_type: current, criteria_type: criteria, wolfram_code: code, n,
+            randomness, output_type: output,
+        };
+        let good = Rule1D { subrules: vec![
+            sub(x, x, 30, 1, None, x),
+            sub(inactive, x, 30, 1, None, x),
+        ]};
+        let detected = Rule1DPlan::new(&good, inactive).packed.expect("canonical shape detects");
+        assert_eq!(detected.active, x);
+        assert_eq!(detected.code, 30);
+
+        let reject = |rule: Rule1D, why: &str| {
+            assert!(Rule1DPlan::new(&rule, inactive).packed.is_none(), "{why}");
+        };
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x)] }, "one subrule");
+        reject(Rule1D { subrules: vec![
+            sub(x, x, 30, 1, None, x), sub(inactive, x, 30, 1, None, x), sub(inactive, x, 30, 1, None, x),
+        ]}, "three subrules");
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 2, None, x), sub(inactive, x, 30, 2, None, x)] }, "n != 1");
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, Some(0.5), x), sub(inactive, x, 30, 1, None, x)] }, "randomness");
+        reject(Rule1D { subrules: vec![sub(x, y, 30, 1, None, x), sub(inactive, x, 30, 1, None, x)] }, "criteria mismatch");
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, y), sub(inactive, x, 30, 1, None, x)] }, "output mismatch");
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x), sub(inactive, x, 110, 1, None, x)] }, "codes differ");
+        reject(Rule1D { subrules: vec![sub(x, x, 300, 1, None, x), sub(inactive, x, 300, 1, None, x)] }, "code >= 256");
+        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x), sub(y, x, 30, 1, None, x)] }, "second current not inactive");
+        reject(Rule1D { subrules: vec![sub(inactive, inactive, 30, 1, None, inactive), sub(inactive, inactive, 30, 1, None, inactive)] }, "active == inactive");
+    }
+
+    #[test]
+    fn type_counter_add_n_merges_and_skips_zero() {
+        let a = CellType::from("A");
+        let mut c = TypeCounter::new();
+        c.add_n(a, 0);
+        assert_eq!(c.iter().count(), 0, "zero adds no entry");
+        c.add_n(a, 5);
+        c.add_n(a, 2);
+        assert_eq!(c.iter().find(|(t, _)| **t == a).map(|(_, n)| *n), Some(7));
+    }
     use serde::de::value::{Error as DeError, StrDeserializer, U64Deserializer, U128Deserializer};
 
     #[test]

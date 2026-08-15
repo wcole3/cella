@@ -444,7 +444,7 @@ impl ExternalModel for WildfireModel {
         let mut x = ctx.start % width;
         let mut y = ctx.start / width;
         let mut row_interior = y >= 1 && y + 1 < height;
-        for local in 0..next.len() {
+        for (local, slot) in next.iter_mut().enumerate() {
             let idx = ctx.start + local;
             let cur = cells[idx];
             let new_type = if row_interior && x >= 1 && x + 1 < width {
@@ -460,7 +460,7 @@ impl ExternalModel for WildfireModel {
                     }
                 })
             };
-            next[local] = new_type;
+            *slot = new_type;
             if cur == d.burning {
                 if let Some(target) = self.spot_target(ctx, idx, x, y) {
                     events.push(ModelEvent { target, new_type: d.burning });
