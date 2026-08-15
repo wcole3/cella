@@ -348,22 +348,42 @@ impl Grid1D {
         count_map
     }
 
-    /// Bit-parallel step for a [`PackedWolfram`] rule: one bit per cell, 64
-    /// cells per word. Returns `None` (caller falls back to the scalar path)
-    /// if any cell is neither `active` nor inactive — that check runs every
-    /// step, so painting a foreign type mid-run stays exactly scalar-correct.
+    /// The fast step for a [`PackedWolfram`] rule: the row is stored one
+    /// **bit** per cell (1 = `active`, 0 = inactive) inside 64-bit integers,
+    /// so one machine instruction processes 64 cells at once.
     ///
-    /// How it works, per word `m` of the packed row:
-    /// - `l`/`r` are the row shifted so bit `j` holds cell `j-1` / `j+1`
-    ///   (carrying across word boundaries; the grid edges shift in zeros,
-    ///   which matches the scalar path's "out of bounds reads as inactive").
-    /// - The 8-entry Wolfram table is evaluated for all 64 cells at once:
-    ///   for each pattern `p` with a 1 in the code, AND together `l`/`m`/`r`
-    ///   (complemented where `p` has a 0 bit) and OR the result in.
+    /// Returns `None` when the fast path can't be used — some cell is neither
+    /// `active` nor inactive (e.g. the user painted a third type). The caller
+    /// then runs the normal scalar path instead, so the result is always
+    /// identical either way; this check runs every step.
     ///
-    /// The engine bookkeeping (next types, ages, history, counts) still runs
-    /// as a per-cell sweep afterwards — identical to the scalar path's, minus
-    /// all rule evaluation.
+    /// # How one word is stepped
+    ///
+    /// Every cell needs to see three cells: its left neighbor, itself, and
+    /// its right neighbor. With the row packed into words we can hand *all*
+    /// cells their neighbors at once by shifting whole words:
+    ///
+    /// ```text
+    /// m = the word itself         -> bit j is cell j
+    /// l = m shifted left by 1     -> bit j is cell j-1 (left neighbor)
+    /// r = m shifted right by 1    -> bit j is cell j+1 (right neighbor)
+    /// ```
+    ///
+    /// (The bit that falls off the end of one word is carried in from the
+    /// neighboring word; at the ends of the whole row, zeros come in — which
+    /// matches the scalar rule "out of bounds counts as inactive".)
+    ///
+    /// Now each cell's window is the trio of bits `(l, m, r)` sitting in the
+    /// same position of those three words. The Wolfram table says which of
+    /// the 8 possible trios produce an active cell. For each such trio, we
+    /// build a mask that is 1 exactly where that trio occurs — e.g. for the
+    /// pattern `110` (left on, middle on, right off) the mask is
+    /// `l & m & !r` — and OR all those masks together. That OR is the entire
+    /// next row, computed ~64 cells at a time.
+    ///
+    /// The per-cell bookkeeping (writing next types, ages, history, counts)
+    /// still runs as a normal loop afterwards; only the rule evaluation is
+    /// bit-parallel.
     fn step_packed(&mut self, pw: PackedWolfram) -> Option<TypeCounter> {
         let width = self.width;
         let active = pw.active;
@@ -452,9 +472,12 @@ impl Grid1D {
         // Bit-parallel fast path for pure two-state Wolfram rules (serial
         // only — word carries don't cross chunk boundaries). Falls back to
         // the scalar path when the grid holds any foreign cell type.
+        // The plan is an owned value (it copies what it needs out of the
+        // rule), so it is built once here and reused by whichever path runs.
+        let plan = Rule1DPlan::new(&self.rule, self.inactive);
+
         if nchunks <= 1 && width > 0 {
-            let packed = Rule1DPlan::new(&self.rule, self.inactive).packed;
-            if let Some(pw) = packed {
+            if let Some(pw) = plan.packed {
                 if let Some(count_map) = self.step_packed(pw) {
                     std::mem::swap(&mut self.cells, &mut self.next_cells);
                     apply_counts(&mut self.counts_current, &mut self.peak_counts,
@@ -465,7 +488,6 @@ impl Grid1D {
             }
         }
 
-        let plan = Rule1DPlan::new(&self.rule, self.inactive);
         let plan = &plan;
         let cells = &self.cells;
         let rule = &self.rule;

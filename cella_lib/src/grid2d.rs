@@ -369,20 +369,48 @@ impl Grid2D {
         count_map
     }
 
-    /// Bit-parallel step for a [`PackedThreshold2D`] rule: one bit per cell,
-    /// rows padded to whole words, 64 cells stepped per word. Returns `None`
-    /// (caller falls back to the scalar path) if any cell is neither `active`
-    /// nor inactive — checked every step, so painting a foreign type mid-run
-    /// stays exactly scalar-correct.
+    /// The fast step for a [`crate::rules::PackedThreshold2D`] rule: the grid
+    /// is stored one **bit** per cell (1 = `active`, 0 = inactive), each row
+    /// packed into 64-bit integers, so one machine instruction processes 64
+    /// cells at once.
     ///
-    /// Per word of a row: the eight neighbor bit-planes are the rows above /
-    /// below and the row itself, shifted one bit with cross-word carries (row
-    /// ends and the grid border shift in zeros — matching the scalar path's
-    /// out-of-bounds-reads-as-inactive). Selected planes are summed into four
-    /// count bit-planes with carry-save adder steps, and the rule's
-    /// `(current, count) -> next` table is applied with equality masks.
-    /// Engine bookkeeping (next types, ages, history, counts) stays a per-cell
-    /// sweep, identical to the scalar path's minus all rule evaluation.
+    /// Returns `None` when the fast path can't be used — some cell is neither
+    /// `active` nor inactive (e.g. the user painted a third type). The caller
+    /// then runs the normal scalar path instead, so results are always
+    /// identical either way; this check runs every step.
+    ///
+    /// # How one word is stepped
+    ///
+    /// **1. Line up the neighbors.** Every cell has up to 8 neighbors. By
+    /// taking the word for the row above, the row itself, and the row below —
+    /// each as-is, shifted one bit left, and shifted one bit right — we get
+    /// eight words in which bit `j` holds one particular neighbor of cell
+    /// `j`. (Bits falling off a word carry into the next word of the same
+    /// row; the grid border and row ends shift in zeros, which matches the
+    /// scalar rule "out of bounds counts as inactive".)
+    ///
+    /// **2. Count, in binary, 64 cells at once.** Adding eight 0-or-1 values
+    /// gives a count from 0 to 8, which needs 4 binary digits. We keep those
+    /// digits as four words `c0..c3`: bit `j` of `c0` is the 1s digit of cell
+    /// `j`'s count, bit `j` of `c1` the 2s digit, and so on. Each neighbor
+    /// word is added with the "carry" pattern below — the same idea as adding
+    /// 1 to a binary number by hand, done for all 64 cells simultaneously:
+    ///
+    /// ```text
+    /// carry = c0 & p;  c0 ^= p;   // add p to the 1s digit; overflow carries
+    /// ...same for c1, c2, then c3
+    /// ```
+    ///
+    /// **3. Look up the answer.** The rule was precomputed into
+    /// `table[current][count]` (see `PackedThreshold2D`). For each count value
+    /// the table cares about, build a mask of the cells whose count equals it
+    /// (compare all four digit-words at once), AND it with "is the cell
+    /// currently active" if the table distinguishes that, and OR everything
+    /// together. The result word *is* the next generation of those 64 cells.
+    ///
+    /// The per-cell bookkeeping (writing next types, ages, history, counts)
+    /// still runs as a normal loop afterwards; only the rule evaluation is
+    /// bit-parallel.
     fn step_packed(&mut self, pt: crate::rules::PackedThreshold2D) -> Option<TypeCounter> {
         let (w, h) = (self.width, self.height);
         let active = pt.active;
@@ -512,12 +540,17 @@ impl Grid2D {
         let total = width * height;
         let hl = self.history_limit;
 
+        // The plan is an owned value (it copies what it needs out of the
+        // rule), so it is built once here and reused by whichever path runs.
+        let plan = Rule2DPlan::with_inactive(&self.rule, width, self.inactive);
+
         // Bit-parallel fast path for two-state threshold rules (see
         // PackedThreshold2D). Runs regardless of thread count — it is a
         // single-pass whole-grid stepper and deterministic by construction.
+        // When it declines (foreign cell type on the grid), the scalar path
+        // below picks up with the already-built plan.
         if total > 0 {
-            let packed = Rule2DPlan::with_inactive(&self.rule, width, self.inactive).packed;
-            if let Some(pt) = packed {
+            if let Some(pt) = plan.packed {
                 if let Some(count_map) = self.step_packed(pt) {
                     std::mem::swap(&mut self.cells, &mut self.next_cells);
                     apply_counts(&mut self.counts_current, &mut self.peak_counts,
@@ -528,7 +561,6 @@ impl Grid2D {
             }
         }
 
-        let plan = Rule2DPlan::with_inactive(&self.rule, width, self.inactive);
         let nchunks = chunks_for_work(total.saturating_mul(plan.work_per_cell));
         let cells = &self.cells;
         let rule = &self.rule;

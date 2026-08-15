@@ -374,31 +374,44 @@ pub(crate) struct Sub1DPlan {
     pub valid: bool,
 }
 
-/// Detected "pure Wolfram" shape for the packed bit-parallel 1D fast path.
+/// Marks a 1D rule that qualifies for the "packed" fast path. Built by
+/// `Rule1DPlan::detect_packed`.
 ///
-/// Some 1D rules are exactly a classic two-state Wolfram automaton: the next
-/// type of every cell is `active` when the rule's transition table fires for
-/// the 3-bit window, `inactive` otherwise — regardless of the cell's own type.
-/// That happens when the rule is two subrules of this exact shape:
+/// # What shape qualifies?
+///
+/// A classic two-state Wolfram automaton, written as two subrules:
 ///
 /// ```text
 /// { current: active,   criteria: active, code: C, n: 1, output: active }
 /// { current: inactive, criteria: active, code: C, n: 1, output: active }
 /// ```
 ///
-/// (Cells match the first subrule when active, the second when inactive; both
-/// apply the same table `C`, both output `active` on a hit, and a miss falls
-/// through to the engine's "no match → inactive" default.)
+/// Read those together and something nice falls out: whether the cell is
+/// currently active (first subrule) or inactive (second), the *same* thing
+/// happens — look up the 3-cell window in table `C`; on a hit the cell
+/// becomes `active`, on a miss no subrule matches and the engine's default
+/// makes it inactive. So the next state doesn't depend on the cell's own type
+/// at all, only on the window bits. That is exactly the definition of a
+/// Wolfram rule, and it means the whole row can be treated as plain bits:
+/// 1 = active, 0 = inactive.
 ///
-/// For such rules the whole row can be stored as one bit per cell and 64
-/// cells stepped per machine word — see `Grid1D::step_packed`. Only valid if
-/// every cell on the grid is actually `active` or `inactive`; the stepper
-/// re-checks that each step (a painted foreign type falls back to the scalar
-/// path, keeping semantics identical).
+/// `Grid1D::step_packed` exploits that by storing 64 cells in one 64-bit
+/// integer and stepping all 64 with a handful of machine instructions — see
+/// its docs for the walk-through.
+///
+/// # Safety valve
+///
+/// Bits can only represent a two-type world. If any other cell type appears
+/// on the grid (e.g. painted in by the user), the stepper detects it with a
+/// quick scan each step and falls back to the normal scalar path, so results
+/// are always identical to the slow path — the fast path is invisible except
+/// for speed.
 #[derive(Clone, Copy)]
 pub(crate) struct PackedWolfram {
+    /// The one counted, non-background cell type (e.g. "X").
     pub active: CellType,
-    /// Low 8 bits of the shared `wolfram_code` (n = 1 → 8 window patterns).
+    /// The shared transition table. With `n = 1` the window is 3 cells, so
+    /// there are only 2³ = 8 possible windows and the table fits in 8 bits.
     pub code: u8,
 }
 
@@ -635,31 +648,57 @@ impl Rule2D {
     pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
 }
 
-/// Detected two-state threshold shape for the 2D bit-parallel fast path.
+/// Marks a rule that qualifies for the 2D "bit-parallel" fast path, plus the
+/// small lookup table that path needs. Built by `Rule2DPlan::detect_packed`.
 ///
-/// Many 2D rules (Conway-style life-like rules in particular) live in a
-/// two-type world: every cell is either `active` or inactive, every subrule
-/// counts `active` neighbors in the *same* radius-1 neighborhood, and each
-/// output is again `active` or inactive. For such rules the next state of a
-/// cell is a pure function of (its current state, its neighbor count) — which
-/// this struct captures as an 18-entry lookup `table[cur][count]`, built by
-/// running the subrule chain once for each combination at plan time.
+/// # The idea, step by step
 ///
-/// `Grid2D::step_packed` then stores the grid one bit per cell and steps 64
-/// cells per word: neighbor counts come from adding eight shifted bit-planes
-/// with carry-save adders, and the table is applied with bitwise masks. Only
-/// valid while every cell on the grid is actually `active` or inactive; the
-/// stepper re-checks that each step and falls back to the scalar path
-/// otherwise, keeping semantics exactly scalar.
+/// Normally the stepper visits every cell, and for each cell walks its
+/// subrules and counts matching neighbors one at a time. That is a lot of
+/// work per cell. But a big family of rules — Conway's Game of Life and its
+/// relatives — is much simpler than the general machinery allows:
+///
+/// 1. Only **two cell types** ever appear: one we call `active` (e.g.
+///    "Alive") and the engine's inactive/background type.
+/// 2. Every subrule counts the **same** type of neighbor (`active`) over the
+///    **same** neighborhood, and that neighborhood fits inside the 8 cells
+///    that immediately surround a cell (radius 1).
+/// 3. No subrule uses randomness.
+///
+/// When all of that holds, a cell's next state depends on exactly two things:
+/// *what it is now* (active or not) and *how many active neighbors it has*
+/// (0 through 8). Two possible current states × nine possible counts = only
+/// **18 distinct situations**. So instead of re-running the subrule chain for
+/// every cell on every step, we run it once for each of the 18 situations
+/// while building the plan, and store the answers in `table`. During the
+/// step, "evaluate the rule" becomes a table lookup.
+///
+/// The second trick is *how* the lookup is applied: `Grid2D::step_packed`
+/// stores the grid as one **bit** per cell inside 64-bit integers ("words"),
+/// so a single machine instruction operates on 64 cells at once. See that
+/// method's docs for the walk-through.
+///
+/// # Safety valve
+///
+/// The table only describes a two-type world. If the grid ever contains any
+/// *other* cell type (say the user paints one in), the fast path would get it
+/// wrong — so the stepper scans the grid each step and simply falls back to
+/// the normal scalar path when it finds a foreign type. Result: the fast path
+/// is invisible except for speed.
 #[derive(Clone, Copy)]
 pub(crate) struct PackedThreshold2D {
+    /// The one counted, non-background cell type (e.g. "Alive").
     pub active: CellType,
-    /// `table[cur][count]`: `cur` 0 = inactive, 1 = active; `true` means the
-    /// next state is `active`. Counts above the neighborhood size are
-    /// unreachable but harmlessly populated.
+    /// The 18 precomputed answers: `table[cur][count]` is `true` when a cell
+    /// that is currently `cur` (0 = inactive, 1 = active) with `count` active
+    /// neighbors becomes `active` next step. Counts a small neighborhood can
+    /// never reach (e.g. 8 for VonNeumann's 4 neighbors) are filled in anyway;
+    /// they are simply never looked up.
     pub table: [[bool; 9]; 2],
-    /// Which of the eight Moore-radius-1 slots the shared neighborhood counts,
-    /// in `neighborhood_offsets(Moore, 1)` order (sorted `(dx, dy)`).
+    /// Which of the eight surrounding positions this rule's neighborhood
+    /// actually counts — Moore radius 1 counts all eight, VonNeumann only the
+    /// four up/down/left/right ones, and so on. Ordered like
+    /// `neighborhood_offsets(Moore, 1)` (sorted by `(dx, dy)`).
     pub slots: [bool; 8],
 }
 
