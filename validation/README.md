@@ -8,7 +8,9 @@ pulled by scripts and can always be recreated.
 **New here, or non-technical? Start with [ANALYSIS.md](ANALYSIS.md)** — the
 plain-language guide to what the scores mean, what the model's current
 shortcomings are, and how to read a results table without fooling yourself.
-The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md).
+The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md),
+and every improvement experiment (kept and rejected) is recorded in
+[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md).
 
 ## The pipeline, start to finish
 
