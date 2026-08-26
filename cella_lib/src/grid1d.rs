@@ -1,15 +1,17 @@
 //! 1D grid implementation.
 
-use std::io::Error;
+use crate::chunking::{OutChunk, split_chunks};
+use crate::rules::{
+    PackedWolfram, Rule1D, Rule1DPlan, Rule1DSubrule, Sub1DPlan, TypeCounter, apply_counts,
+};
+use crate::threads::{chunks_for_work, pool};
+use crate::types::{CellState, CellType};
 use lasso2::Spur;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
-use crate::chunking::{split_chunks, OutChunk};
-use crate::types::{CellState, CellType};
-use crate::rules::{apply_counts, PackedWolfram, Rule1D, Rule1DPlan, Rule1DSubrule, Sub1DPlan, TypeCounter};
-use crate::threads::{chunks_for_work, pool};
+use std::io::Error;
 
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -36,17 +38,23 @@ pub struct Grid1D {
     /// Max number of past states retained for each cell.
     pub history_limit: usize,
     /// Age (steps in current state) per cell.
-    #[serde(skip)] pub(crate) ages: Vec<u32>,
+    #[serde(skip)]
+    pub(crate) ages: Vec<u32>,
     /// Current cell types.
-    #[serde(skip)] pub(crate) cells: Vec<CellType>,
+    #[serde(skip)]
+    pub(crate) cells: Vec<CellType>,
     /// Next-step type buffer (double buffer).
-    #[serde(skip)] pub(crate) next_cells: Vec<CellType>,
+    #[serde(skip)]
+    pub(crate) next_cells: Vec<CellType>,
     /// Flat circular-buffer history: cell i occupies [i*history_limit .. (i+1)*history_limit).
-    #[serde(skip)] pub(crate) history_data: Vec<CellType>,
+    #[serde(skip)]
+    pub(crate) history_data: Vec<CellType>,
     /// Write head index (0..history_limit) for each cell's circular history buffer.
-    #[serde(skip)] pub(crate) history_heads: Vec<u8>,
+    #[serde(skip)]
+    pub(crate) history_heads: Vec<u8>,
     /// Number of entries currently stored in each cell's circular history buffer.
-    #[serde(skip)] pub(crate) history_counts: Vec<u8>,
+    #[serde(skip)]
+    pub(crate) history_counts: Vec<u8>,
     /// Current simulation step.
     pub step: u64,
     /// Rule used for updates.
@@ -58,7 +66,8 @@ pub struct Grid1D {
     /// Reference to inactive cell type.
     pub inactive: CellType,
     /// Type with the highest count (dominant); skipped during counting.
-    #[serde(skip)] pub(crate) dominant_type: CellType,
+    #[serde(skip)]
+    pub(crate) dominant_type: CellType,
 }
 
 impl<'de> Deserialize<'de> for Grid1D {
@@ -81,7 +90,9 @@ impl<'de> Deserialize<'de> for Grid1D {
         let history_data = Self::soa_history(&im.cell_states, im.history_limit);
         let history_heads = Self::soa_heads(&im.cell_states, im.history_limit);
         let history_counts = Self::soa_counts(&im.cell_states, im.history_limit);
-        let dominant_type: CellType = im.counts_current.iter()
+        let dominant_type: CellType = im
+            .counts_current
+            .iter()
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
             .unwrap_or_else(|| im.inactive.clone());
@@ -122,7 +133,9 @@ impl std::fmt::Debug for Grid1D {
 impl Grid1D {
     /// Convert deserialized CellState vectors to SoA history arrays.
     pub(crate) fn soa_history(states: &[CellState], limit: usize) -> Vec<CellType> {
-        if limit == 0 { return Vec::new(); }
+        if limit == 0 {
+            return Vec::new();
+        }
         let mut data = vec![CellType::inactive(); states.len() * limit];
         for (i, cs) in states.iter().enumerate() {
             let base = i * limit;
@@ -133,11 +146,18 @@ impl Grid1D {
         data
     }
     pub(crate) fn soa_heads(states: &[CellState], limit: usize) -> Vec<u8> {
-        if limit == 0 { return Vec::new(); }
-        states.iter().map(|cs| (cs.history.len() % limit) as u8).collect()
+        if limit == 0 {
+            return Vec::new();
+        }
+        states
+            .iter()
+            .map(|cs| (cs.history.len() % limit) as u8)
+            .collect()
     }
     pub(crate) fn soa_counts(states: &[CellState], limit: usize) -> Vec<u8> {
-        if limit == 0 { return Vec::new(); }
+        if limit == 0 {
+            return Vec::new();
+        }
         states.iter().map(|cs| cs.history.len() as u8).collect()
     }
 
@@ -171,7 +191,10 @@ impl Grid1D {
     /// `initial.len()` must equal `width`.
     pub fn new(width: usize, history_limit: usize, initial: Vec<CellType>, rule: Rule1D) -> Self {
         assert_eq!(initial.len(), width, "initial types len must equal width");
-        assert!(history_limit <= 255, "history_limit must be <= 255 for SoA layout");
+        assert!(
+            history_limit <= 255,
+            "history_limit must be <= 255 for SoA layout"
+        );
         let next_cells: Vec<CellType> = vec![CellType::inactive(); width];
         let ages: Vec<u32> = vec![0; width];
         let (history_data, history_heads, history_counts) = if history_limit == 0 {
@@ -182,25 +205,49 @@ impl Grid1D {
             let counts = vec![0u8; width];
             (data, heads, counts)
         };
-        let mut counts_current: std::collections::HashMap<Spur, u64> = std::collections::HashMap::new();
-        for c in &initial { *counts_current.entry(c.0).or_insert(0) += 1; }
-        let dominant_type = counts_current.iter()
+        let mut counts_current: std::collections::HashMap<Spur, u64> =
+            std::collections::HashMap::new();
+        for c in &initial {
+            *counts_current.entry(c.0).or_insert(0) += 1;
+        }
+        let dominant_type = counts_current
+            .iter()
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
             .unwrap_or_else(|| CellType::inactive());
         let peak_counts = counts_current.clone();
         let inactive = CellType::inactive();
-        Self { width, history_limit, ages, cells: initial, next_cells,
-            history_data, history_heads, history_counts, step: 0, rule,
-            counts_current, peak_counts, inactive, dominant_type }
+        Self {
+            width,
+            history_limit,
+            ages,
+            cells: initial,
+            next_cells,
+            history_data,
+            history_heads,
+            history_counts,
+            step: 0,
+            rule,
+            counts_current,
+            peak_counts,
+            inactive,
+            dominant_type,
+        }
     }
 
     /// Transitions the given cell to `new_type`.
     /// Used by interactive or programmatic routines that change grid
     /// state outside of stepping (i.e. grid painting).
-    pub fn transition_state_and_buffer(&mut self, idx: usize, new_type: &CellType) -> Option<Error> {
+    pub fn transition_state_and_buffer(
+        &mut self,
+        idx: usize,
+        new_type: &CellType,
+    ) -> Option<Error> {
         if idx >= self.width {
-            Some(Error::new(std::io::ErrorKind::InvalidInput, "Index out of bounds"))
+            Some(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Index out of bounds",
+            ))
         } else {
             self.transition_cell(idx, *new_type);
             None
@@ -217,19 +264,33 @@ impl Grid1D {
     /// 64-bit `code_lo`; only `n = 3` (up to bit 127) pays for a 128-bit shift.
     /// The caller has already checked `plan.valid`, so no `n` re-validation.
     #[inline]
-    fn applies_interior(s: &Rule1DSubrule, plan: &Sub1DPlan, cells: &[CellType], idx: usize,
-                        current: CellType) -> bool {
+    fn applies_interior(
+        s: &Rule1DSubrule,
+        plan: &Sub1DPlan,
+        cells: &[CellType],
+        idx: usize,
+        current: CellType,
+    ) -> bool {
         let crit = s.criteria_type;
         let hit = |j: usize| (cells[j] == crit) as u64;
         // The centre slot is the caller's already-loaded `current`, not a re-read.
         let mid = (current == crit) as u64;
         let bits: u64 = match s.n {
             1 => (hit(idx - 1) << 2) | (mid << 1) | hit(idx + 1),
-            2 => (hit(idx - 2) << 4) | (hit(idx - 1) << 3) | (mid << 2)
-                 | (hit(idx + 1) << 1) | hit(idx + 2),
+            2 => {
+                (hit(idx - 2) << 4)
+                    | (hit(idx - 1) << 3)
+                    | (mid << 2)
+                    | (hit(idx + 1) << 1)
+                    | hit(idx + 2)
+            }
             _ => {
-                let bits = (hit(idx - 3) << 6) | (hit(idx - 2) << 5) | (hit(idx - 1) << 4)
-                    | (mid << 3) | (hit(idx + 1) << 2) | (hit(idx + 2) << 1)
+                let bits = (hit(idx - 3) << 6)
+                    | (hit(idx - 2) << 5)
+                    | (hit(idx - 1) << 4)
+                    | (mid << 3)
+                    | (hit(idx + 1) << 2)
+                    | (hit(idx + 2) << 1)
                     | hit(idx + 3);
                 return (s.wolfram_code >> bits) & 1u128 == 1u128;
             }
@@ -239,14 +300,23 @@ impl Grid1D {
 
     /// Same as `applies_interior` but treats out-of-bounds slots as `inactive`.
     #[inline]
-    fn applies_edge(s: &Rule1DSubrule, cells: &[CellType], inactive: CellType,
-                    width: usize, idx: usize) -> bool {
+    fn applies_edge(
+        s: &Rule1DSubrule,
+        cells: &[CellType],
+        inactive: CellType,
+        width: usize,
+        idx: usize,
+    ) -> bool {
         let n = s.n as isize;
         let crit = s.criteria_type;
         let mut bits: u128 = 0;
         for k in -n..=n {
             let j = idx as isize + k;
-            let t = if j < 0 || j as usize >= width { inactive } else { cells[j as usize] };
+            let t = if j < 0 || j as usize >= width {
+                inactive
+            } else {
+                cells[j as usize]
+            };
             bits = (bits << 1) | ((t == crit) as u128);
         }
         (s.wolfram_code >> bits) & 1u128 == 1u128
@@ -259,15 +329,27 @@ impl Grid1D {
     /// never match; [`Rule1DSubrule::validate`] rejects them, and `applies_*`
     /// reports no match for them here.
     #[inline]
-    fn next_type_interior(cells: &[CellType], rule: &Rule1D, plan: &Rule1DPlan, inactive: CellType,
-                          idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
+    fn next_type_interior(
+        cells: &[CellType],
+        rule: &Rule1D,
+        plan: &Rule1DPlan,
+        inactive: CellType,
+        idx: usize,
+        mut rng: Option<&mut SmallRng>,
+    ) -> CellType {
         let current_type = cells[idx];
         for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
-            if current_type != s.current_type || !ps.valid { continue; }
-            if !Self::applies_interior(s, ps, cells, idx, current_type) { continue; }
+            if current_type != s.current_type || !ps.valid {
+                continue;
+            }
+            if !Self::applies_interior(s, ps, cells, idx, current_type) {
+                continue;
+            }
             if let Some(r) = s.randomness {
                 if let Some(rng) = rng.as_deref_mut() {
-                    if rng.r#gen::<f64>() < r { continue; }
+                    if rng.r#gen::<f64>() < r {
+                        continue;
+                    }
                 }
             }
             return s.output_type;
@@ -279,15 +361,28 @@ impl Grid1D {
     /// window slots as `inactive`.
     ///
     #[inline]
-    fn next_type_edge(cells: &[CellType], rule: &Rule1D, plan: &Rule1DPlan, inactive: CellType,
-                      width: usize, idx: usize, mut rng: Option<&mut SmallRng>) -> CellType {
+    fn next_type_edge(
+        cells: &[CellType],
+        rule: &Rule1D,
+        plan: &Rule1DPlan,
+        inactive: CellType,
+        width: usize,
+        idx: usize,
+        mut rng: Option<&mut SmallRng>,
+    ) -> CellType {
         let current_type = cells[idx];
         for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
-            if current_type != s.current_type || !ps.valid { continue; }
-            if !Self::applies_edge(s, cells, inactive, width, idx) { continue; }
+            if current_type != s.current_type || !ps.valid {
+                continue;
+            }
+            if !Self::applies_edge(s, cells, inactive, width, idx) {
+                continue;
+            }
             if let Some(r) = s.randomness {
                 if let Some(rng) = rng.as_deref_mut() {
-                    if rng.r#gen::<f64>() < r { continue; }
+                    if rng.r#gen::<f64>() < r {
+                        continue;
+                    }
                 }
             }
             return s.output_type;
@@ -298,13 +393,24 @@ impl Grid1D {
     /// Compute the next state for one chunk, writing into disjoint output slices.
     #[allow(clippy::too_many_arguments)]
     fn step_chunk(
-        cells: &[CellType], out: &mut OutChunk<'_>, history_limit: usize,
-        rule: &Rule1D, plan: &Rule1DPlan, pad: usize, needs_rng: bool,
-        inactive: CellType, dt: CellType, width: usize,
+        cells: &[CellType],
+        out: &mut OutChunk<'_>,
+        history_limit: usize,
+        rule: &Rule1D,
+        plan: &Rule1DPlan,
+        pad: usize,
+        needs_rng: bool,
+        inactive: CellType,
+        dt: CellType,
+        width: usize,
     ) -> TypeCounter {
         let mut count_map = TypeCounter::new();
         // Only pay for RNG setup when a subrule actually draws from it.
-        let mut rng = if needs_rng { Some(SmallRng::from_entropy()) } else { None };
+        let mut rng = if needs_rng {
+            Some(SmallRng::from_entropy())
+        } else {
+            None
+        };
         let start = out.start;
         // Reborrow into locals: indexing through `&mut OutChunk` makes the loop
         // reload each slice's pointer and length from the struct on every access.
@@ -330,7 +436,11 @@ impl Grid1D {
                 // `% history_limit` would be a hardware divide (the limit is a
                 // runtime value) on every cell of every step; h is always
                 // < history_limit, so a compare suffices.
-                history_heads[local] = if h + 1 == history_limit { 0 } else { (h + 1) as u8 };
+                history_heads[local] = if h + 1 == history_limit {
+                    0
+                } else {
+                    (h + 1) as u8
+                };
                 let c = history_counts[local] as usize;
                 if c < history_limit {
                     history_counts[local] = (c + 1) as u8;
@@ -465,8 +575,13 @@ impl Grid1D {
         let pad = self.rule.n_max() as usize;
         let needs_rng = self.rule.needs_rng();
         // Nominal neighbor visits per cell: one 2n+1 window per subrule.
-        let work_per_cell: usize = self.rule.subrules.iter()
-            .map(|s| 2 * s.n as usize + 1).sum::<usize>().max(1);
+        let work_per_cell: usize = self
+            .rule
+            .subrules
+            .iter()
+            .map(|s| 2 * s.n as usize + 1)
+            .sum::<usize>()
+            .max(1);
         let nchunks = chunks_for_work(width.saturating_mul(work_per_cell));
 
         // Bit-parallel fast path for pure two-state Wolfram rules (serial
@@ -480,8 +595,13 @@ impl Grid1D {
             if let Some(pw) = plan.packed {
                 if let Some(count_map) = self.step_packed(pw) {
                     std::mem::swap(&mut self.cells, &mut self.next_cells);
-                    apply_counts(&mut self.counts_current, &mut self.peak_counts,
-                        &mut self.dominant_type, width as u64, &count_map);
+                    apply_counts(
+                        &mut self.counts_current,
+                        &mut self.peak_counts,
+                        &mut self.dominant_type,
+                        width as u64,
+                        &count_map,
+                    );
                     self.step = self.step.saturating_add(1);
                     return;
                 }
@@ -503,25 +623,44 @@ impl Grid1D {
                 history_heads: &mut self.history_heads,
                 history_counts: &mut self.history_counts,
             };
-            Self::step_chunk(cells, &mut out, hl, rule, plan, pad, needs_rng, inactive, dt, width)
+            Self::step_chunk(
+                cells, &mut out, hl, rule, plan, pad, needs_rng, inactive, dt, width,
+            )
         } else {
             let chunk = width.div_ceil(nchunks);
             let mut chunks = split_chunks(
-                &mut self.next_cells, &mut self.ages,
-                &mut self.history_data, &mut self.history_heads, &mut self.history_counts,
-                hl, chunk,
+                &mut self.next_cells,
+                &mut self.ages,
+                &mut self.history_data,
+                &mut self.history_heads,
+                &mut self.history_counts,
+                hl,
+                chunk,
             );
             // Persistent pool: no thread spawn/join per step.
             pool(nchunks).install(|| {
-                chunks.par_iter_mut()
-                    .map(|c| Self::step_chunk(cells, c, hl, rule, plan, pad, needs_rng, inactive, dt, width))
-                    .reduce(TypeCounter::new, |mut a, b| { a.merge(&b); a })
+                chunks
+                    .par_iter_mut()
+                    .map(|c| {
+                        Self::step_chunk(
+                            cells, c, hl, rule, plan, pad, needs_rng, inactive, dt, width,
+                        )
+                    })
+                    .reduce(TypeCounter::new, |mut a, b| {
+                        a.merge(&b);
+                        a
+                    })
             })
         };
 
         std::mem::swap(&mut self.cells, &mut self.next_cells);
-        apply_counts(&mut self.counts_current, &mut self.peak_counts,
-            &mut self.dominant_type, width as u64, &count_map);
+        apply_counts(
+            &mut self.counts_current,
+            &mut self.peak_counts,
+            &mut self.dominant_type,
+            width as u64,
+            &count_map,
+        );
         self.step = self.step.saturating_add(1);
     }
 
@@ -539,7 +678,9 @@ impl Grid1D {
 
     /// History entries for cell `idx` in FIFO order (oldest first).
     pub fn cell_history(&self, idx: usize) -> Vec<CellType> {
-        if self.history_limit == 0 { return Vec::new(); }
+        if self.history_limit == 0 {
+            return Vec::new();
+        }
         let base = idx * self.history_limit;
         let head = self.history_heads[idx] as usize;
         let count = self.history_counts[idx] as usize;
@@ -557,21 +698,26 @@ impl Grid1D {
 
     /// Reconstruct the old-style CellState vectors (for serialization / compatibility).
     pub fn to_cell_states(&self) -> Vec<CellState> {
-        self.cells.iter().enumerate().map(|(i, ct)| {
-            CellState {
+        self.cells
+            .iter()
+            .enumerate()
+            .map(|(i, ct)| CellState {
                 history: self.cell_history(i).into(),
                 age_in_state: self.ages[i],
                 history_limit: self.history_limit,
                 current: *ct,
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::threads::{clear_min_work_per_chunk_override, clear_thread_override, set_min_work_per_chunk_override, set_thread_override};
+    use crate::threads::{
+        clear_min_work_per_chunk_override, clear_thread_override, set_min_work_per_chunk_override,
+        set_thread_override,
+    };
     use serde_json::json;
     use std::collections::VecDeque;
 
@@ -579,7 +725,8 @@ mod tests {
     fn deserialize_and_debug_paths_work() {
         let inactive = CellType::inactive();
         let a = CellType::from("A");
-        let counts: std::collections::HashMap<Spur, u64> = [(a.0, 2u64), (inactive.0, 1u64)].into_iter().collect();
+        let counts: std::collections::HashMap<Spur, u64> =
+            [(a.0, 2u64), (inactive.0, 1u64)].into_iter().collect();
         let peaks = counts.clone();
 
         let v = json!({
@@ -635,7 +782,9 @@ mod tests {
             randomness: Some(1.0),
             output_type: y,
         };
-        let rule = Rule1D { subrules: vec![sub] };
+        let rule = Rule1D {
+            subrules: vec![sub],
+        };
 
         // width=3: middle cell takes interior path
         let mut interior = Grid1D::new(3, 0, vec![x, x, x], rule.clone());
@@ -664,7 +813,10 @@ mod tests {
     fn transition_path_without_history_limit_is_exercised() {
         let a = CellType::from("A");
         let mut g = Grid1D::new(1, 0, vec![a], Rule1D { subrules: vec![] });
-        assert!(g.transition_state_and_buffer(0, &CellType::inactive()).is_none());
+        assert!(
+            g.transition_state_and_buffer(0, &CellType::inactive())
+                .is_none()
+        );
         assert!(g.history_data.is_empty());
     }
 
@@ -683,21 +835,45 @@ mod tests {
             output_type: b,
         };
         // Invalid n is rejected at plan level; the subrule can never match.
-        let invalid_rule = Rule1D { subrules: vec![invalid_n.clone()] };
+        let invalid_rule = Rule1D {
+            subrules: vec![invalid_n.clone()],
+        };
         let invalid_plan = Rule1DPlan::new(&invalid_rule, CellType::inactive());
         assert!(!invalid_plan.subs[0].valid);
         assert_eq!(
-            Grid1D::next_type_interior(&cells, &invalid_rule, &invalid_plan, CellType::inactive(), 1, None),
+            Grid1D::next_type_interior(
+                &cells,
+                &invalid_rule,
+                &invalid_plan,
+                CellType::inactive(),
+                1,
+                None
+            ),
             CellType::inactive()
         );
 
-        let random_sub = Rule1DSubrule { randomness: Some(0.5), n: 1, ..invalid_n.clone() };
-        let rule = Rule1D { subrules: vec![random_sub] };
+        let random_sub = Rule1DSubrule {
+            randomness: Some(0.5),
+            n: 1,
+            ..invalid_n.clone()
+        };
+        let rule = Rule1D {
+            subrules: vec![random_sub],
+        };
         let plan = Rule1DPlan::new(&rule, CellType::inactive());
         // Call internals directly with rng=None to cover that branch.
-        let got_interior = Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, None);
+        let got_interior =
+            Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, None);
         assert_eq!(got_interior, b);
-        let got_edge = Grid1D::next_type_edge(&cells, &rule, &plan, CellType::inactive(), cells.len(), 0, None);
+        let got_edge = Grid1D::next_type_edge(
+            &cells,
+            &rule,
+            &plan,
+            CellType::inactive(),
+            cells.len(),
+            0,
+            None,
+        );
         assert_eq!(got_edge, b);
     }
 
@@ -738,9 +914,19 @@ mod tests {
             randomness: Some(1.0),
             output_type: CellType::from("B"),
         };
-        let rng_rule = Rule1D { subrules: vec![sub] };
+        let rng_rule = Rule1D {
+            subrules: vec![sub],
+        };
         let rng_plan = Rule1DPlan::new(&rng_rule, CellType::inactive());
-        let out = Grid1D::next_type_edge(&[CellType::from("A")], &rng_rule, &rng_plan, CellType::inactive(), 1, 0, Some(&mut rng));
+        let out = Grid1D::next_type_edge(
+            &[CellType::from("A")],
+            &rng_rule,
+            &rng_plan,
+            CellType::inactive(),
+            1,
+            0,
+            Some(&mut rng),
+        );
         assert_eq!(out, CellType::inactive());
 
         // n < 1 is rejected at plan level, so the subrule never matches.
@@ -752,11 +938,21 @@ mod tests {
             randomness: None,
             output_type: CellType::from("B"),
         };
-        let invalid_rule = Rule1D { subrules: vec![invalid] };
+        let invalid_rule = Rule1D {
+            subrules: vec![invalid],
+        };
         let invalid_plan = Rule1DPlan::new(&invalid_rule, CellType::inactive());
         assert!(!invalid_plan.subs[0].valid);
         assert_eq!(
-            Grid1D::next_type_edge(&[CellType::from("A")], &invalid_rule, &invalid_plan, CellType::inactive(), 1, 0, None),
+            Grid1D::next_type_edge(
+                &[CellType::from("A")],
+                &invalid_rule,
+                &invalid_plan,
+                CellType::inactive(),
+                1,
+                0,
+                None
+            ),
             CellType::inactive()
         );
         g.step();
@@ -776,9 +972,17 @@ mod tests {
             output_type: b,
         };
         let cells = vec![a; 7];
-        let n3_rule = Rule1D { subrules: vec![sub_n3.clone()] };
+        let n3_rule = Rule1D {
+            subrules: vec![sub_n3.clone()],
+        };
         let n3_plan = Rule1DPlan::new(&n3_rule, CellType::inactive());
-        assert!(Grid1D::applies_interior(&sub_n3, &n3_plan.subs[0], &cells, 3, a));
+        assert!(Grid1D::applies_interior(
+            &sub_n3,
+            &n3_plan.subs[0],
+            &cells,
+            3,
+            a
+        ));
 
         let mut g_hist = Grid1D::new(1, 2, vec![a], Rule1D { subrules: vec![] });
         assert!(g_hist.transition_state_and_buffer(99, &b).is_some());
@@ -810,20 +1014,40 @@ mod tests {
             randomness: Some(1.0),
             output_type: b,
         };
-        let rule = Rule1D { subrules: vec![sub] };
+        let rule = Rule1D {
+            subrules: vec![sub],
+        };
         let plan = Rule1DPlan::new(&rule, CellType::inactive());
         let cells = vec![a, a, a];
         let mut rng = SmallRng::seed_from_u64(123);
-        let out = Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, Some(&mut rng));
+        let out = Grid1D::next_type_interior(
+            &cells,
+            &rule,
+            &plan,
+            CellType::inactive(),
+            1,
+            Some(&mut rng),
+        );
         assert_eq!(out, CellType::inactive());
 
         // Use r>1 to make the continue branch deterministic for internal-path coverage.
-        let sub_force = Rule1DSubrule { randomness: Some(2.0), ..rule.subrules[0].clone() };
-        let force_rule = Rule1D { subrules: vec![sub_force] };
+        let sub_force = Rule1DSubrule {
+            randomness: Some(2.0),
+            ..rule.subrules[0].clone()
+        };
+        let force_rule = Rule1D {
+            subrules: vec![sub_force],
+        };
         let force_plan = Rule1DPlan::new(&force_rule, CellType::inactive());
         let mut rng2 = SmallRng::seed_from_u64(7);
-        let out2 = Grid1D::next_type_interior(&cells, &force_rule, &force_plan, CellType::inactive(), 1, Some(&mut rng2));
+        let out2 = Grid1D::next_type_interior(
+            &cells,
+            &force_rule,
+            &force_plan,
+            CellType::inactive(),
+            1,
+            Some(&mut rng2),
+        );
         assert_eq!(out2, CellType::inactive());
     }
 }
-

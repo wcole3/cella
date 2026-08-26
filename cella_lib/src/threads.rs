@@ -1,5 +1,5 @@
 //! Thread configuration for parallel stepping.
-//! 
+//!
 //! This module exposes `thread_count()` which returns how many threads
 //! the engine should use when stepping grids. The value is loaded once
 //! from a simple properties file named `cella.properties` located at
@@ -25,8 +25,12 @@ fn find_properties_file() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     for _ in 0..5 {
         let candidate = dir.join("cella.properties");
-        if candidate.exists() { return Some(candidate); }
-        if !dir.pop() { break; }
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            break;
+        }
     }
     None
 }
@@ -35,14 +39,18 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
     let data = fs::read_to_string(path).ok()?;
     for line in data.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with("//") { continue; }
+        if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+            continue;
+        }
         if let Some(eq) = line.find('=') {
             let (k, v) = line.split_at(eq);
             let key = k.trim();
             let val = v.trim_start_matches('=').trim();
             if key.eq_ignore_ascii_case("threads") {
                 if let Ok(n) = val.parse::<usize>() {
-                    if n >= 1 { return Some(n); }
+                    if n >= 1 {
+                        return Some(n);
+                    }
                 }
             }
         }
@@ -52,18 +60,24 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
 
 fn resolve_thread_count_uncached() -> usize {
     if let Some(path) = find_properties_file() {
-        if let Some(n) = parse_threads_from_props(&path) { return n; }
+        if let Some(n) = parse_threads_from_props(&path) {
+            return n;
+        }
     }
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// Get the configured thread count for parallel stepping.
-/// 
+///
 /// This first honors a process-local override (used by tests/benchmarks),
 /// otherwise reads from cella.properties once per process and caches it.
 pub fn thread_count() -> usize {
     let overridden = THREAD_OVERRIDE.load(Ordering::Relaxed);
-    if overridden != 0 { return overridden; }
+    if overridden != 0 {
+        return overridden;
+    }
     *THREADS.get_or_init(resolve_thread_count_uncached)
 }
 
@@ -119,7 +133,9 @@ pub fn clear_min_work_per_chunk_override() {
 /// split into. `1` means run serially on the calling thread.
 pub(crate) fn chunks_for_work(total_work: usize) -> usize {
     let threads = thread_count();
-    if threads <= 1 { return 1; }
+    if threads <= 1 {
+        return 1;
+    }
     let min_work = match MIN_WORK_OVERRIDE.load(Ordering::Relaxed) {
         0 => MIN_WORK_PER_CHUNK,
         n => n,
@@ -153,7 +169,9 @@ pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
     }
     let pools = POOLS.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = pools.lock().expect("pool registry lock");
-    if let Some((_, p)) = guard.iter().find(|(k, _)| *k == n) { return p; }
+    if let Some((_, p)) = guard.iter().find(|(k, _)| *k == n) {
+        return p;
+    }
     let built = build_pool(n);
     guard.push((n, built));
     built
@@ -174,7 +192,10 @@ mod tests {
     fn parse_threads_rejects_nonpositive_and_invalid_values() {
         let _guard = test_lock().lock().unwrap();
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("cella_threads_{}_bad.properties", std::process::id()));
+        let path = dir.join(format!(
+            "cella_threads_{}_bad.properties",
+            std::process::id()
+        ));
         {
             let mut file = std::fs::File::create(&path).unwrap();
             writeln!(file, "threads=0").unwrap();
@@ -189,7 +210,10 @@ mod tests {
     fn parse_threads_accepts_valid_value() {
         let _guard = test_lock().lock().unwrap();
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("cella_threads_{}_good.properties", std::process::id()));
+        let path = dir.join(format!(
+            "cella_threads_{}_good.properties",
+            std::process::id()
+        ));
         {
             let mut file = std::fs::File::create(&path).unwrap();
             writeln!(file, "threads=4").unwrap();
@@ -214,7 +238,10 @@ mod tests {
         std::env::set_current_dir(old).unwrap();
         let _ = std::fs::remove_dir_all(&base);
 
-        let path = std::env::temp_dir().join(format!("cella_threads_{}_nokey.properties", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "cella_threads_{}_nokey.properties",
+            std::process::id()
+        ));
         {
             let mut file = std::fs::File::create(&path).unwrap();
             writeln!(file, "workers=8").unwrap();
@@ -283,4 +310,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 }
-

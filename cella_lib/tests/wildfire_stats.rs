@@ -15,7 +15,10 @@ fn params(seed: u64, wind_speed: f64, wind_dir_deg: f64) -> WildfireParams {
     WildfireParams {
         seed,
         p0: 0.35,
-        fuels: vec![FuelClass { name: "Forest".into(), veg_factor: 1.0 }],
+        fuels: vec![FuelClass {
+            name: "Forest".into(),
+            veg_factor: 1.0,
+        }],
         wind_speed,
         wind_dir_deg,
         c1: 0.045,
@@ -37,8 +40,11 @@ fn run(seed: u64, wind_speed: f64, wind_dir_deg: f64, steps: usize) -> Grid2D {
     let mut init = vec![CellType::new("Forest"); W * H];
     init[(H / 2) * W + W / 2] = CellType::new("Burning");
     let mut g = Grid2D::new(W, H, 0, init, Rule2D { subrules: vec![] });
-    g.attach_model(Box::new(WildfireModel::new(params(seed, wind_speed, wind_dir_deg), WildfireEnv::default())))
-        .unwrap();
+    g.attach_model(Box::new(WildfireModel::new(
+        params(seed, wind_speed, wind_dir_deg),
+        WildfireEnv::default(),
+    )))
+    .unwrap();
     for _ in 0..steps {
         g.step();
     }
@@ -93,7 +99,10 @@ fn ensemble_burned_fraction_within_band() {
     );
     // The fire must spread beyond its ignition point in nearly every run; an
     // occasional instant die-out is legitimate stochastic behaviour.
-    let spread = fractions.iter().filter(|&&f| f > 1.5 / (W * H) as f64).count();
+    let spread = fractions
+        .iter()
+        .filter(|&&f| f > 1.5 / (W * H) as f64)
+        .count();
     assert!(
         spread as f64 >= 0.9 * SEEDS as f64,
         "fire failed to spread in {} of {SEEDS} runs",
@@ -125,6 +134,12 @@ fn ensemble_centroid_is_displaced_downwind() {
         wind_dx > calm_dx + 0.5,
         "wind must push the burn centroid downwind: wind dx {wind_dx:.2} vs calm dx {calm_dx:.2}"
     );
-    assert!(wind_dx > 0.5, "downwind displacement expected, got {wind_dx:.2}");
-    assert!(calm_dx.abs() < 2.0, "calm ensemble should stay roughly centred, got {calm_dx:.2}");
+    assert!(
+        wind_dx > 0.5,
+        "downwind displacement expected, got {wind_dx:.2}"
+    );
+    assert!(
+        calm_dx.abs() < 2.0,
+        "calm ensemble should stay roughly centred, got {calm_dx:.2}"
+    );
 }

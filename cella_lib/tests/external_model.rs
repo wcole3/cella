@@ -5,7 +5,9 @@
 //! proving the seam works for downstream crates.
 
 use cella_lib::external::{ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent};
-use cella_lib::wildfire::{cell_rand, FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams};
+use cella_lib::wildfire::{
+    FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams, cell_rand,
+};
 use cella_lib::{CellType, Grid2D, GridState, Rule2D};
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +53,10 @@ impl ExternalModel for TestModel {
         }
         match self.event_target {
             Some(t) if (ctx.start..ctx.start + next.len()).contains(&t) => {
-                vec![ModelEvent { target: t, new_type: CellType::new("Marked") }]
+                vec![ModelEvent {
+                    target: t,
+                    new_type: CellType::new("Marked"),
+                }]
             }
             _ => Vec::new(),
         }
@@ -75,7 +80,8 @@ fn out_of_tree_model_drives_step_ages_history_and_counts() {
     let (a, b, c) = (CellType::new("A"), CellType::new("B"), CellType::new("C"));
     let init = vec![a, b, c, CellType::inactive()];
     let mut g = Grid2D::new(2, 2, 3, init, empty_rule());
-    g.attach_model(Box::new(TestModel { event_target: None })).unwrap();
+    g.attach_model(Box::new(TestModel { event_target: None }))
+        .unwrap();
     g.step();
     assert_eq!(g.cell_type(0), b);
     assert_eq!(g.cell_type(1), c);
@@ -98,13 +104,27 @@ fn model_events_apply_through_step_and_fix_counts() {
     let a = CellType::new("A");
     let init = vec![a; 9];
     let mut g = Grid2D::new(3, 3, 0, init, empty_rule());
-    g.attach_model(Box::new(TestModel { event_target: Some(4) })).unwrap();
+    g.attach_model(Box::new(TestModel {
+        event_target: Some(4),
+    }))
+    .unwrap();
     g.step();
-    assert_eq!(g.cell_type(4), CellType::new("Marked"), "event overwrote the chunk result");
+    assert_eq!(
+        g.cell_type(4),
+        CellType::new("Marked"),
+        "event overwrote the chunk result"
+    );
     assert_eq!(g.cell_type(0), CellType::new("B"));
     assert_eq!(g.cell_age(4), 0, "event resets age");
-    assert_eq!(counts_total(&g), 9, "counts stay a partition after event fixup");
-    assert_eq!(g.counts_current.get(&CellType::new("Marked").0).copied(), Some(1));
+    assert_eq!(
+        counts_total(&g),
+        9,
+        "counts stay a partition after event fixup"
+    );
+    assert_eq!(
+        g.counts_current.get(&CellType::new("Marked").0).copied(),
+        Some(1)
+    );
 }
 
 #[test]
@@ -114,7 +134,10 @@ fn attach_model_error_propagates_and_leaves_grid_modelless() {
         WildfireParams {
             seed: 1,
             p0: 2.0, // invalid
-            fuels: vec![FuelClass { name: "F".into(), veg_factor: 1.0 }],
+            fuels: vec![FuelClass {
+                name: "F".into(),
+                veg_factor: 1.0,
+            }],
             wind_speed: 0.0,
             wind_dir_deg: 0.0,
             c1: 0.045,
@@ -141,8 +164,14 @@ fn wildfire_params(seed: u64) -> WildfireParams {
         seed,
         p0: 0.58,
         fuels: vec![
-            FuelClass { name: "Forest".into(), veg_factor: 1.0 },
-            FuelClass { name: "Shrub".into(), veg_factor: 0.6 },
+            FuelClass {
+                name: "Forest".into(),
+                veg_factor: 1.0,
+            },
+            FuelClass {
+                name: "Shrub".into(),
+                veg_factor: 0.6,
+            },
         ],
         wind_speed: 6.0,
         wind_dir_deg: 30.0,
@@ -185,7 +214,10 @@ fn wildfire_grid(w: usize, h: usize, seed: u64, history_limit: usize) -> Grid2D 
     let mut g = Grid2D::new(w, h, history_limit, init, empty_rule());
     g.attach_model(Box::new(WildfireModel::new(
         wildfire_params(seed),
-        WildfireEnv { density: vec![], elevation },
+        WildfireEnv {
+            density: vec![],
+            elevation,
+        },
     )))
     .unwrap();
     g
@@ -204,9 +236,13 @@ fn wildfire_5x5_hand_checked_spread() {
     params.wind_speed = 0.0;
     params.burn_duration = 1;
     params.spotting = None;
-    params.fuels = vec![FuelClass { name: "Forest".into(), veg_factor: 1.0 }];
+    params.fuels = vec![FuelClass {
+        name: "Forest".into(),
+        veg_factor: 1.0,
+    }];
     let mut g = Grid2D::new(5, 5, 0, init, empty_rule());
-    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default()))).unwrap();
+    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default())))
+        .unwrap();
     g.step();
     for idx in [7usize, 11, 13, 17] {
         assert_eq!(g.cell_type(idx), b, "cardinal neighbour {idx}");
@@ -218,8 +254,17 @@ fn wildfire_5x5_hand_checked_spread() {
         g.step();
     }
     let burning = g.counts_current.get(&b.0).copied().unwrap_or(0);
-    assert_eq!(burning, 0, "everything reachable has burned out after 41 steps");
-    assert!(g.counts_current.get(&CellType::new("BurnedOut").0).copied().unwrap_or(0) >= 13);
+    assert_eq!(
+        burning, 0,
+        "everything reachable has burned out after 41 steps"
+    );
+    assert!(
+        g.counts_current
+            .get(&CellType::new("BurnedOut").0)
+            .copied()
+            .unwrap_or(0)
+            >= 13
+    );
 }
 
 #[test]
@@ -253,7 +298,11 @@ fn wildfire_parallel_matches_serial_exactly() {
     let mut serial = wildfire_grid(31, 23, 7, 3); // deliberately not thread-divisible
     for _ in 0..steps {
         serial.step();
-        assert_eq!(counts_total(&serial), 31 * 23, "counts partition every step");
+        assert_eq!(
+            counts_total(&serial),
+            31 * 23,
+            "counts partition every step"
+        );
     }
     for threads in [2usize, 4, 8] {
         cella_lib::threads::set_thread_override(threads);
@@ -262,11 +311,26 @@ fn wildfire_parallel_matches_serial_exactly() {
             par.step();
         }
         for idx in 0..31 * 23 {
-            assert_eq!(par.cell_type(idx), serial.cell_type(idx), "cells t={threads} idx={idx}");
-            assert_eq!(par.cell_age(idx), serial.cell_age(idx), "ages t={threads} idx={idx}");
-            assert_eq!(par.cell_history(idx), serial.cell_history(idx), "history t={threads} idx={idx}");
+            assert_eq!(
+                par.cell_type(idx),
+                serial.cell_type(idx),
+                "cells t={threads} idx={idx}"
+            );
+            assert_eq!(
+                par.cell_age(idx),
+                serial.cell_age(idx),
+                "ages t={threads} idx={idx}"
+            );
+            assert_eq!(
+                par.cell_history(idx),
+                serial.cell_history(idx),
+                "history t={threads} idx={idx}"
+            );
         }
-        assert_eq!(par.counts_current, serial.counts_current, "counts t={threads}");
+        assert_eq!(
+            par.counts_current, serial.counts_current,
+            "counts t={threads}"
+        );
         assert_eq!(par.peak_counts, serial.peak_counts, "peaks t={threads}");
     }
     cella_lib::threads::clear_thread_override();
@@ -285,13 +349,30 @@ fn wildfire_spotting_lands_through_step() {
     params.p0 = 0.0; // isolate spotting
     params.wind_dir_deg = 0.0;
     params.burn_duration = 10;
-    params.fuels = vec![FuelClass { name: "Forest".into(), veg_factor: 1.0 }];
-    params.spotting = Some(SpottingParams { p_spot: 1.0, median_distance: 3.0, sigma: 0.0, angle_jitter_deg: 0.0 });
+    params.fuels = vec![FuelClass {
+        name: "Forest".into(),
+        veg_factor: 1.0,
+    }];
+    params.spotting = Some(SpottingParams {
+        p_spot: 1.0,
+        median_distance: 3.0,
+        sigma: 0.0,
+        angle_jitter_deg: 0.0,
+    });
     let mut g = Grid2D::new(9, 9, 0, init, empty_rule());
-    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default()))).unwrap();
+    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default())))
+        .unwrap();
     g.step();
-    assert_eq!(g.cell_type(4 * 9 + 4), b, "firebrand landed 3 cells downwind");
-    assert_eq!(g.cell_type(4 * 9 + 1), b, "source still burning (duration 10)");
+    assert_eq!(
+        g.cell_type(4 * 9 + 4),
+        b,
+        "firebrand landed 3 cells downwind"
+    );
+    assert_eq!(
+        g.cell_type(4 * 9 + 1),
+        b,
+        "source still burning (duration 10)"
+    );
     assert_eq!(counts_total(&g), 81);
 }
 
@@ -308,12 +389,23 @@ fn paint_updates_model_derived_state() {
     params.wind_speed = 0.0;
     params.burn_duration = 100;
     params.spotting = None;
-    params.fuels = vec![FuelClass { name: "Forest".into(), veg_factor: 1.0 }];
+    params.fuels = vec![FuelClass {
+        name: "Forest".into(),
+        veg_factor: 1.0,
+    }];
     let mut g = Grid2D::new(3, 3, 0, init, empty_rule());
-    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default()))).unwrap();
-    assert!(g.transition_state_and_buffer(1, &CellType::inactive()).is_none());
+    g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default())))
+        .unwrap();
+    assert!(
+        g.transition_state_and_buffer(1, &CellType::inactive())
+            .is_none()
+    );
     g.step();
-    assert_eq!(g.cell_type(1), CellType::inactive(), "painted-out cell cannot ignite");
+    assert_eq!(
+        g.cell_type(1),
+        CellType::inactive(),
+        "painted-out cell cannot ignite"
+    );
     assert_eq!(g.cell_type(3), b, "unpainted cardinal ignites at p0 = 1");
     // Paint fuel back in; it ignites on the next step.
     assert!(g.transition_state_and_buffer(1, &f).is_none());
@@ -324,11 +416,21 @@ fn paint_updates_model_derived_state() {
 #[test]
 fn model_mut_downcast_adjusts_wind_between_steps() {
     let mut g = wildfire_grid(10, 10, 1, 0);
-    let m = g.model_mut().unwrap().as_any_mut().downcast_mut::<WildfireModel>().unwrap();
+    let m = g
+        .model_mut()
+        .unwrap()
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .unwrap();
     m.params.wind_speed = 99.0;
     m.params.wind_dir_deg = 180.0;
     g.step();
-    let m = g.model_mut().unwrap().as_any_mut().downcast_mut::<WildfireModel>().unwrap();
+    let m = g
+        .model_mut()
+        .unwrap()
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .unwrap();
     assert_eq!(m.params.wind_speed, 99.0);
 }
 
@@ -349,7 +451,11 @@ fn gridstate_round_trip_with_model_continues_identically() {
         restored.step();
     }
     for idx in 0..16 * 16 {
-        assert_eq!(reference.cell_type(idx), restored.cell_type(idx), "idx {idx}");
+        assert_eq!(
+            reference.cell_type(idx),
+            restored.cell_type(idx),
+            "idx {idx}"
+        );
         assert_eq!(reference.cell_age(idx), restored.cell_age(idx), "age {idx}");
     }
     assert_eq!(reference.counts_current, restored.counts_current);
@@ -358,9 +464,18 @@ fn gridstate_round_trip_with_model_continues_identically() {
 #[test]
 fn gridstate_without_model_still_round_trips() {
     let alive = CellType::new("Alive");
-    let g = Grid2D::new(2, 2, 1, vec![alive, alive, CellType::inactive(), CellType::inactive()], empty_rule());
+    let g = Grid2D::new(
+        2,
+        2,
+        1,
+        vec![alive, alive, CellType::inactive(), CellType::inactive()],
+        empty_rule(),
+    );
     let json = GridState::from_grid2d(&g).to_json_pretty();
-    assert!(!json.contains("\"model\""), "no model field serialized when absent");
+    assert!(
+        !json.contains("\"model\""),
+        "no model field serialized when absent"
+    );
     let restored = Grid2D::from_state(&GridState::from_json(&json).unwrap()).unwrap();
     assert!(restored.model.is_none());
 }
@@ -407,7 +522,10 @@ fn config_with_invalid_model_returns_none() {
             "fuels": [ { "name": "Forest", "veg_factor": 1.0 } ] } } }
     }"#;
     let cfg: cella_lib::config::CellaConfig = serde_json::from_str(json).unwrap();
-    assert!(cfg.build_grid2d().is_none(), "invalid model p0 rejects the build");
+    assert!(
+        cfg.build_grid2d().is_none(),
+        "invalid model p0 rejects the build"
+    );
 }
 
 // ─── Packed 1D Wolfram fast path: exact equivalence with the scalar path ───
@@ -419,8 +537,12 @@ mod packed_wolfram {
         let x = CellType::from("X");
         let inactive = CellType::inactive();
         let sub = |current: CellType| Rule1DSubrule {
-            current_type: current, criteria_type: x, wolfram_code: code, n: 1,
-            randomness: None, output_type: x,
+            current_type: current,
+            criteria_type: x,
+            wolfram_code: code,
+            n: 1,
+            randomness: None,
+            output_type: x,
         };
         let mut subrules = vec![sub(x), sub(inactive)];
         if extra_dummy {
@@ -435,7 +557,13 @@ mod packed_wolfram {
     fn seeded_init(width: usize, seed: u64) -> Vec<CellType> {
         let x = CellType::from("X");
         (0..width)
-            .map(|j| if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 0) < 0.35 { x } else { CellType::inactive() })
+            .map(|j| {
+                if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 0) < 0.35 {
+                    x
+                } else {
+                    CellType::inactive()
+                }
+            })
             .collect()
     }
 
@@ -447,21 +575,33 @@ mod packed_wolfram {
             for width in [1usize, 63, 64, 65, 130, 2049] {
                 for hl in [0usize, 2] {
                     let init = seeded_init(width, code as u64 ^ width as u64);
-                    let mut packed = Grid1D::new(width, hl, init.clone(), wolfram_rule(code, false));
+                    let mut packed =
+                        Grid1D::new(width, hl, init.clone(), wolfram_rule(code, false));
                     let mut scalar = Grid1D::new(width, hl, init, wolfram_rule(code, true));
                     for step in 0..12 {
                         packed.step();
                         scalar.step();
                         for j in 0..width {
-                            assert_eq!(packed.cell_type(j), scalar.cell_type(j),
-                                "cells code={code} w={width} hl={hl} step={step} j={j}");
-                            assert_eq!(packed.cell_age(j), scalar.cell_age(j),
-                                "ages code={code} w={width} hl={hl} step={step} j={j}");
-                            assert_eq!(packed.cell_history(j), scalar.cell_history(j),
-                                "history code={code} w={width} hl={hl} step={step} j={j}");
+                            assert_eq!(
+                                packed.cell_type(j),
+                                scalar.cell_type(j),
+                                "cells code={code} w={width} hl={hl} step={step} j={j}"
+                            );
+                            assert_eq!(
+                                packed.cell_age(j),
+                                scalar.cell_age(j),
+                                "ages code={code} w={width} hl={hl} step={step} j={j}"
+                            );
+                            assert_eq!(
+                                packed.cell_history(j),
+                                scalar.cell_history(j),
+                                "history code={code} w={width} hl={hl} step={step} j={j}"
+                            );
                         }
-                        assert_eq!(packed.counts_current, scalar.counts_current,
-                            "counts code={code} w={width} hl={hl} step={step}");
+                        assert_eq!(
+                            packed.counts_current, scalar.counts_current,
+                            "counts code={code} w={width} hl={hl} step={step}"
+                        );
                     }
                 }
             }
@@ -488,7 +628,11 @@ mod packed_wolfram {
                 assert_eq!(g.cell_type(j), reference.cell_type(j), "step={step} j={j}");
             }
         }
-        assert_eq!(g.cell_type(65), CellType::inactive(), "foreign type decays to inactive");
+        assert_eq!(
+            g.cell_type(65),
+            CellType::inactive(),
+            "foreign type decays to inactive"
+        );
     }
 }
 
@@ -510,7 +654,17 @@ mod packed_threshold_2d {
             // semantically inert (it can never match), but its non-two-type
             // current defeats the packed-shape detection, forcing scalar.
             let ghost = CellType::from("Ghost");
-            subrules.push(Rule2DSubrule::new(ghost, a, 1, CountOp::Gt, 1, neighborhood, a, None, None));
+            subrules.push(Rule2DSubrule::new(
+                ghost,
+                a,
+                1,
+                CountOp::Gt,
+                1,
+                neighborhood,
+                a,
+                None,
+                None,
+            ));
         }
         Rule2D { subrules }
     }
@@ -518,14 +672,31 @@ mod packed_threshold_2d {
     fn soup(w: usize, h: usize, seed: u64) -> Vec<CellType> {
         let a = CellType::from("Alive");
         (0..w * h)
-            .map(|j| if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 1) < 0.4 { a } else { CellType::inactive() })
+            .map(|j| {
+                if cella_lib::wildfire::cell_rand(seed, 0, j as u64, 1) < 0.4 {
+                    a
+                } else {
+                    CellType::inactive()
+                }
+            })
             .collect()
     }
 
     #[test]
     fn packed_matches_scalar_exactly() {
-        for nb in [Neighborhood2D::Moore, Neighborhood2D::VonNeumann, Neighborhood2D::Langton] {
-            for (w, h) in [(9usize, 7usize), (63, 5), (64, 4), (65, 4), (130, 3), (256, 16)] {
+        for nb in [
+            Neighborhood2D::Moore,
+            Neighborhood2D::VonNeumann,
+            Neighborhood2D::Langton,
+        ] {
+            for (w, h) in [
+                (9usize, 7usize),
+                (63, 5),
+                (64, 4),
+                (65, 4),
+                (130, 3),
+                (256, 16),
+            ] {
                 for hl in [0usize, 2] {
                     let init = soup(w, h, w as u64 ^ (hl as u64) << 8);
                     let mut packed = Grid2D::new(w, h, hl, init.clone(), life_like(nb, false));
@@ -534,15 +705,26 @@ mod packed_threshold_2d {
                         packed.step();
                         scalar.step();
                         for j in 0..w * h {
-                            assert_eq!(packed.cell_type(j), scalar.cell_type(j),
-                                "cells nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
-                            assert_eq!(packed.cell_age(j), scalar.cell_age(j),
-                                "ages nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
-                            assert_eq!(packed.cell_history(j), scalar.cell_history(j),
-                                "history nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}");
+                            assert_eq!(
+                                packed.cell_type(j),
+                                scalar.cell_type(j),
+                                "cells nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}"
+                            );
+                            assert_eq!(
+                                packed.cell_age(j),
+                                scalar.cell_age(j),
+                                "ages nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}"
+                            );
+                            assert_eq!(
+                                packed.cell_history(j),
+                                scalar.cell_history(j),
+                                "history nb={nb:?} w={w} h={h} hl={hl} step={step} j={j}"
+                            );
                         }
-                        assert_eq!(packed.counts_current, scalar.counts_current,
-                            "counts nb={nb:?} w={w} h={h} hl={hl} step={step}");
+                        assert_eq!(
+                            packed.counts_current, scalar.counts_current,
+                            "counts nb={nb:?} w={w} h={h} hl={hl} step={step}"
+                        );
                     }
                 }
             }
@@ -552,13 +734,29 @@ mod packed_threshold_2d {
     #[test]
     fn foreign_cell_falls_back_to_scalar_semantics() {
         let (w, h) = (70, 6);
-        let mut g = Grid2D::new(w, h, 0, soup(w, h, 3), life_like(Neighborhood2D::Moore, false));
-        let mut reference = Grid2D::new(w, h, 0, soup(w, h, 3), life_like(Neighborhood2D::Moore, true));
+        let mut g = Grid2D::new(
+            w,
+            h,
+            0,
+            soup(w, h, 3),
+            life_like(Neighborhood2D::Moore, false),
+        );
+        let mut reference = Grid2D::new(
+            w,
+            h,
+            0,
+            soup(w, h, 3),
+            life_like(Neighborhood2D::Moore, true),
+        );
         g.step();
         reference.step();
         let f = CellType::from("Foreign2D");
         assert!(g.transition_state_and_buffer(3 * w + 65, &f).is_none());
-        assert!(reference.transition_state_and_buffer(3 * w + 65, &f).is_none());
+        assert!(
+            reference
+                .transition_state_and_buffer(3 * w + 65, &f)
+                .is_none()
+        );
         for step in 0..4 {
             g.step();
             reference.step();
@@ -566,14 +764,21 @@ mod packed_threshold_2d {
                 assert_eq!(g.cell_type(j), reference.cell_type(j), "step={step} j={j}");
             }
         }
-        assert_eq!(g.cell_type(3 * w + 65), CellType::inactive(), "foreign type decays to inactive");
+        assert_eq!(
+            g.cell_type(3 * w + 65),
+            CellType::inactive(),
+            "foreign type decays to inactive"
+        );
     }
 }
 
 #[test]
 fn existing_configs_still_load() {
     // Back-compat: every committed config (no model field) must still build.
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("configs");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("configs");
     let mut checked = 0;
     for entry in std::fs::read_dir(dir).unwrap().flatten() {
         if entry.path().extension().is_some_and(|e| e == "json") {
@@ -586,5 +791,8 @@ fn existing_configs_still_load() {
             checked += 1;
         }
     }
-    assert!(checked >= 10, "expected the committed config corpus, found {checked}");
+    assert!(
+        checked >= 10,
+        "expected the committed config corpus, found {checked}"
+    );
 }

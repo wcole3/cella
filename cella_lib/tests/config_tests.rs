@@ -26,7 +26,7 @@ fn test_config_1d_file_io() {
 
     // Load
     let loaded = CellaConfig::from_file(&path).expect("Failed to load config");
-    
+
     // Cleanup
     let _ = fs::remove_file(&path);
 
@@ -45,14 +45,20 @@ fn test_config_1d_file_io() {
 #[test]
 fn test_config_2d_file_io() {
     let path = temp_file_path("2d.json");
-    let init = vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
+    let init = vec![
+        "A".to_string(),
+        "B".to_string(),
+        "C".to_string(),
+        "D".to_string(),
+    ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         width: 2,
         height: 2,
         history_limit: 3,
         initial: init.clone(),
-        rule: rule.clone(), model: None,
+        rule: rule.clone(),
+        model: None,
     });
 
     // Save
@@ -85,7 +91,7 @@ fn test_build_grid1d_success() {
         initial: init,
         rule,
     });
-    
+
     let g = cfg.build_grid1d().expect("Should build Grid1D");
     assert_eq!(g.width, 2);
     assert_eq!(g.cell_type(0).as_str(), "A");
@@ -101,8 +107,11 @@ fn test_build_grid1d_fail_length() {
         initial: init,
         rule,
     });
-    
-    assert!(cfg.build_grid1d().is_none(), "Should fail due to length mismatch");
+
+    assert!(
+        cfg.build_grid1d().is_none(),
+        "Should fail due to length mismatch"
+    );
 }
 
 #[test]
@@ -114,24 +123,34 @@ fn test_build_grid1d_fail_wrong_dim() {
         height: 1,
         history_limit: 2,
         initial: init,
-        rule, model: None,
+        rule,
+        model: None,
     });
-    
-    assert!(cfg.build_grid1d().is_none(), "Should return None when building Grid1D from D2 config");
+
+    assert!(
+        cfg.build_grid1d().is_none(),
+        "Should return None when building Grid1D from D2 config"
+    );
 }
 
 #[test]
 fn test_build_grid2d_success() {
-    let init = vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
+    let init = vec![
+        "A".to_string(),
+        "B".to_string(),
+        "C".to_string(),
+        "D".to_string(),
+    ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         width: 2,
         height: 2,
         history_limit: 2,
         initial: init,
-        rule, model: None,
+        rule,
+        model: None,
     });
-    
+
     let g = cfg.build_grid2d().expect("Should build Grid2D");
     assert_eq!(g.width, 2);
     assert_eq!(g.height, 2);
@@ -147,10 +166,14 @@ fn test_build_grid2d_fail_length() {
         height: 2, // Need 4
         history_limit: 2,
         initial: init,
-        rule, model: None,
+        rule,
+        model: None,
     });
-    
-    assert!(cfg.build_grid2d().is_none(), "Should fail due to length mismatch");
+
+    assert!(
+        cfg.build_grid2d().is_none(),
+        "Should fail due to length mismatch"
+    );
 }
 
 #[test]
@@ -163,6 +186,9 @@ fn test_build_grid2d_fail_wrong_dim() {
         initial: init,
         rule,
     });
-    
-    assert!(cfg.build_grid2d().is_none(), "Should return None when building Grid2D from D1 config");
+
+    assert!(
+        cfg.build_grid2d().is_none(),
+        "Should return None when building Grid2D from D1 config"
+    );
 }

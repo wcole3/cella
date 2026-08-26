@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::render::color_for;
 use cella_lib::*;
@@ -28,19 +28,28 @@ fn build_palette_map(
     let mut map: BTreeMap<Spur, u8> = BTreeMap::new();
     let mut next_index: u8 = 1;
     for ty in types {
-        if ty.as_str() == INACTIVE { continue; }
-        if map.contains_key(&ty.0) { continue; }
+        if ty.as_str() == INACTIVE {
+            continue;
+        }
+        if map.contains_key(&ty.0) {
+            continue;
+        }
         let col = color_for(*ty, colors, fallback_palette, inactive);
         color_table.extend_from_slice(&[col.r(), col.g(), col.b()]);
         map.insert(ty.0, next_index);
         next_index = next_index.saturating_add(1);
-        if next_index == 0 { break; } // avoid overflow; unlikely with few types
+        if next_index == 0 {
+            break;
+        } // avoid overflow; unlikely with few types
     }
 
     // Fill the rest of the 256-color table with repeats of fallback palette
     while color_table.len() < 256 * 3 {
         let idx = ((color_table.len() / 3) - 1) % fallback_palette.len().max(1);
-        let c = fallback_palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE);
+        let c = fallback_palette
+            .get(idx)
+            .copied()
+            .unwrap_or(Color32::LIGHT_BLUE);
         color_table.extend_from_slice(&[c.r(), c.g(), c.b()]);
     }
 
@@ -50,7 +59,11 @@ fn build_palette_map(
 /// Palette index for a type: 0 for Inactive, otherwise the assigned slot.
 #[inline]
 fn pal_index_of(index_map: &BTreeMap<Spur, u8>, ty: CellType) -> u8 {
-    if ty == CellType::inactive() { 0 } else { index_map.get(&ty.0).copied().unwrap_or(1) }
+    if ty == CellType::inactive() {
+        0
+    } else {
+        index_map.get(&ty.0).copied().unwrap_or(1)
+    }
 }
 
 /// Paint one logical cell as a `scale`×`scale` block of palette indices.
@@ -110,7 +123,16 @@ pub fn export_gif_2d(
     opts: &GifExport<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
-    let &GifExport { steps, fps, scale, colors, palette, inactive, progress, .. } = opts;
+    let &GifExport {
+        steps,
+        fps,
+        scale,
+        colors,
+        palette,
+        inactive,
+        progress,
+        ..
+    } = opts;
     let path = opts.path.clone();
     let w = (grid.width as u16).saturating_mul(scale);
     let h = (grid.height as u16).saturating_mul(scale);
@@ -119,7 +141,10 @@ pub fn export_gif_2d(
 
     let types = types_for_export(
         (0..grid.width * grid.height).map(|i| grid.cell_type(i)),
-        grid.rule.subrules.iter().flat_map(|s| [s.current_type, s.criteria_type, s.output_type]),
+        grid.rule
+            .subrules
+            .iter()
+            .flat_map(|s| [s.current_type, s.criteria_type, s.output_type]),
     );
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
 
@@ -146,7 +171,9 @@ pub fn export_gif_2d(
             ..Default::default()
         };
         encoder.write_frame(&frame)?;
-        if let Some(p) = progress { p.store(i + 1, Ordering::Relaxed); }
+        if let Some(p) = progress {
+            p.store(i + 1, Ordering::Relaxed);
+        }
         grid.step();
     }
 
@@ -161,7 +188,16 @@ pub fn export_gif_1d(
     history_rows: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gif::{Encoder, Frame};
-    let &GifExport { steps, fps, scale, colors, palette, inactive, progress, .. } = opts;
+    let &GifExport {
+        steps,
+        fps,
+        scale,
+        colors,
+        palette,
+        inactive,
+        progress,
+        ..
+    } = opts;
     let path = opts.path.clone();
     let w = (grid.width as u16).saturating_mul(scale);
     let total_planned_rows = 1usize + steps;
@@ -175,7 +211,10 @@ pub fn export_gif_1d(
 
     let types = types_for_export(
         (0..grid.width).map(|i| grid.cell_type(i)),
-        grid.rule.subrules.iter().flat_map(|s| [s.current_type, s.criteria_type, s.output_type]),
+        grid.rule
+            .subrules
+            .iter()
+            .flat_map(|s| [s.current_type, s.criteria_type, s.output_type]),
     );
     let (color_table, index_map) = build_palette_map(&types, colors, palette, inactive);
 
@@ -216,12 +255,16 @@ pub fn export_gif_1d(
             ..Default::default()
         };
         encoder.write_frame(&frame)?;
-        if let Some(p) = progress { p.store(i + 1, Ordering::Relaxed); }
+        if let Some(p) = progress {
+            p.store(i + 1, Ordering::Relaxed);
+        }
 
         // After writing the frame, push the current row into history and cap length
         if hist_cap > 0 {
             history.push_back(row_now);
-            while history.len() > hist_cap { history.pop_front(); }
+            while history.len() > hist_cap {
+                history.pop_front();
+            }
         }
 
         grid.step();

@@ -1,13 +1,13 @@
 //! Simple JSON configuration format to build grids without writing Rust code.
 //! This format focuses on readability: you specify dimensions, history limit,
 //! an initial array of type names, and the rule definition.
+use crate::grid1d::Grid1D;
+use crate::grid2d::Grid2D;
+use crate::rules::{Rule1D, Rule2D};
+use crate::types::CellType;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use crate::types::CellType;
-use crate::rules::{Rule1D, Rule2D};
-use crate::grid1d::Grid1D;
-use crate::grid2d::Grid2D;
 
 /// Top-level configuration for either a 1D or 2D automaton.
 ///
@@ -96,7 +96,10 @@ impl CellaConfig {
     /// # let cfg: CellaConfig = serde_json::from_str("{\"dim\":\"2d\",\"width\":1,\"height\":1,\"history_limit\":1,\"initial\":[\"Inactive\"],\"rule\":{\"subrules\":[]}}").unwrap();
     /// cfg.to_file_pretty("out.json").unwrap();
     /// ```
-    pub fn to_file_pretty<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn to_file_pretty<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let s = serde_json::to_string_pretty(self)?;
         fs::write(path, s)?;
         Ok(())
@@ -108,7 +111,9 @@ impl CellaConfig {
     pub fn build_grid1d(&self) -> Option<Grid1D> {
         match self {
             CellaConfig::D1(c) => {
-                if c.initial.len() != c.width { return None; }
+                if c.initial.len() != c.width {
+                    return None;
+                }
                 let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
                 Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()))
             }
@@ -123,9 +128,12 @@ impl CellaConfig {
     pub fn build_grid2d(&self) -> Option<Grid2D> {
         match self {
             CellaConfig::D2(c) => {
-                if c.initial.len() != c.width * c.height { return None; }
+                if c.initial.len() != c.width * c.height {
+                    return None;
+                }
                 let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
-                let mut grid = Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone());
+                let mut grid =
+                    Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone());
                 if let Some(model) = &c.model {
                     grid.attach_model(model.clone()).ok()?;
                 }
@@ -158,7 +166,8 @@ mod tests {
             height: 2,
             history_limit: 1,
             initial: vec!["A".to_string(), "B".to_string(), "C".to_string()],
-            rule: rule2, model: None,
+            rule: rule2,
+            model: None,
         });
         assert!(cfg2.build_grid2d().is_none());
     }
@@ -182,12 +191,16 @@ mod tests {
             height: 2,
             history_limit: 1,
             initial: vec![a, b],
-            rule: Rule2D { subrules: vec![] }, model: None,
+            rule: Rule2D { subrules: vec![] },
+            model: None,
         });
         assert!(cfg2.build_grid2d().is_some());
         assert!(cfg2.build_grid1d().is_none());
 
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let path = std::env::temp_dir().join(format!("cella_cfg_{stamp}.json"));
         cfg2.to_file_pretty(&path).expect("write config");
         let loaded = CellaConfig::from_file(&path).expect("read config");
@@ -200,7 +213,10 @@ mod tests {
         let missing = std::env::temp_dir().join("cella_missing_config_hopefully.json");
         assert!(CellaConfig::from_file(&missing).is_err());
 
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let bad_path = std::env::temp_dir().join(format!("cella_bad_cfg_{stamp}.json"));
         std::fs::write(&bad_path, "{not json").unwrap();
         assert!(CellaConfig::from_file(&bad_path).is_err());
@@ -217,4 +233,3 @@ mod tests {
         assert!(cfg.to_file_pretty(dir_path).is_err());
     }
 }
-

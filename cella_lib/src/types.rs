@@ -10,7 +10,9 @@ pub const INACTIVE: &str = "Inactive";
 
 static INTERNER: OnceLock<ThreadedRodeo> = OnceLock::new();
 #[inline]
-pub fn interner() -> &'static ThreadedRodeo { INTERNER.get_or_init(ThreadedRodeo::default) }
+pub fn interner() -> &'static ThreadedRodeo {
+    INTERNER.get_or_init(ThreadedRodeo::default)
+}
 
 /// A semantic label for a cell's type/state.
 ///
@@ -41,25 +43,47 @@ impl CellType {
     /// assert_ne!(t, t2);
     /// assert_eq!(t2.as_str(), String::from("testType"));
     /// ```
-    #[inline] pub fn new(name: &str) -> Self{CellType(interner().get_or_intern(name))}
-    #[inline] pub fn as_str(&self) -> &'static str { interner().resolve(&self.0) }
-    pub fn inactive() -> Self { Self::new(INACTIVE) }
+    #[inline]
+    pub fn new(name: &str) -> Self {
+        CellType(interner().get_or_intern(name))
+    }
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        interner().resolve(&self.0)
+    }
+    pub fn inactive() -> Self {
+        Self::new(INACTIVE)
+    }
 }
 
 // ergo
-impl From<&str> for CellType { fn from(s: &str) -> Self { CellType::new(s) }}
-impl From<String> for CellType { fn from(s: String) -> Self { CellType::new(&s) }}
+impl From<&str> for CellType {
+    fn from(s: &str) -> Self {
+        CellType::new(s)
+    }
+}
+impl From<String> for CellType {
+    fn from(s: String) -> Self {
+        CellType::new(&s)
+    }
+}
 
 impl Default for CellType {
-    fn default() -> Self { CellType::inactive() }
+    fn default() -> Self {
+        CellType::inactive()
+    }
 }
 
 impl fmt::Display for CellType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.as_str()) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 impl fmt::Debug for CellType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "CellType({:?}", self.as_str()) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CellType({:?}", self.as_str())
+    }
 }
 
 impl Serialize for CellType {
@@ -117,4 +141,3 @@ mod tests {
         assert!(bad.is_err());
     }
 }
-

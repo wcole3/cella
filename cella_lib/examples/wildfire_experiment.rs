@@ -123,8 +123,8 @@ struct Report {
 }
 
 fn load<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
 }
 
@@ -143,12 +143,28 @@ fn overlap_scores(sim: &[bool], obs: &[bool]) -> TimeScore {
     let union = a + b - inter;
     TimeScore {
         hours: 0.0,
-        iou: if union == 0 { 1.0 } else { inter as f64 / union as f64 },
-        sorensen: if a + b == 0 { 1.0 } else { 2.0 * inter as f64 / (a + b) as f64 },
+        iou: if union == 0 {
+            1.0
+        } else {
+            inter as f64 / union as f64
+        },
+        sorensen: if a + b == 0 {
+            1.0
+        } else {
+            2.0 * inter as f64 / (a + b) as f64
+        },
         sim_burned: a as f64,
         obs_burned: b,
-        miss_rate: if b == 0 { 0.0 } else { (b - inter) as f64 / b as f64 },
-        false_rate: if a == 0 { 0.0 } else { (a - inter) as f64 / a as f64 },
+        miss_rate: if b == 0 {
+            0.0
+        } else {
+            (b - inter) as f64 / b as f64
+        },
+        false_rate: if a == 0 {
+            0.0
+        } else {
+            (a - inter) as f64 / a as f64
+        },
     }
 }
 
@@ -170,11 +186,18 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
         assert_eq!(s.len(), sc.wind.len() - 1, "one p0 scale per wind window");
     }
     let wind_scale: f64 = std::env::var("EXP_WIND_SCALE")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
 
     let base_p0;
     {
-        let m = grid.model_mut().unwrap().as_any_mut().downcast_mut::<WildfireModel>().unwrap();
+        let m = grid
+            .model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<WildfireModel>()
+            .unwrap();
         m.params.seed = seed;
         base_p0 = m.params.p0;
     }
@@ -208,7 +231,12 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
             }
             grid.attach_model(fresh).expect("re-attach");
         } else {
-            let m = grid.model_mut().unwrap().as_any_mut().downcast_mut::<WildfireModel>().unwrap();
+            let m = grid
+                .model_mut()
+                .unwrap()
+                .as_any_mut()
+                .downcast_mut::<WildfireModel>()
+                .unwrap();
             m.params.wind_speed = cur.speed_ms * wind_scale;
             m.params.wind_dir_deg = cur.dir_deg;
         }
@@ -234,20 +262,36 @@ fn chamfer_from(seed_mask: &[bool], w: usize, h: usize) -> Vec<u32> {
     for y in 0..h {
         for x in 0..w {
             let mut best = d[idx(x, y)];
-            if x > 0 { best = best.min(d[idx(x - 1, y)] + 3); }
-            if y > 0 { best = best.min(d[idx(x, y - 1)] + 3); }
-            if x > 0 && y > 0 { best = best.min(d[idx(x - 1, y - 1)] + 4); }
-            if x + 1 < w && y > 0 { best = best.min(d[idx(x + 1, y - 1)] + 4); }
+            if x > 0 {
+                best = best.min(d[idx(x - 1, y)] + 3);
+            }
+            if y > 0 {
+                best = best.min(d[idx(x, y - 1)] + 3);
+            }
+            if x > 0 && y > 0 {
+                best = best.min(d[idx(x - 1, y - 1)] + 4);
+            }
+            if x + 1 < w && y > 0 {
+                best = best.min(d[idx(x + 1, y - 1)] + 4);
+            }
             d[idx(x, y)] = best;
         }
     }
     for y in (0..h).rev() {
         for x in (0..w).rev() {
             let mut best = d[idx(x, y)];
-            if x + 1 < w { best = best.min(d[idx(x + 1, y)] + 3); }
-            if y + 1 < h { best = best.min(d[idx(x, y + 1)] + 3); }
-            if x + 1 < w && y + 1 < h { best = best.min(d[idx(x + 1, y + 1)] + 4); }
-            if x > 0 && y + 1 < h { best = best.min(d[idx(x - 1, y + 1)] + 4); }
+            if x + 1 < w {
+                best = best.min(d[idx(x + 1, y)] + 3);
+            }
+            if y + 1 < h {
+                best = best.min(d[idx(x, y + 1)] + 3);
+            }
+            if x + 1 < w && y + 1 < h {
+                best = best.min(d[idx(x + 1, y + 1)] + 4);
+            }
+            if x > 0 && y + 1 < h {
+                best = best.min(d[idx(x - 1, y + 1)] + 4);
+            }
             d[idx(x, y)] = best;
         }
     }
@@ -278,8 +322,11 @@ fn arrival_mae(sim: &[f64], obs: &[f64]) -> f64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let dir = PathBuf::from(args.get(1).map(String::as_str)
-        .unwrap_or("../validation/data/scenarios/Bear_2020"));
+    let dir = PathBuf::from(
+        args.get(1)
+            .map(String::as_str)
+            .unwrap_or("../validation/data/scenarios/Bear_2020"),
+    );
     let seeds: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
     let out_path = args.get(3).map(PathBuf::from);
     let fields_path = args.get(4).map(PathBuf::from);
@@ -292,17 +339,35 @@ fn main() {
     let total = sc.grid.width * sc.grid.height;
     assert_eq!(truth.arrival_hours.len(), total, "truth grid mismatch");
 
-    eprintln!("{}: {}x{}, {} observations over {:.0}h, {} seeds (truth accuracy ~{} m)",
-        sc.id, sc.grid.width, sc.grid.height, truth.observed_at.len(),
-        truth.observed_at.last().unwrap(), seeds, truth.spatial_accuracy_m);
+    eprintln!(
+        "{}: {}x{}, {} observations over {:.0}h, {} seeds (truth accuracy ~{} m)",
+        sc.id,
+        sc.grid.width,
+        sc.grid.height,
+        truth.observed_at.len(),
+        truth.observed_at.last().unwrap(),
+        seeds,
+        truth.spatial_accuracy_m
+    );
 
     // Model ensemble.
-    let mut acc: Vec<TimeScore> = truth.observed_at.iter().map(|&t| TimeScore {
-        hours: t, iou: 0.0, sorensen: 0.0, sim_burned: 0.0, obs_burned: 0,
-        miss_rate: 0.0, false_rate: 0.0,
-    }).collect();
+    let mut acc: Vec<TimeScore> = truth
+        .observed_at
+        .iter()
+        .map(|&t| TimeScore {
+            hours: t,
+            iou: 0.0,
+            sorensen: 0.0,
+            sim_burned: 0.0,
+            obs_burned: 0,
+            miss_rate: 0.0,
+            false_rate: 0.0,
+        })
+        .collect();
     let seed_base: u64 = std::env::var("EXP_SEED_BASE")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut mae_sum = 0.0f64;
     let mut sim_arrival_seed0: Vec<f64> = Vec::new();
     for seed in 0..seeds {
@@ -324,8 +389,11 @@ fn main() {
     }
     let n = seeds as f64;
     for s in &mut acc {
-        s.iou /= n; s.sorensen /= n; s.sim_burned /= n;
-        s.miss_rate /= n; s.false_rate /= n;
+        s.iou /= n;
+        s.sorensen /= n;
+        s.sim_burned /= n;
+        s.miss_rate /= n;
+        s.false_rate /= n;
     }
 
     // Nulls share the ignition set (arrival == 0 cells in truth).
@@ -333,7 +401,9 @@ fn main() {
     let chamfer = chamfer_from(&ignition, sc.grid.width, sc.grid.height);
     let mut order: Vec<usize> = (0..total).collect();
     order.sort_by_key(|&i| chamfer[i]);
-    let (persistence, radial): (Vec<TimeScore>, Vec<TimeScore>) = truth.observed_at.iter()
+    let (persistence, radial): (Vec<TimeScore>, Vec<TimeScore>) = truth
+        .observed_at
+        .iter()
         .map(|&t| {
             let obs = mask_at(&truth.arrival_hours, t);
             let obs_area = obs.iter().filter(|&&b| b).count();
@@ -345,17 +415,31 @@ fn main() {
         })
         .unzip();
 
-    println!("{:<8} {:>7} {:>7} {:>7}   {:>6} {:>6}   {:>10} {:>10}",
-        "hours", "model", "persis", "radial", "miss", "false", "sim area", "obs area");
+    println!(
+        "{:<8} {:>7} {:>7} {:>7}   {:>6} {:>6}   {:>10} {:>10}",
+        "hours", "model", "persis", "radial", "miss", "false", "sim area", "obs area"
+    );
     for (i, s) in acc.iter().enumerate() {
-        println!("{:<8.0} {:>7.3} {:>7.3} {:>7.3}   {:>6.2} {:>6.2}   {:>10.0} {:>10}",
-            s.hours, s.iou, persistence[i].iou, radial[i].iou,
-            s.miss_rate, s.false_rate, s.sim_burned, s.obs_burned);
+        println!(
+            "{:<8.0} {:>7.3} {:>7.3} {:>7.3}   {:>6.2} {:>6.2}   {:>10.0} {:>10}",
+            s.hours,
+            s.iou,
+            persistence[i].iou,
+            radial[i].iou,
+            s.miss_rate,
+            s.false_rate,
+            s.sim_burned,
+            s.obs_burned
+        );
     }
     let mae = mae_sum / n;
     println!("arrival MAE: {mae:.1} h (quantized to observation cadence)");
-    println!("final IoU — model {:.3} | persistence {:.3} | area-matched radial {:.3}",
-        acc.last().unwrap().iou, persistence.last().unwrap().iou, radial.last().unwrap().iou);
+    println!(
+        "final IoU — model {:.3} | persistence {:.3} | area-matched radial {:.3}",
+        acc.last().unwrap().iou,
+        persistence.last().unwrap().iou,
+        radial.last().unwrap().iou
+    );
 
     let report = Report {
         scenario: sc.id.clone(),
@@ -370,9 +454,8 @@ fn main() {
         persistence,
         radial,
     };
-    let out = out_path.unwrap_or_else(|| {
-        PathBuf::from("../validation/results").join(format!("{}.json", sc.id))
-    });
+    let out = out_path
+        .unwrap_or_else(|| PathBuf::from("../validation/results").join(format!("{}.json", sc.id)));
     if let Some(parent) = out.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -384,7 +467,10 @@ fn main() {
         // disc newly covers gets that time as its arrival.
         let mut radial_arrival = vec![-1.0f64; total];
         for &t in &truth.observed_at {
-            let obs_area = mask_at(&truth.arrival_hours, t).iter().filter(|&&b| b).count();
+            let obs_area = mask_at(&truth.arrival_hours, t)
+                .iter()
+                .filter(|&&b| b)
+                .count();
             for &i in order.iter().take(obs_area) {
                 if radial_arrival[i] < 0.0 {
                     radial_arrival[i] = t;

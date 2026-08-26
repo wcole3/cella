@@ -6,13 +6,14 @@
 //! For example, for 1D Rule 30 you typically need two subrules:
 //! - current=X, criteria=X, wolfram_code=30 => output=X (propagate active cells)
 //! - current=Inactive, criteria=X, wolfram_code=30 => output=X (allow births from Inactive)
+//!
 //! Without the second subrule, a single X seed cannot spread because
 //! Inactive cells would never transition to X.
 
-use std::collections::HashSet;
-use memoize::memoize;
 use crate::types::CellType;
+use memoize::memoize;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashSet;
 
 /// Lightweight cell-type counter for hotpath use.
 /// Avoids HashMap allocation; typically < 20 unique types.
@@ -25,7 +26,9 @@ impl TypeCounter {
     /// Allocation-free until the first `add` — the rayon `reduce` identity and
     /// empty chunks then cost nothing.
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn add(&mut self, t: CellType) {
@@ -86,7 +89,9 @@ impl TypeCounter {
 }
 
 impl Default for TypeCounter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Rebuild `counts_current` / `peak_counts` from one step's [`TypeCounter`].
@@ -110,12 +115,26 @@ pub(crate) fn apply_counts(
     for (k, v) in new_counts.iter() {
         counts_current.insert(k.0, *v);
         remainder = remainder.saturating_sub(*v);
-        peak_counts.entry(k.0).and_modify(|peak| { if *v > *peak { *peak = *v; } }).or_insert(*v);
-        if *v > challenger.1 { challenger = (*k, *v); }
+        peak_counts
+            .entry(k.0)
+            .and_modify(|peak| {
+                if *v > *peak {
+                    *peak = *v;
+                }
+            })
+            .or_insert(*v);
+        if *v > challenger.1 {
+            challenger = (*k, *v);
+        }
     }
     counts_current.insert(dominant_type.0, remainder);
-    peak_counts.entry(dominant_type.0)
-        .and_modify(|peak| { if remainder > *peak { *peak = remainder; } })
+    peak_counts
+        .entry(dominant_type.0)
+        .and_modify(|peak| {
+            if remainder > *peak {
+                *peak = remainder;
+            }
+        })
         .or_insert(remainder);
     if remainder < challenger.1 {
         *dominant_type = challenger.0;
@@ -177,7 +196,6 @@ pub fn neighborhood_contains(dx: i32, dy: i32, range: i32, neighborhood: Neighbo
     neighborhood_offsets(neighborhood, range).contains(&(dx, dy))
 }
 
-
 #[memoize(SharedCache)]
 /// For Neighborhoods, we want to save the offsets so that we can
 /// loop over them during stepping. Returns a sorted Vec for deterministic
@@ -188,27 +206,37 @@ pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> Vec<(i32, i
         Neighborhood2D::Moore => {
             for dx in -n..=n {
                 for dy in -n..=n {
-                    if dx == 0 && dy == 0 { continue; }
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
                     set.insert((dx, dy));
                 }
             }
-        },
+        }
         Neighborhood2D::VonNeumann => {
             for dx in -n..=n {
                 for dy in -n..=n {
-                    if dx == 0 && dy == 0 { continue; }
-                    if dx.abs() + dy.abs() <= n { set.insert((dx, dy)); }
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    if dx.abs() + dy.abs() <= n {
+                        set.insert((dx, dy));
+                    }
                 }
             }
-        },
+        }
         Neighborhood2D::Langton => {
             for dx in -n..=n {
                 for dy in -n..=n {
-                    if dx == 0 && dy == 0 { continue; }
-                    if dx.abs() == dy.abs() && dx.abs() <= n { set.insert((dx, dy)); }
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    if dx.abs() == dy.abs() && dx.abs() <= n {
+                        set.insert((dx, dy));
+                    }
                 }
             }
-        },
+        }
         Neighborhood2D::StraightLine => {
             for i in -n..=n {
                 if i != 0 {
@@ -216,11 +244,13 @@ pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> Vec<(i32, i
                     set.insert((0, i));
                 }
             }
-        },
+        }
         Neighborhood2D::Knight => {
-            for dx in -2*n..=2*n {
-                for dy in -2*n..=2*n {
-                    if knight_reachable(dx, dy, n as u8) { set.insert((dx, dy)); }
+            for dx in -2 * n..=2 * n {
+                for dy in -2 * n..=2 * n {
+                    if knight_reachable(dx, dy, n as u8) {
+                        set.insert((dx, dy));
+                    }
                 }
             }
         }
@@ -234,21 +264,33 @@ pub fn neighborhood_offsets(neighborhood: Neighborhood2D, n: i32) -> Vec<(i32, i
 /// Each hop is an L-shaped chess-knight move: (±1, ±2) or (±2, ±1).
 fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
     use std::collections::VecDeque;
-    if dx == 0 && dy == 0 { return false; }
+    if dx == 0 && dy == 0 {
+        return false;
+    }
     let mut visited = HashSet::new();
     let mut queue: VecDeque<(i32, i32, u8)> = VecDeque::new();
     queue.push_back((0, 0, 0));
     visited.insert((0i32, 0i32));
     const MOVES: [(i32, i32); 8] = [
-        (1, 2), (1, -2), (-1, 2), (-1, -2),
-        (2, 1), (2, -1), (-2, 1), (-2, -1),
+        (1, 2),
+        (1, -2),
+        (-1, 2),
+        (-1, -2),
+        (2, 1),
+        (2, -1),
+        (-2, 1),
+        (-2, -1),
     ];
     while let Some((x, y, depth)) = queue.pop_front() {
-        if depth >= max_moves { continue; }
+        if depth >= max_moves {
+            continue;
+        }
         for (mx, my) in MOVES {
             let nx = x + mx;
             let ny = y + my;
-            if nx == dx && ny == dy { return true; }
+            if nx == dx && ny == dy {
+                return true;
+            }
             if !visited.contains(&(nx, ny)) {
                 visited.insert((nx, ny));
                 queue.push_back((nx, ny, depth + 1));
@@ -305,13 +347,21 @@ impl Rule1DSubrule {
     /// Ensures `n>=1`, `randomness` in (0-1), and `wolfram_code` within range
     /// for the window size (when computable within u128 limits).
     pub fn validate(&self) -> Result<(), RuleError> {
-        if self.n < 1 { return Err(RuleError::InvalidN1D(self.n)); }
-        if let Some(r) = self.randomness { if !(0.0..=1.0).contains(&r) { return Err(RuleError::InvalidRandomness) } }
+        if self.n < 1 {
+            return Err(RuleError::InvalidN1D(self.n));
+        }
+        if let Some(r) = self.randomness
+            && !(0.0..=1.0).contains(&r)
+        {
+            return Err(RuleError::InvalidRandomness);
+        }
         let b: u32 = 2u32 * self.n as u32 + 1; // window bits
         // n=1 -> b=3, patterns=8;   n=2 -> b=5, patterns=32;
         // n=3 -> b=7, patterns=128 (all u128 values valid);
         // n>=4 -> patterns > 128, exceeds u128 capacity.
-        if self.n > 3 { return Err(RuleError::TooManyPatterns(self.n)); }
+        if self.n > 3 {
+            return Err(RuleError::TooManyPatterns(self.n));
+        }
         if b < 7 {
             let patterns: u32 = 1u32 << b;
             let max: u128 = 1u128 << patterns;
@@ -340,15 +390,26 @@ impl Rule1DSubrule {
 
 /// A 1D rule consisting of multiple subrules evaluated in order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Rule1D { pub subrules: Vec<Rule1DSubrule> }
+pub struct Rule1D {
+    pub subrules: Vec<Rule1DSubrule>,
+}
 
 impl Rule1D {
     /// Validate all subrules.
-    pub fn validate(&self) -> Result<(), RuleError> { for s in &self.subrules { s.validate()?; } Ok(()) }
+    pub fn validate(&self) -> Result<(), RuleError> {
+        for s in &self.subrules {
+            s.validate()?;
+        }
+        Ok(())
+    }
     /// Return the maximum neighborhood radius among subrules (or 1 if empty).
-    pub fn n_max(&self) -> u8 { self.subrules.iter().map(|s| s.n).max().unwrap_or(1) }
+    pub fn n_max(&self) -> u8 {
+        self.subrules.iter().map(|s| s.n).max().unwrap_or(1)
+    }
     /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
-    pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
+    pub(crate) fn needs_rng(&self) -> bool {
+        self.subrules.iter().any(|s| s.randomness.is_some())
+    }
 }
 
 /// Precomputed helper data for **one subrule** during a single 1D step.
@@ -455,7 +516,9 @@ impl Rule1DPlan {
     /// public and it has no constructor, so anyone building one with struct
     /// literal syntax would skip the precomputation.)
     pub fn new(rule: &Rule1D, inactive: CellType) -> Self {
-        let subs = rule.subrules.iter()
+        let subs = rule
+            .subrules
+            .iter()
             .map(|s| Sub1DPlan {
                 // Truncating to u64 is safe for the n <= 2 fast path: those
                 // windows only ever index bits 0..=31.
@@ -463,16 +526,24 @@ impl Rule1DPlan {
                 valid: (1..=3).contains(&s.n),
             })
             .collect();
-        Self { subs, packed: Self::detect_packed(rule, inactive) }
+        Self {
+            subs,
+            packed: Self::detect_packed(rule, inactive),
+        }
     }
 
     /// See [`PackedWolfram`] for the shape this recognizes.
     fn detect_packed(rule: &Rule1D, inactive: CellType) -> Option<PackedWolfram> {
-        let [a, b] = rule.subrules.as_slice() else { return None };
+        let [a, b] = rule.subrules.as_slice() else {
+            return None;
+        };
         let active = a.current_type;
         let eligible = |s: &Rule1DSubrule| {
-            s.n == 1 && s.randomness.is_none() && s.criteria_type == active
-                && s.output_type == active && s.wolfram_code < 256
+            s.n == 1
+                && s.randomness.is_none()
+                && s.criteria_type == active
+                && s.output_type == active
+                && s.wolfram_code < 256
         };
         if active != inactive
             && b.current_type == inactive
@@ -480,7 +551,10 @@ impl Rule1DPlan {
             && eligible(b)
             && a.wolfram_code == b.wolfram_code
         {
-            Some(PackedWolfram { active, code: a.wolfram_code as u8 })
+            Some(PackedWolfram {
+                active,
+                code: a.wolfram_code as u8,
+            })
         } else {
             None
         }
@@ -503,11 +577,14 @@ impl Rule1DPlan {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CountOp {
     /// At most (inclusive): `neighbor_count <= target_count`.
-    #[serde(rename = "lt")] Lt,
+    #[serde(rename = "lt")]
+    Lt,
     /// At least (inclusive): `neighbor_count >= target_count`.
-    #[serde(rename = "gt")] Gt,
+    #[serde(rename = "gt")]
+    Gt,
     /// Equal to: `neighbor_count == target_count`.
-    #[serde(rename = "eq")] Eq,
+    #[serde(rename = "eq")]
+    Eq,
 }
 
 /// One subrule for a 2D automaton using neighbor-count comparisons.
@@ -554,13 +631,25 @@ pub struct Rule2DSubrule {
 }
 
 impl Rule2DSubrule {
-
-    pub fn new(current_type: CellType, criteria_type: CellType, count: u32, op: CountOp,
-               range: u8, neighborhood: Neighborhood2D, output_type: CellType,
-               randomness: Option<f64>, limit: Option<u32>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        current_type: CellType,
+        criteria_type: CellType,
+        count: u32,
+        op: CountOp,
+        range: u8,
+        neighborhood: Neighborhood2D,
+        output_type: CellType,
+        randomness: Option<f64>,
+        limit: Option<u32>,
+    ) -> Self {
         // compute the offsets for the neighborhood
         let offsets = neighborhood_offsets(neighborhood, range as i32);
-        let pad = offsets.iter().map(|(dx, dy)| dx.abs().max(dy.abs()) as usize).max().unwrap_or(0);
+        let pad = offsets
+            .iter()
+            .map(|(dx, dy)| dx.abs().max(dy.abs()) as usize)
+            .max()
+            .unwrap_or(0);
         let early_exit = matches!(op, CountOp::Gt) && limit.is_none();
         let (cond_lo, cond_hi) = match (op, limit) {
             (CountOp::Eq, None) => (count, count),
@@ -571,29 +660,53 @@ impl Rule2DSubrule {
             (CountOp::Eq, Some(_)) => (1, 0), // invalid; never matches
         };
         // make the struct
-        Self { current_type, criteria_type, count, op, limit, range,
-            neighborhood, randomness, output_type, offsets, early_exit, pad, cond_lo, cond_hi }
-    }
-
-    /// Linear index offsets into a row-major grid of the given width.
-    /// Interior cells can add these to their own index with no bounds logic.
-    pub(crate) fn linear_offsets(&self, width: usize) -> Vec<isize> {
-        self.offsets.iter().map(|(dx, dy)| *dy as isize * width as isize + *dx as isize).collect()
+        Self {
+            current_type,
+            criteria_type,
+            count,
+            op,
+            limit,
+            range,
+            neighborhood,
+            randomness,
+            output_type,
+            offsets,
+            early_exit,
+            pad,
+            cond_lo,
+            cond_hi,
+        }
     }
 
     /// Validate subrule parameters (range>=1 and randomness/limit bounds).
     pub fn validate(&self) -> Result<(), RuleError> {
-        if self.range < 1 { return Err(RuleError::InvalidRange2D); }
-        if let Some(r) = self.randomness { if !(0.0..=1.0).contains(&r) { return Err(RuleError::InvalidRandomness); } }
+        if self.range < 1 {
+            return Err(RuleError::InvalidRange2D);
+        }
+        if let Some(r) = self.randomness
+            && !(0.0..=1.0).contains(&r)
+        {
+            return Err(RuleError::InvalidRandomness);
+        }
         match self.op {
             CountOp::Eq => {
-                if self.limit.is_some() { return Err(RuleError::InvalidRange2D); }
+                if self.limit.is_some() {
+                    return Err(RuleError::InvalidRange2D);
+                }
             }
             CountOp::Gt => {
-                if let Some(hi) = self.limit { if hi < self.count { return Err(RuleError::InvalidRange2D); } }
+                if let Some(hi) = self.limit
+                    && hi < self.count
+                {
+                    return Err(RuleError::InvalidRange2D);
+                }
             }
             CountOp::Lt => {
-                if let Some(lo) = self.limit { if lo > self.count { return Err(RuleError::InvalidRange2D); } }
+                if let Some(lo) = self.limit
+                    && lo > self.count
+                {
+                    return Err(RuleError::InvalidRange2D);
+                }
             }
         }
         Ok(())
@@ -629,23 +742,42 @@ impl<'de> Deserialize<'de> for Rule2DSubrule {
             randomness: Option<f64>,
         }
         let h = Helper::deserialize(d)?;
-        Ok(Self::new(h.current_type, h.criteria_type, h.count, h.op, h.range, h.neighborhood,
-                     h.output_type, h.randomness, h.limit))
-
+        Ok(Self::new(
+            h.current_type,
+            h.criteria_type,
+            h.count,
+            h.op,
+            h.range,
+            h.neighborhood,
+            h.output_type,
+            h.randomness,
+            h.limit,
+        ))
     }
 }
 
 /// A 2D rule consisting of multiple subrules evaluated in order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Rule2D { pub subrules: Vec<Rule2DSubrule> }
+pub struct Rule2D {
+    pub subrules: Vec<Rule2DSubrule>,
+}
 
 impl Rule2D {
     /// Validate all subrules.
-    pub fn validate(&self) -> Result<(), RuleError> { for s in &self.subrules { s.validate()?; } Ok(()) }
+    pub fn validate(&self) -> Result<(), RuleError> {
+        for s in &self.subrules {
+            s.validate()?;
+        }
+        Ok(())
+    }
     /// Return the maximum range among subrules (or 1 if empty).
-    pub fn range_max(&self) -> u8 { self.subrules.iter().map(|s| s.range).max().unwrap_or(1) }
+    pub fn range_max(&self) -> u8 {
+        self.subrules.iter().map(|s| s.range).max().unwrap_or(1)
+    }
     /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
-    pub(crate) fn needs_rng(&self) -> bool { self.subrules.iter().any(|s| s.randomness.is_some()) }
+    pub(crate) fn needs_rng(&self) -> bool {
+        self.subrules.iter().any(|s| s.randomness.is_some())
+    }
 }
 
 /// Marks a rule that qualifies for the 2D "bit-parallel" fast path, plus the
@@ -760,16 +892,16 @@ pub(crate) struct Rule2DPlan {
 impl Rule2DPlan {
     /// Build the plan for `rule` on a grid of the given `width`. Called once
     /// at the top of `Grid2D::step()`.
-    pub fn new(rule: &Rule2D, width: usize) -> Self {
-        Self::with_inactive(rule, width, CellType::inactive())
-    }
-
     pub fn with_inactive(rule: &Rule2D, width: usize, inactive: CellType) -> Self {
         let mut lin_flat = Vec::with_capacity(rule.subrules.iter().map(|s| s.offsets.len()).sum());
         let mut spans = Vec::with_capacity(rule.subrules.len());
         for s in &rule.subrules {
             let start = lin_flat.len() as u32;
-            lin_flat.extend(s.offsets.iter().map(|&(dx, dy)| dy as isize * width as isize + dx as isize));
+            lin_flat.extend(
+                s.offsets
+                    .iter()
+                    .map(|&(dx, dy)| dy as isize * width as isize + dx as isize),
+            );
             spans.push((start, lin_flat.len() as u32));
         }
         Self {
@@ -777,7 +909,12 @@ impl Rule2DPlan {
             spans,
             pad: rule.subrules.iter().map(|s| s.pad).max().unwrap_or(0),
             needs_rng: rule.needs_rng(),
-            work_per_cell: rule.subrules.iter().map(|s| s.offsets.len()).sum::<usize>().max(1),
+            work_per_cell: rule
+                .subrules
+                .iter()
+                .map(|s| s.offsets.len())
+                .sum::<usize>()
+                .max(1),
             packed: Self::detect_packed(rule, inactive),
         }
     }
@@ -816,13 +953,19 @@ impl Rule2DPlan {
         let mut table = [[false; 9]; 2];
         for (cur_slot, cur) in [(0usize, inactive), (1usize, active)] {
             for count in 0..=8u32 {
-                let next = rule.subrules.iter()
+                let next = rule
+                    .subrules
+                    .iter()
                     .find(|s| s.current_type == cur && s.eval_condition(count))
                     .map_or(inactive, |s| s.output_type);
                 table[cur_slot][count as usize] = next == active;
             }
         }
-        Some(PackedThreshold2D { active, table, slots })
+        Some(PackedThreshold2D {
+            active,
+            table,
+            slots,
+        })
     }
 
     /// The linear neighbor offsets for subrule `i` (same index as
@@ -844,34 +987,104 @@ mod tests {
         let x = CellType::from("X");
         let y = CellType::from("Y");
         let inactive = CellType::inactive();
-        let sub = |current: CellType, criteria: CellType, code: u128, n: u8,
-                   randomness: Option<f64>, output: CellType| Rule1DSubrule {
-            current_type: current, criteria_type: criteria, wolfram_code: code, n,
-            randomness, output_type: output,
+        let sub = |current: CellType,
+                   criteria: CellType,
+                   code: u128,
+                   n: u8,
+                   randomness: Option<f64>,
+                   output: CellType| Rule1DSubrule {
+            current_type: current,
+            criteria_type: criteria,
+            wolfram_code: code,
+            n,
+            randomness,
+            output_type: output,
         };
-        let good = Rule1D { subrules: vec![
-            sub(x, x, 30, 1, None, x),
-            sub(inactive, x, 30, 1, None, x),
-        ]};
-        let detected = Rule1DPlan::new(&good, inactive).packed.expect("canonical shape detects");
+        let good = Rule1D {
+            subrules: vec![sub(x, x, 30, 1, None, x), sub(inactive, x, 30, 1, None, x)],
+        };
+        let detected = Rule1DPlan::new(&good, inactive)
+            .packed
+            .expect("canonical shape detects");
         assert_eq!(detected.active, x);
         assert_eq!(detected.code, 30);
 
         let reject = |rule: Rule1D, why: &str| {
             assert!(Rule1DPlan::new(&rule, inactive).packed.is_none(), "{why}");
         };
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x)] }, "one subrule");
-        reject(Rule1D { subrules: vec![
-            sub(x, x, 30, 1, None, x), sub(inactive, x, 30, 1, None, x), sub(inactive, x, 30, 1, None, x),
-        ]}, "three subrules");
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 2, None, x), sub(inactive, x, 30, 2, None, x)] }, "n != 1");
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, Some(0.5), x), sub(inactive, x, 30, 1, None, x)] }, "randomness");
-        reject(Rule1D { subrules: vec![sub(x, y, 30, 1, None, x), sub(inactive, x, 30, 1, None, x)] }, "criteria mismatch");
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, y), sub(inactive, x, 30, 1, None, x)] }, "output mismatch");
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x), sub(inactive, x, 110, 1, None, x)] }, "codes differ");
-        reject(Rule1D { subrules: vec![sub(x, x, 300, 1, None, x), sub(inactive, x, 300, 1, None, x)] }, "code >= 256");
-        reject(Rule1D { subrules: vec![sub(x, x, 30, 1, None, x), sub(y, x, 30, 1, None, x)] }, "second current not inactive");
-        reject(Rule1D { subrules: vec![sub(inactive, inactive, 30, 1, None, inactive), sub(inactive, inactive, 30, 1, None, inactive)] }, "active == inactive");
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, x, 30, 1, None, x)],
+            },
+            "one subrule",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![
+                    sub(x, x, 30, 1, None, x),
+                    sub(inactive, x, 30, 1, None, x),
+                    sub(inactive, x, 30, 1, None, x),
+                ],
+            },
+            "three subrules",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, x, 30, 2, None, x), sub(inactive, x, 30, 2, None, x)],
+            },
+            "n != 1",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![
+                    sub(x, x, 30, 1, Some(0.5), x),
+                    sub(inactive, x, 30, 1, None, x),
+                ],
+            },
+            "randomness",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, y, 30, 1, None, x), sub(inactive, x, 30, 1, None, x)],
+            },
+            "criteria mismatch",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, x, 30, 1, None, y), sub(inactive, x, 30, 1, None, x)],
+            },
+            "output mismatch",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, x, 30, 1, None, x), sub(inactive, x, 110, 1, None, x)],
+            },
+            "codes differ",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![
+                    sub(x, x, 300, 1, None, x),
+                    sub(inactive, x, 300, 1, None, x),
+                ],
+            },
+            "code >= 256",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![sub(x, x, 30, 1, None, x), sub(y, x, 30, 1, None, x)],
+            },
+            "second current not inactive",
+        );
+        reject(
+            Rule1D {
+                subrules: vec![
+                    sub(inactive, inactive, 30, 1, None, inactive),
+                    sub(inactive, inactive, 30, 1, None, inactive),
+                ],
+            },
+            "active == inactive",
+        );
     }
 
     #[test]
@@ -925,9 +1138,18 @@ mod tests {
 
     #[test]
     fn serde_u128_accepts_string_u64_and_u128_inputs() {
-        assert_eq!(super::serde_u128::deserialize(StrDeserializer::<DeError>::new("123")).unwrap(), 123u128);
-        assert_eq!(super::serde_u128::deserialize(U64Deserializer::<DeError>::new(123)).unwrap(), 123u128);
-        assert_eq!(super::serde_u128::deserialize(U128Deserializer::<DeError>::new(123)).unwrap(), 123u128);
+        assert_eq!(
+            super::serde_u128::deserialize(StrDeserializer::<DeError>::new("123")).unwrap(),
+            123u128
+        );
+        assert_eq!(
+            super::serde_u128::deserialize(U64Deserializer::<DeError>::new(123)).unwrap(),
+            123u128
+        );
+        assert_eq!(
+            super::serde_u128::deserialize(U128Deserializer::<DeError>::new(123)).unwrap(),
+            123u128
+        );
     }
 
     #[test]
@@ -935,7 +1157,9 @@ mod tests {
         let bad = super::serde_u128::deserialize(StrDeserializer::<DeError>::new("not-a-number"));
         assert!(bad.is_err());
 
-        let bad_ty = super::serde_u128::deserialize(serde::de::value::BoolDeserializer::<DeError>::new(true));
+        let bad_ty = super::serde_u128::deserialize(
+            serde::de::value::BoolDeserializer::<DeError>::new(true),
+        );
         assert!(bad_ty.is_err());
     }
 
@@ -944,17 +1168,47 @@ mod tests {
         let a = CellType::from("A");
         let b = CellType::from("B");
 
-        let gt = Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(4));
+        let gt = Rule2DSubrule::new(
+            a,
+            b,
+            2,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(4),
+        );
         assert!(gt.eval_condition(2));
         assert!(gt.eval_condition(4));
         assert!(!gt.eval_condition(5));
 
-        let lt = Rule2DSubrule::new(a.clone(), b.clone(), 4, CountOp::Lt, 1, Neighborhood2D::Moore, b.clone(), None, Some(2));
+        let lt = Rule2DSubrule::new(
+            a,
+            b,
+            4,
+            CountOp::Lt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(2),
+        );
         assert!(lt.eval_condition(2));
         assert!(lt.eval_condition(4));
         assert!(!lt.eval_condition(1));
 
-        let eq_with_limit = Rule2DSubrule::new(a, b, 3, CountOp::Eq, 1, Neighborhood2D::Moore, CellType::from("B"), None, Some(1));
+        let eq_with_limit = Rule2DSubrule::new(
+            a,
+            b,
+            3,
+            CountOp::Eq,
+            1,
+            Neighborhood2D::Moore,
+            CellType::from("B"),
+            None,
+            Some(1),
+        );
         assert!(!eq_with_limit.eval_condition(3));
     }
 
@@ -963,16 +1217,56 @@ mod tests {
         let a = CellType::from("A");
         let b = CellType::from("B");
 
-        let valid_gt = Rule2DSubrule::new(a.clone(), b.clone(), 2, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(5));
+        let valid_gt = Rule2DSubrule::new(
+            a,
+            b,
+            2,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(5),
+        );
         assert!(valid_gt.validate().is_ok());
 
-        let invalid_gt = Rule2DSubrule::new(a.clone(), b.clone(), 5, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, Some(4));
+        let invalid_gt = Rule2DSubrule::new(
+            a,
+            b,
+            5,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(4),
+        );
         assert_eq!(invalid_gt.validate(), Err(RuleError::InvalidRange2D));
 
-        let valid_lt = Rule2DSubrule::new(a.clone(), b.clone(), 5, CountOp::Lt, 1, Neighborhood2D::Moore, b.clone(), None, Some(2));
+        let valid_lt = Rule2DSubrule::new(
+            a,
+            b,
+            5,
+            CountOp::Lt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(2),
+        );
         assert!(valid_lt.validate().is_ok());
 
-        let invalid_lt = Rule2DSubrule::new(a, b, 5, CountOp::Lt, 1, Neighborhood2D::Moore, CellType::from("B"), None, Some(6));
+        let invalid_lt = Rule2DSubrule::new(
+            a,
+            b,
+            5,
+            CountOp::Lt,
+            1,
+            Neighborhood2D::Moore,
+            CellType::from("B"),
+            None,
+            Some(6),
+        );
         assert_eq!(invalid_lt.validate(), Err(RuleError::InvalidRange2D));
     }
 
@@ -991,14 +1285,36 @@ mod tests {
         assert!(sub.applies(&[a, a, a]));
         assert!(!sub.applies(&[a, b, a]));
 
-        let r1 = Rule1D { subrules: vec![sub.clone()] };
+        let r1 = Rule1D {
+            subrules: vec![sub.clone()],
+        };
         assert!(r1.validate().is_ok());
         assert_eq!(r1.n_max(), 1);
 
         let r2 = Rule2D {
             subrules: vec![
-                Rule2DSubrule::new(a, b, 1, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, None),
-                Rule2DSubrule::new(CellType::from("B"), CellType::from("A"), 1, CountOp::Gt, 3, Neighborhood2D::Moore, CellType::from("A"), None, None),
+                Rule2DSubrule::new(
+                    a,
+                    b,
+                    1,
+                    CountOp::Gt,
+                    1,
+                    Neighborhood2D::Moore,
+                    b,
+                    None,
+                    None,
+                ),
+                Rule2DSubrule::new(
+                    CellType::from("B"),
+                    CellType::from("A"),
+                    1,
+                    CountOp::Gt,
+                    3,
+                    Neighborhood2D::Moore,
+                    CellType::from("A"),
+                    None,
+                    None,
+                ),
             ],
         };
         assert_eq!(r2.range_max(), 3);
@@ -1062,21 +1378,69 @@ mod tests {
             randomness: None,
             output_type: b,
         };
-        assert!(Rule1D { subrules: vec![bad_1d] }.validate().is_err());
+        assert!(
+            Rule1D {
+                subrules: vec![bad_1d]
+            }
+            .validate()
+            .is_err()
+        );
 
-        let bad_rand = Rule2DSubrule::new(a, b, 1, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(2.0), None);
+        let bad_rand = Rule2DSubrule::new(
+            a,
+            b,
+            1,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            Some(2.0),
+            None,
+        );
         assert!(bad_rand.validate().is_err());
 
-        let bad_eq_limit = Rule2DSubrule::new(a, b, 1, CountOp::Eq, 1, Neighborhood2D::Moore, b, None, Some(0));
+        let bad_eq_limit = Rule2DSubrule::new(
+            a,
+            b,
+            1,
+            CountOp::Eq,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(0),
+        );
         assert!(bad_eq_limit.validate().is_err());
 
-        let bad_gt_limit = Rule2DSubrule::new(a, b, 2, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, Some(1));
+        let bad_gt_limit = Rule2DSubrule::new(
+            a,
+            b,
+            2,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(1),
+        );
         assert!(bad_gt_limit.validate().is_err());
 
-        let bad_lt_limit = Rule2DSubrule::new(a, b, 1, CountOp::Lt, 1, Neighborhood2D::Moore, b, None, Some(2));
+        let bad_lt_limit = Rule2DSubrule::new(
+            a,
+            b,
+            1,
+            CountOp::Lt,
+            1,
+            Neighborhood2D::Moore,
+            b,
+            None,
+            Some(2),
+        );
         assert!(bad_lt_limit.validate().is_err());
 
-        let bad_rule = Rule2D { subrules: vec![bad_rand] };
+        let bad_rule = Rule2D {
+            subrules: vec![bad_rand],
+        };
         assert!(bad_rule.validate().is_err());
 
         let bad_json = "{\"subrules\":\"nope\"}";
@@ -1088,4 +1452,3 @@ mod tests {
         assert!(deser_sub.is_err());
     }
 }
-

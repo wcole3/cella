@@ -15,14 +15,14 @@ use lasso2::Spur;
 pub fn default_palette() -> Vec<Color32> {
     // Calm, high-contrast but not harsh palette
     vec![
-        Color32::from_rgb(0x56,0xB4,0xE9), // sky
-        Color32::from_rgb(0xE6,0x9F,0x00), // orange
-        Color32::from_rgb(0x00,0xA9,0xCF), // teal
-        Color32::from_rgb(0xF0,0xE4,0x42), // yellow
-        Color32::from_rgb(0x66,0xA6,0x69), // green
-        Color32::from_rgb(0xDF,0x70,0x93), // rose
-        Color32::from_rgb(0x80,0x80,0x80), // gray
-        Color32::from_rgb(0xAA,0xCC,0xEE), // light blue
+        Color32::from_rgb(0x56, 0xB4, 0xE9), // sky
+        Color32::from_rgb(0xE6, 0x9F, 0x00), // orange
+        Color32::from_rgb(0x00, 0xA9, 0xCF), // teal
+        Color32::from_rgb(0xF0, 0xE4, 0x42), // yellow
+        Color32::from_rgb(0x66, 0xA6, 0x69), // green
+        Color32::from_rgb(0xDF, 0x70, 0x93), // rose
+        Color32::from_rgb(0x80, 0x80, 0x80), // gray
+        Color32::from_rgb(0xAA, 0xCC, 0xEE), // light blue
     ]
 }
 
@@ -49,8 +49,12 @@ pub fn color_for(
     palette: &[Color32],
     inactive: Color32,
 ) -> Color32 {
-    if ty == CellType::inactive() { return inactive; }
-    if let Some(&c) = colors.get(&ty.0) { return c; }
+    if ty == CellType::inactive() {
+        return inactive;
+    }
+    if let Some(&c) = colors.get(&ty.0) {
+        return c;
+    }
     let idx = palette_index_for(ty.as_str(), palette.len());
     palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
 }

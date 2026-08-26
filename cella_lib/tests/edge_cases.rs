@@ -69,14 +69,42 @@ fn validate_1d_wolfram_code_at_exact_max_n1() {
 fn validate_1d_randomness_boundary() {
     let x = CellType::from("X");
     // randomness at exact boundaries should be valid
-    let r0 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 0, n: 1, randomness: Some(0.0), output_type: x.clone() };
+    let r0 = Rule1DSubrule {
+        current_type: x.clone(),
+        criteria_type: x.clone(),
+        wolfram_code: 0,
+        n: 1,
+        randomness: Some(0.0),
+        output_type: x.clone(),
+    };
     assert!(r0.validate().is_ok());
-    let r1 = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 0, n: 1, randomness: Some(1.0), output_type: x.clone() };
+    let r1 = Rule1DSubrule {
+        current_type: x.clone(),
+        criteria_type: x.clone(),
+        wolfram_code: 0,
+        n: 1,
+        randomness: Some(1.0),
+        output_type: x.clone(),
+    };
     assert!(r1.validate().is_ok());
     // slightly outside
-    let rn = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 0, n: 1, randomness: Some(-0.001), output_type: x.clone() };
+    let rn = Rule1DSubrule {
+        current_type: x.clone(),
+        criteria_type: x.clone(),
+        wolfram_code: 0,
+        n: 1,
+        randomness: Some(-0.001),
+        output_type: x.clone(),
+    };
     assert_eq!(rn.validate(), Err(RuleError::InvalidRandomness));
-    let rp = Rule1DSubrule { current_type: x.clone(), criteria_type: x.clone(), wolfram_code: 0, n: 1, randomness: Some(1.001), output_type: x.clone() };
+    let rp = Rule1DSubrule {
+        current_type: x.clone(),
+        criteria_type: x.clone(),
+        wolfram_code: 0,
+        n: 1,
+        randomness: Some(1.001),
+        output_type: x.clone(),
+    };
     assert_eq!(rp.validate(), Err(RuleError::InvalidRandomness));
 }
 
@@ -86,7 +114,17 @@ fn validate_1d_randomness_boundary() {
 fn validate_2d_eq_with_limit_rejected() {
     let a = CellType::from("A");
     let b = CellType::from("B");
-    let sub = Rule2DSubrule::new(a.clone(), b.clone(), 3, CountOp::Eq, 1, Neighborhood2D::Moore, b.clone(), None, Some(5));
+    let sub = Rule2DSubrule::new(
+        a.clone(),
+        b.clone(),
+        3,
+        CountOp::Eq,
+        1,
+        Neighborhood2D::Moore,
+        b.clone(),
+        None,
+        Some(5),
+    );
     assert_eq!(sub.validate(), Err(RuleError::InvalidRange2D));
 }
 
@@ -94,7 +132,17 @@ fn validate_2d_eq_with_limit_rejected() {
 fn validate_2d_range_zero_rejected() {
     let a = CellType::from("A");
     let b = CellType::from("B");
-    let sub = Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 0, Neighborhood2D::Moore, b.clone(), None, None);
+    let sub = Rule2DSubrule::new(
+        a.clone(),
+        b.clone(),
+        1,
+        CountOp::Gt,
+        0,
+        Neighborhood2D::Moore,
+        b.clone(),
+        None,
+        None,
+    );
     assert_eq!(sub.validate(), Err(RuleError::InvalidRange2D));
 }
 
@@ -125,13 +173,16 @@ fn all_inactive_grid_2d_stays_inactive() {
 #[test]
 fn grid_1d_width_1_steps_without_panic() {
     let x = CellType::from("X");
-    let rule = Rule1D { subrules: vec![
-        Rule1DSubrule {
-            current_type: x.clone(), criteria_type: x.clone(),
-            wolfram_code: 0xFF, n: 1, randomness: None,
+    let rule = Rule1D {
+        subrules: vec![Rule1DSubrule {
+            current_type: x.clone(),
+            criteria_type: x.clone(),
+            wolfram_code: 0xFF,
+            n: 1,
+            randomness: None,
             output_type: x.clone(),
-        },
-    ]};
+        }],
+    };
     let init = vec![x.clone()];
     let mut g = Grid1D::new(1, 2, init, rule);
     g.step();
@@ -141,9 +192,19 @@ fn grid_1d_width_1_steps_without_panic() {
 #[test]
 fn grid_2d_1x1_steps_without_panic() {
     let a = CellType::from("A");
-    let rule = Rule2D { subrules: vec![
-        Rule2DSubrule::new(a.clone(), a.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, a.clone(), None, None),
-    ]};
+    let rule = Rule2D {
+        subrules: vec![Rule2DSubrule::new(
+            a.clone(),
+            a.clone(),
+            0,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            a.clone(),
+            None,
+            None,
+        )],
+    };
     let init = vec![a.clone()];
     let mut g = Grid2D::new(1, 1, 2, init, rule);
     g.step();
@@ -155,13 +216,16 @@ fn grid_1d_no_matching_subrule_becomes_inactive() {
     // Cell type "X" with a rule that only matches "Y" -> becomes Inactive
     let x = CellType::from("X");
     let y = CellType::from("Y");
-    let rule = Rule1D { subrules: vec![
-        Rule1DSubrule {
-            current_type: y.clone(), criteria_type: y.clone(),
-            wolfram_code: 0xFF, n: 1, randomness: None,
+    let rule = Rule1D {
+        subrules: vec![Rule1DSubrule {
+            current_type: y.clone(),
+            criteria_type: y.clone(),
+            wolfram_code: 0xFF,
+            n: 1,
+            randomness: None,
             output_type: y.clone(),
-        },
-    ]};
+        }],
+    };
     let init = vec![CellType::inactive(), x.clone(), CellType::inactive()];
     let mut g = Grid1D::new(3, 2, init, rule);
     g.step();
@@ -173,9 +237,19 @@ fn grid_2d_no_matching_subrule_becomes_inactive() {
     let a = CellType::from("A");
     let b = CellType::from("B");
     // Rule only matches B, but grid is all A
-    let rule = Rule2D { subrules: vec![
-        Rule2DSubrule::new(b.clone(), b.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None),
-    ]};
+    let rule = Rule2D {
+        subrules: vec![Rule2DSubrule::new(
+            b.clone(),
+            b.clone(),
+            0,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b.clone(),
+            None,
+            None,
+        )],
+    };
     let init = vec![a.clone(); 9];
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
@@ -192,8 +266,20 @@ fn countop_lt_zero_always_fails() {
     // Lt with count=0 means "less than 0 neighbors" which is impossible
     let a = CellType::from("A");
     let b = CellType::from("B");
-    let sub = Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Lt, 1, Neighborhood2D::Moore, b.clone(), None, None);
-    let rule = Rule2D { subrules: vec![sub] };
+    let sub = Rule2DSubrule::new(
+        a.clone(),
+        b.clone(),
+        0,
+        CountOp::Lt,
+        1,
+        Neighborhood2D::Moore,
+        b.clone(),
+        None,
+        None,
+    );
+    let rule = Rule2D {
+        subrules: vec![sub],
+    };
     let init = vec![a.clone(); 9];
     let mut g = Grid2D::new(3, 3, 2, init, rule);
     g.step();
@@ -208,8 +294,20 @@ fn countop_eq_zero_matches_no_neighbors() {
     let a = CellType::from("A");
     let b = CellType::from("B");
     let out = CellType::from("O");
-    let sub = Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Eq, 1, Neighborhood2D::Moore, out.clone(), None, None);
-    let rule = Rule2D { subrules: vec![sub] };
+    let sub = Rule2DSubrule::new(
+        a.clone(),
+        b.clone(),
+        0,
+        CountOp::Eq,
+        1,
+        Neighborhood2D::Moore,
+        out.clone(),
+        None,
+        None,
+    );
+    let rule = Rule2D {
+        subrules: vec![sub],
+    };
     // All A, no B neighbors for center
     let init = vec![a.clone(); 9];
     let mut g = Grid2D::new(3, 3, 2, init, rule);
@@ -257,9 +355,19 @@ fn all_neighborhood_types_2d_step_without_panic() {
         Neighborhood2D::StraightLine,
     ];
     for nh in &neighborhoods {
-        let rule = Rule2D { subrules: vec![
-            Rule2DSubrule::new(a.clone(), b.clone(), 1, CountOp::Gt, 2, *nh, b.clone(), None, None),
-        ]};
+        let rule = Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                a.clone(),
+                b.clone(),
+                1,
+                CountOp::Gt,
+                2,
+                *nh,
+                b.clone(),
+                None,
+                None,
+            )],
+        };
         let mut init = vec![a.clone(); 25];
         init[12] = b.clone(); // center of 5x5
         let mut g = Grid2D::new(5, 5, 2, init, rule);
@@ -290,12 +398,23 @@ fn grid_state_1d_roundtrip_counts_and_peaks() {
     let x = CellType::from("X");
     let inactive = CellType::inactive();
     let sub = Rule1DSubrule {
-        current_type: x.clone(), criteria_type: x.clone(),
-        wolfram_code: 0xFF, n: 1, randomness: None,
+        current_type: x.clone(),
+        criteria_type: x.clone(),
+        wolfram_code: 0xFF,
+        n: 1,
+        randomness: None,
         output_type: x.clone(),
     };
-    let rule = Rule1D { subrules: vec![sub] };
-    let init = vec![inactive.clone(), x.clone(), inactive.clone(), x.clone(), inactive.clone()];
+    let rule = Rule1D {
+        subrules: vec![sub],
+    };
+    let init = vec![
+        inactive.clone(),
+        x.clone(),
+        inactive.clone(),
+        x.clone(),
+        inactive.clone(),
+    ];
     let mut g = Grid1D::new(5, 2, init, rule);
     g.step();
     let st = GridState::from_grid1d(&g);
@@ -312,9 +431,19 @@ fn grid_state_1d_roundtrip_counts_and_peaks() {
 fn grid_state_2d_roundtrip_counts_and_peaks() {
     let a = CellType::from("A");
     let b = CellType::from("B");
-    let rule = Rule2D { subrules: vec![
-        Rule2DSubrule::new(a.clone(), b.clone(), 0, CountOp::Gt, 1, Neighborhood2D::Moore, b.clone(), None, None),
-    ]};
+    let rule = Rule2D {
+        subrules: vec![Rule2DSubrule::new(
+            a.clone(),
+            b.clone(),
+            0,
+            CountOp::Gt,
+            1,
+            Neighborhood2D::Moore,
+            b.clone(),
+            None,
+            None,
+        )],
+    };
     let mut init = vec![a.clone(); 9];
     init[4] = b.clone();
     let mut g = Grid2D::new(3, 3, 2, init, rule);

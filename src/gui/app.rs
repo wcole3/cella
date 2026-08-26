@@ -5,13 +5,16 @@
 //! controls, statistics, drawing/painting, and GIF export.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::export::{export_gif_1d, export_gif_2d, GifExport};
+use super::export::{GifExport, export_gif_1d, export_gif_2d};
 use super::render::{color_for, default_palette};
-use crate::demos::{build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline, build_2d_three_state_cycle};
+use crate::demos::{
+    build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline,
+    build_2d_three_state_cycle,
+};
 use cella_lib::types::interner;
 use cella_lib::*;
 use egui::scroll_area::{DragScroll, ScrollSource};
@@ -41,22 +44,35 @@ struct RowPainter<'a, F: Fn(CellType) -> Color32> {
 impl<F: Fn(CellType) -> Color32> RowPainter<'_, F> {
     #[inline]
     fn color_of(&mut self, ty: CellType) -> Color32 {
-        if let Some(&(_, c)) = self.color_cache.iter().find(|(s, _)| *s == ty.0) { return c; }
+        if let Some(&(_, c)) = self.color_cache.iter().find(|(s, _)| *s == ty.0) {
+            return c;
+        }
         let c = (self.resolve)(ty);
         self.color_cache.push((ty.0, c));
         c
     }
 
     /// Emit merged runs of same-colored cells for the cells `xs` of grid row `row_y`.
-    fn emit_row(&mut self, row_y: usize, xs: std::ops::Range<usize>, cell_at: impl Fn(usize) -> CellType) {
-        if xs.is_empty() { return; }
+    fn emit_row(
+        &mut self,
+        row_y: usize,
+        xs: std::ops::Range<usize>,
+        cell_at: impl Fn(usize) -> CellType,
+    ) {
+        if xs.is_empty() {
+            return;
+        }
         let (x_start, x_end) = (xs.start, xs.end);
         let y = self.origin.y + row_y as f32 * self.scale;
         let mut run_start = x_start;
         let mut run_color = self.color_of(cell_at(x_start));
         for x in (x_start + 1)..=x_end {
             // At `x_end` the sentinel forces the final run to be flushed.
-            let col = if x < x_end { self.color_of(cell_at(x)) } else { run_color };
+            let col = if x < x_end {
+                self.color_of(cell_at(x))
+            } else {
+                run_color
+            };
             if x == x_end || col != run_color {
                 if run_color != self.bg {
                     let rect = egui::Rect::from_min_size(
@@ -75,7 +91,9 @@ impl<F: Fn(CellType) -> Color32> RowPainter<'_, F> {
 /// Next type after `current` in `types`, wrapping around. Falls back to `Inactive`
 /// when `types` is empty or `current` is not a declared type.
 fn next_in_cycle(types: &[CellType], current: CellType) -> CellType {
-    if types.is_empty() { return CellType::inactive(); }
+    if types.is_empty() {
+        return CellType::inactive();
+    }
     let idx = types.iter().position(|t| *t == current).unwrap_or(0);
     types[(idx + 1) % types.len()]
 }
@@ -93,10 +111,16 @@ fn sort_types_inactive_first(names: &mut [CellType]) {
 const RUN_TO_STEPS_PER_FRAME: u32 = 100;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Dim { D1, D2 }
+enum Dim {
+    D1,
+    D2,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DrawMode { Cycle, Paint }
+enum DrawMode {
+    Cycle,
+    Paint,
+}
 
 // ---------------- Rule Editor Models ----------------
 #[derive(Clone, Debug)]
@@ -111,26 +135,40 @@ struct Rule1DSubruleEdit {
 }
 
 #[derive(Clone, Debug)]
-struct Rule1DEdit { subrules: Vec<Rule1DSubruleEdit> }
+struct Rule1DEdit {
+    subrules: Vec<Rule1DSubruleEdit>,
+}
 
 impl Rule1DEdit {
     fn from_rule(rule: &Rule1D) -> Self {
-        let subs = rule.subrules.iter().map(|s| Rule1DSubruleEdit {
-            current: s.current_type.as_str().to_string(),
-            criteria: s.criteria_type.as_str().to_string(),
-            wolfram_code: s.wolfram_code.to_string(),
-            n: s.n,
-            randomness_enabled: s.randomness.is_some(),
-            randomness_value: s.randomness.unwrap_or(0.0),
-            output: s.output_type.as_str().to_string(),
-        }).collect();
+        let subs = rule
+            .subrules
+            .iter()
+            .map(|s| Rule1DSubruleEdit {
+                current: s.current_type.as_str().to_string(),
+                criteria: s.criteria_type.as_str().to_string(),
+                wolfram_code: s.wolfram_code.to_string(),
+                n: s.n,
+                randomness_enabled: s.randomness.is_some(),
+                randomness_value: s.randomness.unwrap_or(0.0),
+                output: s.output_type.as_str().to_string(),
+            })
+            .collect();
         Self { subrules: subs }
     }
     fn to_rule(&self) -> Result<Rule1D, String> {
         let mut subs: Vec<Rule1DSubrule> = Vec::new();
         for s in &self.subrules {
-            let code = s.wolfram_code.trim().parse::<u128>().map_err(|e| format!("wolfram_code parse error: {}", e))?;
-            let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
+            let code = s
+                .wolfram_code
+                .trim()
+                .parse::<u128>()
+                .map_err(|e| format!("wolfram_code parse error: {}", e))?;
+            let randomness = if s.randomness_enabled {
+                Some(s.randomness_value)
+            } else {
+                None
+            };
             let sub = Rule1DSubrule {
                 current_type: CellType::from(s.current.clone()),
                 criteria_type: CellType::from(s.criteria.clone()),
@@ -139,7 +177,9 @@ impl Rule1DEdit {
                 randomness,
                 output_type: CellType::from(s.output.clone()),
             };
-            if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
+            if let Err(e) = sub.validate() {
+                return Err(format!("validation error: {}", e));
+            }
             subs.push(sub);
         }
         Ok(Rule1D { subrules: subs })
@@ -162,30 +202,44 @@ struct Rule2DSubruleEdit {
 }
 
 #[derive(Clone, Debug)]
-struct Rule2DEdit { subrules: Vec<Rule2DSubruleEdit> }
+struct Rule2DEdit {
+    subrules: Vec<Rule2DSubruleEdit>,
+}
 
 impl Rule2DEdit {
     fn from_rule(rule: &Rule2D) -> Self {
-        let subs = rule.subrules.iter().map(|s| Rule2DSubruleEdit {
-            current: s.current_type.as_str().to_string(),
-            criteria: s.criteria_type.as_str().to_string(),
-            count: s.count,
-            op: s.op,
-            limit_enabled: s.limit.is_some(),
-            limit_value: s.limit.unwrap_or(0),
-            range: s.range,
-            neighborhood: s.neighborhood,
-            randomness_enabled: s.randomness.is_some(),
-            randomness_value: s.randomness.unwrap_or(0.0),
-            output: s.output_type.as_str().to_string(),
-        }).collect();
+        let subs = rule
+            .subrules
+            .iter()
+            .map(|s| Rule2DSubruleEdit {
+                current: s.current_type.as_str().to_string(),
+                criteria: s.criteria_type.as_str().to_string(),
+                count: s.count,
+                op: s.op,
+                limit_enabled: s.limit.is_some(),
+                limit_value: s.limit.unwrap_or(0),
+                range: s.range,
+                neighborhood: s.neighborhood,
+                randomness_enabled: s.randomness.is_some(),
+                randomness_value: s.randomness.unwrap_or(0.0),
+                output: s.output_type.as_str().to_string(),
+            })
+            .collect();
         Self { subrules: subs }
     }
     fn to_rule(&self) -> Result<Rule2D, String> {
         let mut subs: Vec<Rule2DSubrule> = Vec::new();
         for s in &self.subrules {
-            let randomness = if s.randomness_enabled { Some(s.randomness_value) } else { None };
-            let limit = if s.limit_enabled { Some(s.limit_value) } else { None };
+            let randomness = if s.randomness_enabled {
+                Some(s.randomness_value)
+            } else {
+                None
+            };
+            let limit = if s.limit_enabled {
+                Some(s.limit_value)
+            } else {
+                None
+            };
             let sub = Rule2DSubrule::new(
                 CellType::from(s.current.clone()),
                 CellType::from(s.criteria.clone()),
@@ -195,9 +249,11 @@ impl Rule2DEdit {
                 s.neighborhood,
                 CellType::from(s.output.clone()),
                 randomness,
-                limit
+                limit,
             );
-            if let Err(e) = sub.validate() { return Err(format!("validation error: {}", e)); }
+            if let Err(e) = sub.validate() {
+                return Err(format!("validation error: {}", e));
+            }
             subs.push(sub);
         }
         Ok(Rule2D { subrules: subs })
@@ -223,9 +279,13 @@ pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size(egui::vec2(w, h))
         .with_min_inner_size(egui::vec2(800.0, 450.0))
-        .with_title("Cella GUI").with_resizable(true);
+        .with_title("Cella GUI")
+        .with_resizable(true);
 
-    let options = eframe::NativeOptions { viewport, ..eframe::NativeOptions::default() };
+    let options = eframe::NativeOptions {
+        viewport,
+        ..eframe::NativeOptions::default()
+    };
 
     eframe::run_native(
         "Cella GUI",
@@ -344,7 +404,9 @@ struct CellaApp {
 }
 
 impl CellaApp {
-    fn set_status<S: Into<String>>(&mut self, msg: S) { self.status_message = Some(msg.into()); }
+    fn set_status<S: Into<String>>(&mut self, msg: S) {
+        self.status_message = Some(msg.into());
+    }
 
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self {
@@ -408,10 +470,15 @@ impl CellaApp {
     }
 
     #[inline]
-    fn inactive_color(&self) -> Color32 { self.inactive_color }
+    fn inactive_color(&self) -> Color32 {
+        self.inactive_color
+    }
 
     fn set_color_for(&mut self, ty: &CellType, color: Color32) {
-        if ty.as_str() == INACTIVE { self.inactive_color = color; return; }
+        if ty.as_str() == INACTIVE {
+            self.inactive_color = color;
+            return;
+        }
         self.colors.insert(ty.0, color);
     }
 
@@ -424,7 +491,9 @@ impl CellaApp {
     /// Restyling forces egui to re-layout every galley, so this is a no-op unless
     /// the scale actually changed since the last frame.
     fn apply_font_scale(&mut self, ctx: &Context) {
-        if self.font_scale == self.applied_font_scale { return; }
+        if self.font_scale == self.applied_font_scale {
+            return;
+        }
         self.applied_font_scale = self.font_scale;
         let mut map = self.base_text_styles.clone();
         for font in map.values_mut() {
@@ -441,24 +510,32 @@ impl CellaApp {
             self.sim_play_start = Some(Instant::now());
         }
         match self.dim {
-            Some(Dim::D1) => if let Some(g) = &mut self.d1 {
-                // Push the current row onto the viewport's space-time history before
-                // stepping. Recycle the row buffer that falls out of the window instead
-                // of allocating a fresh `Vec` every step.
-                let mut row = if self.history_1d.len() >= self.history_limit_1d {
-                    let mut recycled = self.history_1d.pop_front().unwrap_or_default();
-                    recycled.clear();
-                    recycled
-                } else {
-                    Vec::new()
-                };
-                row.reserve(g.width);
-                row.extend((0..g.width).map(|x| g.cell_type(x)));
-                self.history_1d.push_back(row);
-                while self.history_1d.len() > self.history_limit_1d { self.history_1d.pop_front(); }
-                g.step();
-            },
-            Some(Dim::D2) => if let Some(g) = &mut self.d2 { g.step(); },
+            Some(Dim::D1) => {
+                if let Some(g) = &mut self.d1 {
+                    // Push the current row onto the viewport's space-time history before
+                    // stepping. Recycle the row buffer that falls out of the window instead
+                    // of allocating a fresh `Vec` every step.
+                    let mut row = if self.history_1d.len() >= self.history_limit_1d {
+                        let mut recycled = self.history_1d.pop_front().unwrap_or_default();
+                        recycled.clear();
+                        recycled
+                    } else {
+                        Vec::new()
+                    };
+                    row.reserve(g.width);
+                    row.extend((0..g.width).map(|x| g.cell_type(x)));
+                    self.history_1d.push_back(row);
+                    while self.history_1d.len() > self.history_limit_1d {
+                        self.history_1d.pop_front();
+                    }
+                    g.step();
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &mut self.d2 {
+                    g.step();
+                }
+            }
             None => {}
         }
         // Count this step for timing average (only when timer is running)
@@ -474,7 +551,7 @@ impl CellaApp {
         match self.dim {
             Some(Dim::D1) => self.d1.as_ref().map(|g| g.step).unwrap_or(0),
             Some(Dim::D2) => self.d2.as_ref().map(|g| g.step).unwrap_or(0),
-            None => 0
+            None => 0,
         }
     }
 
@@ -486,20 +563,30 @@ impl CellaApp {
         let mut set: BTreeSet<Spur> = BTreeSet::new();
         set.insert(CellType::inactive().0);
         match self.dim {
-            Some(Dim::D1) => if let Some(g) = &self.d1 {
-                set.extend(g.rule.subrules.iter().flat_map(|s| {
-                    [s.current_type.0, s.criteria_type.0, s.output_type.0]
-                }));
-            },
-            Some(Dim::D2) => if let Some(g) = &self.d2 {
-                set.extend(g.rule.subrules.iter().flat_map(|s| {
-                    [s.current_type.0, s.criteria_type.0, s.output_type.0]
-                }));
-                // External models (e.g. wildfire) declare their own palette.
-                if let Some(m) = &g.model {
-                    set.extend(m.declared_types().iter().map(|t| t.0));
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    set.extend(
+                        g.rule
+                            .subrules
+                            .iter()
+                            .flat_map(|s| [s.current_type.0, s.criteria_type.0, s.output_type.0]),
+                    );
                 }
-            },
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    set.extend(
+                        g.rule
+                            .subrules
+                            .iter()
+                            .flat_map(|s| [s.current_type.0, s.criteria_type.0, s.output_type.0]),
+                    );
+                    // External models (e.g. wildfire) declare their own palette.
+                    if let Some(m) = &g.model {
+                        set.extend(m.declared_types().iter().map(|t| t.0));
+                    }
+                }
+            }
             None => {}
         }
         // Include any extra types added via the editor
@@ -555,8 +642,12 @@ impl CellaApp {
         // Convert visible pixel range to cell range (with one cell margin for partial visibility)
         let cell_x_start = ((visible.min.x - full_rect.min.x) / scale).floor().max(0.0) as usize;
         let cell_y_start = ((visible.min.y - full_rect.min.y) / scale).floor().max(0.0) as usize;
-        let cell_x_end = ((visible.max.x - full_rect.min.x) / scale).ceil().min(grid_w as f32) as usize;
-        let cell_y_end = ((visible.max.y - full_rect.min.y) / scale).ceil().min(grid_h as f32) as usize;
+        let cell_x_end = ((visible.max.x - full_rect.min.x) / scale)
+            .ceil()
+            .min(grid_w as f32) as usize;
+        let cell_y_end = ((visible.max.y - full_rect.min.y) / scale)
+            .ceil()
+            .min(grid_h as f32) as usize;
 
         // Reuse last frame's shape allocation. Taking it out of `self` lets the rest
         // of this function borrow `self` immutably.
@@ -638,7 +729,10 @@ impl CellaApp {
     /// Build the top toolbar: play/pause, step, run-to, scale, export/save/reset.
     fn ui_top_controls(&mut self, ui: &mut egui::Ui, _ctx: &Context) {
         ui.horizontal(|ui| {
-            if ui.button(if self.playing { "Pause" } else { "Play" }).clicked() {
+            if ui
+                .button(if self.playing { "Pause" } else { "Play" })
+                .clicked()
+            {
                 self.playing = !self.playing;
                 self.last_tick = Instant::now();
                 if self.playing {
@@ -653,11 +747,22 @@ impl CellaApp {
                     self.set_status("Paused");
                 }
             }
-            if ui.button("Step").clicked() { self.step_once(); self.set_status(format!("Stepped to {}", self.current_step())); }
-            ui.add(egui::DragValue::new(&mut self.refresh_ms).range(10..=2000).suffix(" ms"));
+            if ui.button("Step").clicked() {
+                self.step_once();
+                self.set_status(format!("Stepped to {}", self.current_step()));
+            }
+            ui.add(
+                egui::DragValue::new(&mut self.refresh_ms)
+                    .range(10..=2000)
+                    .suffix(" ms"),
+            );
             ui.label("Refresh");
             ui.separator();
-            ui.add(egui::DragValue::new(&mut self.run_to_steps).range(1..=1_000_000).suffix(" steps"));
+            ui.add(
+                egui::DragValue::new(&mut self.run_to_steps)
+                    .range(1..=1_000_000)
+                    .suffix(" steps"),
+            );
             if ui.button("Run to +N").clicked() {
                 let target = self.current_step().saturating_add(self.run_to_steps);
                 self.run_to_target = Some(target);
@@ -668,18 +773,36 @@ impl CellaApp {
                 self.set_status(format!("Running to {}", target));
             }
             ui.separator();
-            ui.add(egui::DragValue::new(&mut self.scale).range(1..=64).suffix(" px"));
+            ui.add(
+                egui::DragValue::new(&mut self.scale)
+                    .range(1..=64)
+                    .suffix(" px"),
+            );
             ui.label("Scale");
             ui.separator();
             let exporting = self.export_join.is_some();
             let export_btn = ui.add_enabled(!exporting, egui::Button::new("Export GIF..."));
-            if export_btn.clicked() { self.export_gif_dialog(); }
-            if exporting { ui.label("Exporting..."); }
-            if ui.button("Save Final State").clicked() { self.save_final_state(); }
-            if ui.button("Reset").clicked() { self.reset_to_initial(); }
+            if export_btn.clicked() {
+                self.export_gif_dialog();
+            }
+            if exporting {
+                ui.label("Exporting...");
+            }
+            if ui.button("Save Final State").clicked() {
+                self.save_final_state();
+            }
+            if ui.button("Reset").clicked() {
+                self.reset_to_initial();
+            }
             ui.separator();
-            let toggle = if self.show_rule_editor { "Hide Rule Editor" } else { "Show Rule Editor" };
-            if ui.button(toggle).clicked() { self.show_rule_editor = !self.show_rule_editor; }
+            let toggle = if self.show_rule_editor {
+                "Hide Rule Editor"
+            } else {
+                "Show Rule Editor"
+            };
+            if ui.button(toggle).clicked() {
+                self.show_rule_editor = !self.show_rule_editor;
+            }
         });
     }
 
@@ -920,7 +1043,7 @@ impl CellaApp {
                                             .on_hover_text("Set the baseline count between 0 and 99.");
                                         ui.label("op:")
                                             .on_hover_text("Comparison: gt means >= count, lt means <= count, eq means exactly count. With a limit, you can specify a range.");
-                                        let mut op = sub.op; 
+                                        let mut op = sub.op;
                                         egui::ComboBox::from_id_salt(format!("d2_op_{}", i))
                                             .selected_text(match op { CountOp::Lt=>"lt", CountOp::Gt=>"gt", CountOp::Eq=>"eq" })
                                             .show_ui(ui, |ui| {
@@ -933,7 +1056,7 @@ impl CellaApp {
                                     ui.horizontal(|ui| {
                                         ui.checkbox(&mut sub.limit_enabled, "limit")
                                             .on_hover_text("Optional second bound to create a range: with op=gt, checks count in [count..=limit]; with op=lt, checks count in [limit..=count].");
-                                        if sub.limit_enabled { 
+                                        if sub.limit_enabled {
                                             ui.add(egui::DragValue::new(&mut sub.limit_value).range(0..=99))
                                                 .on_hover_text("Inclusive bound for the range comparison."); 
                                         }
@@ -1016,13 +1139,17 @@ impl CellaApp {
             let mut inact = self.inactive_color;
             ui.horizontal(|ui| {
                 ui.label("Inactive:");
-                if ui.color_edit_button_srgba(&mut inact).changed() { self.inactive_color = inact; }
+                if ui.color_edit_button_srgba(&mut inact).changed() {
+                    self.inactive_color = inact;
+                }
             });
             ui.separator();
             // Colors for all declared types (from rules/config), not just those currently present
             let tys = self.declared_types();
             for ty in tys {
-                if ty == CellType::inactive() { continue; }
+                if ty == CellType::inactive() {
+                    continue;
+                }
                 let mut col = self.color_of(&ty);
                 if ui.color_edit_button_srgba(&mut col).changed() {
                     self.set_color_for(&ty, col);
@@ -1044,7 +1171,9 @@ impl CellaApp {
         if let Some(target) = self.run_to_target {
             // Cap steps per frame so a large "Run to +N" still lets the UI render.
             for _ in 0..RUN_TO_STEPS_PER_FRAME {
-                if self.current_step() >= target { break; }
+                if self.current_step() >= target {
+                    break;
+                }
                 self.step_once();
             }
             if self.current_step() >= target {
@@ -1109,15 +1238,17 @@ impl CellaApp {
 
     // ----- Scenario loading -----
     fn load_demo_life(&mut self) {
-        let (w,h,hist) = (50usize, 30usize, 5usize);
-        self.d1 = None; self.dim = Some(Dim::D2);
-        self.d2 = Some(build_2d_life(w,h,hist));
+        let (w, h, hist) = (50usize, 30usize, 5usize);
+        self.d1 = None;
+        self.dim = Some(Dim::D2);
+        self.d2 = Some(build_2d_life(w, h, hist));
         self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.grid_width = w; self.grid_height = h;
+        self.grid_width = w;
+        self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -1125,16 +1256,21 @@ impl CellaApp {
     }
 
     fn load_demo_1d_rule30(&mut self) {
-        let width = 201usize; let hist = 5usize;
-        self.d2 = None; self.dim = Some(Dim::D1);
+        let width = 201usize;
+        let hist = 5usize;
+        self.d2 = None;
+        self.dim = Some(Dim::D1);
         self.d1 = Some(build_1d_rule30(width, hist));
         self.set_status("Loaded demo: 1D Rule 30");
-        if let Some(g) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(g)); }
+        if let Some(g) = &self.d1 {
+            self.initial_state = Some(GridState::from_grid1d(g));
+        }
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.grid_width = width; self.grid_height = 1;
+        self.grid_width = width;
+        self.grid_height = 1;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -1142,47 +1278,56 @@ impl CellaApp {
 
     fn load_demo_1d_n2(&mut self) {
         let code: u128 = 0xAAAAAAAA;
-        let width = 201usize; let hist = 5usize;
-        self.d2 = None; self.dim = Some(Dim::D1);
+        let width = 201usize;
+        let hist = 5usize;
+        self.d2 = None;
+        self.dim = Some(Dim::D1);
         self.d1 = Some(build_1d_code_n(code, 2, width, hist).expect("n2 builder should validate"));
-        if let Some(g) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(g)); }
+        if let Some(g) = &self.d1 {
+            self.initial_state = Some(GridState::from_grid1d(g));
+        }
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.grid_width = width; self.grid_height = 1;
+        self.grid_width = width;
+        self.grid_height = 1;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_2d_three_state_cycle(&mut self) {
-        let (w,h,hist) = (48usize, 27usize, 3usize);
-        self.d1 = None; self.dim = Some(Dim::D2);
-        self.d2 = Some(build_2d_three_state_cycle(w,h,hist));
+        let (w, h, hist) = (48usize, 27usize, 3usize);
+        self.d1 = None;
+        self.dim = Some(Dim::D2);
+        self.d2 = Some(build_2d_three_state_cycle(w, h, hist));
         self.set_status("Loaded demo: 2D three-state cycle");
         self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.grid_width = w; self.grid_height = h;
+        self.grid_width = w;
+        self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
     }
 
     fn load_demo_2d_straightline(&mut self) {
-        let (w,h,hist) = (48usize, 27usize, 3usize);
-        self.d1 = None; self.dim = Some(Dim::D2);
-        self.d2 = Some(build_2d_straightline(w,h,hist));
+        let (w, h, hist) = (48usize, 27usize, 3usize);
+        self.d1 = None;
+        self.dim = Some(Dim::D2);
+        self.d2 = Some(build_2d_straightline(w, h, hist));
         self.set_status("Loaded demo: 2D StraightLine");
         self.initial_state = self.d2.as_ref().map(GridState::from_grid2d);
         self.history_1d.clear();
         self.undo_stack.clear();
         self.current_paint_batch = None;
         self.colors.clear();
-        self.grid_width = w; self.grid_height = h;
+        self.grid_width = w;
+        self.grid_height = h;
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
@@ -1191,17 +1336,22 @@ impl CellaApp {
     fn load_demo_1d_custom_from_inputs(&mut self) {
         let wolfram_code: u128 = self.custom_code_input.trim().parse().unwrap_or(30);
         let n: u8 = if self.custom_n == 0 { 1 } else { self.custom_n };
-        let width = 201usize; let hist = 5usize;
+        let width = 201usize;
+        let hist = 5usize;
         if let Ok(grid) = build_1d_code_n(wolfram_code, n, width, hist) {
-            self.d2 = None; self.dim = Some(Dim::D1);
+            self.d2 = None;
+            self.dim = Some(Dim::D1);
             self.d1 = Some(grid);
             self.set_status(format!("Loaded custom 1D: code={}, n={}", wolfram_code, n));
-            if let Some(g) = &self.d1 { self.initial_state = Some(GridState::from_grid1d(g)); }
+            if let Some(g) = &self.d1 {
+                self.initial_state = Some(GridState::from_grid1d(g));
+            }
             self.history_1d.clear();
             self.undo_stack.clear();
             self.current_paint_batch = None;
             self.colors.clear();
-            self.grid_width = width; self.grid_height = 1;
+            self.grid_width = width;
+            self.grid_height = 1;
             self.update_selected_draw_type_default();
             self.stats_clear_and_init();
             self.refresh_rule_editor_from_current();
@@ -1210,31 +1360,47 @@ impl CellaApp {
 
     fn load_config_dialog(&mut self) {
         if let Some(path) = FileDialog::new().add_filter("json", &["json"]).pick_file() {
-            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("config.json").to_string();
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("config.json")
+                .to_string();
             match config::CellaConfig::from_file(&path) {
                 Ok(cfg) => match cfg {
                     config::CellaConfig::D1(_) => {
                         if let Some(g) = cfg.build_grid1d() {
-                            self.dim = Some(Dim::D1); self.d1 = Some(g); self.d2 = None;
+                            self.dim = Some(Dim::D1);
+                            self.d1 = Some(g);
+                            self.d2 = None;
                             self.set_status(format!("Loaded config (1D): {}", name));
                             if let Some(gr) = &self.d1 {
                                 self.initial_state = Some(GridState::from_grid1d(gr));
-                                self.grid_width = gr.width; self.grid_height = 1;
+                                self.grid_width = gr.width;
+                                self.grid_height = 1;
                             }
-                            self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
+                            self.history_1d.clear();
+                            self.undo_stack.clear();
+                            self.current_paint_batch = None;
+                            self.colors.clear();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
                         }
                     }
                     config::CellaConfig::D2(_) => {
                         if let Some(g) = cfg.build_grid2d() {
-                            self.dim = Some(Dim::D2); self.d2 = Some(g); self.d1 = None;
+                            self.dim = Some(Dim::D2);
+                            self.d2 = Some(g);
+                            self.d1 = None;
                             self.set_status(format!("Loaded config (2D): {}", name));
                             if let Some(gr) = &self.d2 {
                                 self.initial_state = Some(GridState::from_grid2d(gr));
-                                self.grid_width = gr.width; self.grid_height = gr.height;
+                                self.grid_width = gr.width;
+                                self.grid_height = gr.height;
                             }
-                            self.history_1d.clear(); self.undo_stack.clear(); self.current_paint_batch = None; self.colors.clear();
+                            self.history_1d.clear();
+                            self.undo_stack.clear();
+                            self.current_paint_batch = None;
+                            self.colors.clear();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
                         }
@@ -1259,18 +1425,25 @@ impl CellaApp {
             None => None,
         };
         if let Some(st) = state
-            && let Some(path) = FileDialog::new().set_file_name("snapshot.json").save_file() {
-                let json = serde_json::to_string_pretty(&st).unwrap();
-                let _ = std::fs::write(path, json);
-            }
+            && let Some(path) = FileDialog::new().set_file_name("snapshot.json").save_file()
+        {
+            let json = serde_json::to_string_pretty(&st).unwrap();
+            let _ = std::fs::write(path, json);
+        }
     }
 
     /// Export an animated GIF using the current color settings (including Inactive).
     /// Runs the export in a background thread and shows a progress bar; optionally
     /// continues stepping the live grid while exporting based on `export_live_update`.
     fn export_gif_dialog(&mut self) {
-        if self.export_join.is_some() { return; }
-        if let Some(path) = FileDialog::new().add_filter("gif", &["gif"]).set_file_name("cella.gif").save_file() {
+        if self.export_join.is_some() {
+            return;
+        }
+        if let Some(path) = FileDialog::new()
+            .add_filter("gif", &["gif"])
+            .set_file_name("cella.gif")
+            .save_file()
+        {
             let steps = self.export_steps.max(1) as usize;
             let fps = self.export_fps.max(1);
             let scale = self.scale as u16;
@@ -1284,31 +1457,50 @@ impl CellaApp {
             // `GifExport` borrows the color tables, so it is built inside the worker
             // thread that owns the clones.
             match self.dim {
-                Some(Dim::D1) => if let Some(g) = &self.d1 {
-                    let mut grid_clone = g.clone();
-                    let history_opt = if self.export_1d_with_history { Some(self.history_limit_1d) } else { None };
-                    let handle = std::thread::spawn(move || {
-                        let opts = GifExport {
-                            path, steps, fps, scale,
-                            colors: &colors, palette: &palette, inactive,
-                            progress: Some(&progress),
+                Some(Dim::D1) => {
+                    if let Some(g) = &self.d1 {
+                        let mut grid_clone = g.clone();
+                        let history_opt = if self.export_1d_with_history {
+                            Some(self.history_limit_1d)
+                        } else {
+                            None
                         };
-                        export_gif_1d(&mut grid_clone, &opts, history_opt).map_err(|e| e.to_string())
-                    });
-                    self.export_join = Some(handle);
-                },
-                Some(Dim::D2) => if let Some(g) = &self.d2 {
-                    let mut grid_clone = g.clone();
-                    let handle = std::thread::spawn(move || {
-                        let opts = GifExport {
-                            path, steps, fps, scale,
-                            colors: &colors, palette: &palette, inactive,
-                            progress: Some(&progress),
-                        };
-                        export_gif_2d(&mut grid_clone, &opts).map_err(|e| e.to_string())
-                    });
-                    self.export_join = Some(handle);
-                },
+                        let handle = std::thread::spawn(move || {
+                            let opts = GifExport {
+                                path,
+                                steps,
+                                fps,
+                                scale,
+                                colors: &colors,
+                                palette: &palette,
+                                inactive,
+                                progress: Some(&progress),
+                            };
+                            export_gif_1d(&mut grid_clone, &opts, history_opt)
+                                .map_err(|e| e.to_string())
+                        });
+                        self.export_join = Some(handle);
+                    }
+                }
+                Some(Dim::D2) => {
+                    if let Some(g) = &self.d2 {
+                        let mut grid_clone = g.clone();
+                        let handle = std::thread::spawn(move || {
+                            let opts = GifExport {
+                                path,
+                                steps,
+                                fps,
+                                scale,
+                                colors: &colors,
+                                palette: &palette,
+                                inactive,
+                                progress: Some(&progress),
+                            };
+                            export_gif_2d(&mut grid_clone, &opts).map_err(|e| e.to_string())
+                        });
+                        self.export_join = Some(handle);
+                    }
+                }
                 None => {}
             }
         }
@@ -1354,12 +1546,20 @@ impl CellaApp {
     fn update_selected_draw_type_default(&mut self) {
         let mut pick: Option<CellType> = None;
         match self.dim {
-            Some(Dim::D1) => if let Some(g) = &self.d1 {
-                pick = (0..g.width).map(|i| g.cell_type(i)).find(|t| *t != CellType::inactive());
-            },
-            Some(Dim::D2) => if let Some(g) = &self.d2 {
-                pick = (0..g.width * g.height).map(|i| g.cell_type(i)).find(|t| *t != CellType::inactive());
-            },
+            Some(Dim::D1) => {
+                if let Some(g) = &self.d1 {
+                    pick = (0..g.width)
+                        .map(|i| g.cell_type(i))
+                        .find(|t| *t != CellType::inactive());
+                }
+            }
+            Some(Dim::D2) => {
+                if let Some(g) = &self.d2 {
+                    pick = (0..g.width * g.height)
+                        .map(|i| g.cell_type(i))
+                        .find(|t| *t != CellType::inactive());
+                }
+            }
             None => {}
         }
         self.selected_draw_type = Some(pick.unwrap_or_else(CellType::inactive));
@@ -1376,16 +1576,24 @@ impl CellaApp {
         let inactive = CellType::inactive().0;
         let (mut entries, step): (Vec<(Spur, u64)>, u64) = match self.dim {
             Some(Dim::D1) => match &self.d1 {
-                Some(g) => (g.counts_current.iter().map(|(k, v)| (*k, *v)).collect(), g.step),
+                Some(g) => (
+                    g.counts_current.iter().map(|(k, v)| (*k, *v)).collect(),
+                    g.step,
+                ),
                 None => return,
             },
             Some(Dim::D2) => match &self.d2 {
-                Some(g) => (g.counts_current.iter().map(|(k, v)| (*k, *v)).collect(), g.step),
+                Some(g) => (
+                    g.counts_current.iter().map(|(k, v)| (*k, *v)).collect(),
+                    g.step,
+                ),
                 None => return,
             },
             None => return,
         };
-        if !entries.iter().any(|(k, _)| *k == inactive) { entries.push((inactive, 0)); }
+        if !entries.iter().any(|(k, _)| *k == inactive) {
+            entries.push((inactive, 0));
+        }
         // Order: Inactive first, then by name
         entries.sort_by(|a, b| {
             let (a, b) = (interner().resolve(&a.0), interner().resolve(&b.0));
@@ -1394,9 +1602,17 @@ impl CellaApp {
         // Default visibility: first 9 active types (Inactive off by default)
         let mut shown_left = 9usize;
         for (k, c) in entries {
-            let show = if k == inactive { false } else if shown_left > 0 { shown_left -= 1; true } else { false };
+            let show = if k == inactive {
+                false
+            } else if shown_left > 0 {
+                shown_left -= 1;
+                true
+            } else {
+                false
+            };
             self.stats_show.insert(k, show);
-            self.stats_history.insert(k, VecDeque::from(vec![(step, c)]));
+            self.stats_history
+                .insert(k, VecDeque::from(vec![(step, c)]));
         }
     }
 
@@ -1416,7 +1632,10 @@ impl CellaApp {
                     self.rule_edit_1d = None;
                 }
             }
-            None => { self.rule_edit_1d = None; self.rule_edit_2d = None; }
+            None => {
+                self.rule_edit_1d = None;
+                self.rule_edit_2d = None;
+            }
         }
     }
 
@@ -1444,7 +1663,9 @@ impl CellaApp {
             // Append a sample to every tracked series; types absent this step record 0.
             for (k, list) in history.iter_mut() {
                 list.push_back((step, counts.get(k).copied().unwrap_or(0)));
-                while list.len() > window { list.pop_front(); }
+                while list.len() > window {
+                    list.pop_front();
+                }
             }
         }
 
@@ -1460,14 +1681,24 @@ impl CellaApp {
             let mut entries: Vec<(CellType, u64, u64)> = Vec::new();
             {
                 let counts_and_peaks = match self.dim {
-                    Some(Dim::D1) => self.d1.as_ref().map(|g| (&g.counts_current, &g.peak_counts)),
-                    Some(Dim::D2) => self.d2.as_ref().map(|g| (&g.counts_current, &g.peak_counts)),
+                    Some(Dim::D1) => self
+                        .d1
+                        .as_ref()
+                        .map(|g| (&g.counts_current, &g.peak_counts)),
+                    Some(Dim::D2) => self
+                        .d2
+                        .as_ref()
+                        .map(|g| (&g.counts_current, &g.peak_counts)),
                     None => None,
                 };
                 if let Some((counts, peaks)) = counts_and_peaks {
                     let keys: BTreeSet<Spur> = counts.keys().chain(peaks.keys()).copied().collect();
                     entries.extend(keys.into_iter().map(|k| {
-                        (CellType(k), counts.get(&k).copied().unwrap_or(0), peaks.get(&k).copied().unwrap_or(0))
+                        (
+                            CellType(k),
+                            counts.get(&k).copied().unwrap_or(0),
+                            peaks.get(&k).copied().unwrap_or(0),
+                        )
                     }));
                 }
             }
@@ -1475,7 +1706,9 @@ impl CellaApp {
                 let (a, b) = (a.0.as_str(), b.0.as_str());
                 (a != INACTIVE).cmp(&(b != INACTIVE)).then_with(|| a.cmp(b))
             });
-            let total = entries.iter().fold(0u64, |acc, (_, c, _)| acc.saturating_add(*c));
+            let total = entries
+                .iter()
+                .fold(0u64, |acc, (_, c, _)| acc.saturating_add(*c));
             ui.label(format!("Total cells: {}", total));
             for (ty, cur, peak) in &entries {
                 ui.label(format!("{:>10}: {} (peak {})", ty.as_str(), cur, peak));
@@ -1484,7 +1717,8 @@ impl CellaApp {
 
             // Visibility toggles
             ui.label("Series shown in graph:");
-            let mut series: Vec<CellType> = self.stats_history.keys().copied().map(CellType).collect();
+            let mut series: Vec<CellType> =
+                self.stats_history.keys().copied().map(CellType).collect();
             sort_types_inactive_first(&mut series);
             ui.horizontal_wrapped(|ui| {
                 for ty in &series {
@@ -1500,10 +1734,20 @@ impl CellaApp {
             let plot = Plot::new("stats_plot").legend(Legend::default());
             plot.show(ui, |plot_ui| {
                 for ty in &series {
-                    if !self.stats_show.get(&ty.0).copied().unwrap_or(false) { continue; }
-                    let Some(list) = self.stats_history.get(&ty.0) else { continue };
-                    if list.is_empty() { continue; }
-                    let pts: PlotPoints = list.iter().map(|(s, v)| [*s as f64, *v as f64]).collect::<Vec<_>>().into();
+                    if !self.stats_show.get(&ty.0).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let Some(list) = self.stats_history.get(&ty.0) else {
+                        continue;
+                    };
+                    if list.is_empty() {
+                        continue;
+                    }
+                    let pts: PlotPoints = list
+                        .iter()
+                        .map(|(s, v)| [*s as f64, *v as f64])
+                        .collect::<Vec<_>>()
+                        .into();
                     plot_ui.line(Line::new(ty.as_str(), pts).color(self.color_of(ty)));
                 }
             });
@@ -1522,7 +1766,11 @@ impl CellaApp {
         };
         out.push_str(&format!("{} (n={})\n", name, range));
         // Knight moves can reach up to 2*range steps per axis, so widen the window.
-        let half = if kind == Neighborhood2D::Knight { n * 2 } else { n };
+        let half = if kind == Neighborhood2D::Knight {
+            n * 2
+        } else {
+            n
+        };
         for dy in -half..=half {
             for dx in -half..=half {
                 if dx == 0 && dy == 0 {
@@ -1532,7 +1780,9 @@ impl CellaApp {
                     out.push(if inside { '#' } else { '.' });
                 }
             }
-            if dy != half { out.push('\n'); }
+            if dy != half {
+                out.push('\n');
+            }
         }
         out
     }
@@ -1546,78 +1796,118 @@ impl eframe::App for CellaApp {
         egui::Panel::top("top_controls").show(ui, |ui| {
             self.ui_top_controls(ui, ctx);
         });
-        egui::Panel::left("left_controls").default_size(260.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                self.ui_dataset_controls(ui);
-                ui.separator();
-                ui.collapsing("UI Settings", |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("A-").clicked() { self.font_scale = (self.font_scale - 0.1).max(0.5); }
-                        if ui.button("A+").clicked() { self.font_scale = (self.font_scale + 0.1).min(3.0); }
-                        ui.label(format!("Font: {:.0}%", self.font_scale * 100.0));
-                    });
-                    ui.add(egui::Slider::new(&mut self.font_scale, 0.5..=3.0).text("Font scale"));
-                });
-                ui.separator();
-                ui.collapsing("Editing", |ui| {
-                    ui.horizontal(|ui| {
-                        let is_cycle = matches!(self.draw_mode, DrawMode::Cycle);
-                        if ui.radio(is_cycle, "Cycle").clicked() { self.draw_mode = DrawMode::Cycle; }
-                        let is_paint = matches!(self.draw_mode, DrawMode::Paint);
-                        if ui.radio(is_paint, "Paint").clicked() { self.draw_mode = DrawMode::Paint; }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Paint type:");
-                        // Build a type list from rule/config declared types (not just currently present)
-                        let mut names: Vec<String> = self.declared_types().into_iter().map(|t| t.as_str().to_string()).collect();
-                        // Ensure ordering with Inactive first
-                        names.sort();
-                        names.sort_by_key(|a| a != INACTIVE);
-                        let current_name = self.selected_draw_type.as_ref().map(|t| t.as_str()).unwrap_or_else(|| INACTIVE);
-                        let mut sel = current_name;
-                        egui::ComboBox::from_label("")
-                            .selected_text(sel)
-                            .show_ui(ui, |ui| {
-                                for n in &names { ui.selectable_value(&mut sel, n.as_str(), n); }
+        egui::Panel::left("left_controls")
+            .default_size(260.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.ui_dataset_controls(ui);
+                        ui.separator();
+                        ui.collapsing("UI Settings", |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button("A-").clicked() {
+                                    self.font_scale = (self.font_scale - 0.1).max(0.5);
+                                }
+                                if ui.button("A+").clicked() {
+                                    self.font_scale = (self.font_scale + 0.1).min(3.0);
+                                }
+                                ui.label(format!("Font: {:.0}%", self.font_scale * 100.0));
                             });
-                        if sel != current_name { self.selected_draw_type = Some(CellType::from(sel)); }
-                    });
-                    ui.label("Hold and drag on the grid while paused to paint.");
-                });
-                ui.separator();
-                ui.collapsing("Export", |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.export_steps).range(1..=10_000));
-                        ui.label("steps");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.export_fps).range(1..=60));
-                        ui.label("fps");
-                    });
-                    ui.collapsing("Options", |ui| {
-                        ui.horizontal(|ui| {
-                            let mut flag = self.export_1d_with_history;
-                            if ui.checkbox(&mut flag, "1D GIF: include vertical history").changed() {
-                                self.export_1d_with_history = flag;
+                            ui.add(
+                                egui::Slider::new(&mut self.font_scale, 0.5..=3.0)
+                                    .text("Font scale"),
+                            );
+                        });
+                        ui.separator();
+                        ui.collapsing("Editing", |ui| {
+                            ui.horizontal(|ui| {
+                                let is_cycle = matches!(self.draw_mode, DrawMode::Cycle);
+                                if ui.radio(is_cycle, "Cycle").clicked() {
+                                    self.draw_mode = DrawMode::Cycle;
+                                }
+                                let is_paint = matches!(self.draw_mode, DrawMode::Paint);
+                                if ui.radio(is_paint, "Paint").clicked() {
+                                    self.draw_mode = DrawMode::Paint;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Paint type:");
+                                // Build a type list from rule/config declared types (not just currently present)
+                                let mut names: Vec<String> = self
+                                    .declared_types()
+                                    .into_iter()
+                                    .map(|t| t.as_str().to_string())
+                                    .collect();
+                                // Ensure ordering with Inactive first
+                                names.sort();
+                                names.sort_by_key(|a| a != INACTIVE);
+                                let current_name = self
+                                    .selected_draw_type
+                                    .as_ref()
+                                    .map(|t| t.as_str())
+                                    .unwrap_or_else(|| INACTIVE);
+                                let mut sel = current_name;
+                                egui::ComboBox::from_label("").selected_text(sel).show_ui(
+                                    ui,
+                                    |ui| {
+                                        for n in &names {
+                                            ui.selectable_value(&mut sel, n.as_str(), n);
+                                        }
+                                    },
+                                );
+                                if sel != current_name {
+                                    self.selected_draw_type = Some(CellType::from(sel));
+                                }
+                            });
+                            ui.label("Hold and drag on the grid while paused to paint.");
+                        });
+                        ui.separator();
+                        ui.collapsing("Export", |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut self.export_steps).range(1..=10_000),
+                                );
+                                ui.label("steps");
+                            });
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut self.export_fps).range(1..=60));
+                                ui.label("fps");
+                            });
+                            ui.collapsing("Options", |ui| {
+                                ui.horizontal(|ui| {
+                                    let mut flag = self.export_1d_with_history;
+                                    if ui
+                                        .checkbox(&mut flag, "1D GIF: include vertical history")
+                                        .changed()
+                                    {
+                                        self.export_1d_with_history = flag;
+                                    }
+                                });
+                                ui.small(
+                                    "Applies to 1D GIF export; height limited by 1D history limit.",
+                                );
+                            });
+                            ui.separator();
+                            if let Some(p) = &self.export_progress {
+                                let done = p.load(Ordering::Relaxed) as u32;
+                                let total = self.export_total.max(1) as u32;
+                                let frac = (done as f32) / (total as f32);
+                                ui.add(
+                                    egui::ProgressBar::new(frac)
+                                        .text(format!("Exporting: {} / {}", done, total)),
+                                );
+                            }
+                            if let Some(msg) = &self.export_message {
+                                ui.label(msg.clone());
                             }
                         });
-                        ui.small("Applies to 1D GIF export; height limited by 1D history limit.");
+                        ui.separator();
+                        self.ui_colors(ui);
+                        ui.separator();
+                        self.ui_statistics(ui);
                     });
-                    ui.separator();
-                    if let Some(p) = &self.export_progress {
-                        let done = p.load(Ordering::Relaxed) as u32;
-                        let total = self.export_total.max(1) as u32;
-                        let frac = (done as f32) / (total as f32);
-                        ui.add(egui::ProgressBar::new(frac).text(format!("Exporting: {} / {}", done, total)));
-                    }
-                    if let Some(msg) = &self.export_message { ui.label(msg.clone()); }
-                });
-                ui.separator();
-                self.ui_colors(ui);
-                ui.separator();
-                self.ui_statistics(ui);
             });
-        });
 
         // Right-side Rule Editor panel (resizable, can be hidden via toggle).
         // `show_collapsible` animates the slide in/out and lets a drag past the
@@ -1632,9 +1922,11 @@ impl eframe::App for CellaApp {
             .default_size(340.0)
             .show_collapsible(ui, &mut show_editor, |ui| {
                 ui.heading("Rule Editor");
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    self.ui_rule_editor(ui);
-                });
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.ui_rule_editor(ui);
+                    });
             });
         self.show_rule_editor = show_editor;
 
@@ -1666,42 +1958,48 @@ impl eframe::App for CellaApp {
             // Hotkeys: Ctrl+Z undo last edit when paused
             if !self.playing {
                 ui.input(|i| {
-                    if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(Key::Z)
-                        && let Some(batch) = self.undo_stack.pop() {
-                            let undo_error = match self.dim {
-                                Some(Dim::D1) => {
-                                    let mut err = None;
-                                    if let Some(g) = &mut self.d1 {
-                                        for (idx, prev) in batch {
-                                            if idx < g.width
-                                                && let Some(e) = g.transition_state_and_buffer(idx, &prev){
-                                                    err = Some(e);
-                                                    break;
-                                                }
+                    if (i.modifiers.command || i.modifiers.ctrl)
+                        && i.key_pressed(Key::Z)
+                        && let Some(batch) = self.undo_stack.pop()
+                    {
+                        let undo_error = match self.dim {
+                            Some(Dim::D1) => {
+                                let mut err = None;
+                                if let Some(g) = &mut self.d1 {
+                                    for (idx, prev) in batch {
+                                        if idx < g.width
+                                            && let Some(e) =
+                                                g.transition_state_and_buffer(idx, &prev)
+                                        {
+                                            err = Some(e);
+                                            break;
                                         }
                                     }
-                                    err
                                 }
-                                Some(Dim::D2) => {
-                                    let mut err = None;
-                                    if let Some(g) = &mut self.d2 {
-                                        for (idx, prev) in batch {
-                                            if idx < g.width * g.height
-                                               && let Some(e) = g.transition_state_and_buffer(idx, &prev){
-                                                    err = Some(e);
-                                                    break;
-                                               }
-                                        }
-                                    }
-                                    err
-                                }
-                                None => None,
-                            };
-                            if let Some(err) = undo_error {
-                                eprintln!("Undo error: {}", err);
-                                self.set_status(format!("Undo error: {}", err));
+                                err
                             }
+                            Some(Dim::D2) => {
+                                let mut err = None;
+                                if let Some(g) = &mut self.d2 {
+                                    for (idx, prev) in batch {
+                                        if idx < g.width * g.height
+                                            && let Some(e) =
+                                                g.transition_state_and_buffer(idx, &prev)
+                                        {
+                                            err = Some(e);
+                                            break;
+                                        }
+                                    }
+                                }
+                                err
+                            }
+                            None => None,
+                        };
+                        if let Some(err) = undo_error {
+                            eprintln!("Undo error: {}", err);
+                            self.set_status(format!("Undo error: {}", err));
                         }
+                    }
                 });
             }
             egui::ScrollArea::both()
@@ -1712,48 +2010,71 @@ impl eframe::App for CellaApp {
                     mouse_wheel: true,
                 })
                 .show(ui, |ui| {
-                if let Some(response) = self.paint_grid_viewport(ui) {
+                    if let Some(response) = self.paint_grid_viewport(ui) {
+                        // Zoom with MouseWheel when hovered
+                        if response.hovered() {
+                            let dy = ui.input(|i| i.smooth_scroll_delta.y);
+                            if dy > 0.0 {
+                                self.scale = (self.scale + 1).min(64);
+                            } else if dy < 0.0 {
+                                self.scale = self.scale.saturating_sub(1).max(1);
+                            }
+                        }
 
-                    // Zoom with MouseWheel when hovered
-                    if response.hovered() {
-                        let dy = ui.input(|i| i.smooth_scroll_delta.y);
-                        if dy > 0.0 { self.scale = (self.scale + 1).min(64); }
-                        else if dy < 0.0 { self.scale = self.scale.saturating_sub(1).max(1); }
-                    }
+                        if response.dragged() {
+                            // Right mouse drag to pan the scroll area (so left is free for painting)
+                            let (right_down, delta) =
+                                ui.input(|i| (i.pointer.secondary_down(), i.pointer.delta()));
+                            if right_down && (delta.x != 0.0 || delta.y != 0.0) {
+                                ui.scroll_with_delta(delta);
+                            }
+                        }
 
-                    if response.dragged() {
-                        // Right mouse drag to pan the scroll area (so left is free for painting)
-                        let (right_down, delta) = ui.input(|i| (i.pointer.secondary_down(), i.pointer.delta()));
-                        if right_down
-                            && (delta.x != 0.0 || delta.y != 0.0) { ui.scroll_with_delta(delta); }
-                    }
-
-                    // Painting mode: click/drag to set cells when paused
-                    if !self.playing && matches!(self.draw_mode, DrawMode::Paint) {
-                        let is_down = ui.input(|i| i.pointer.primary_down());
-                        if is_down {
-                            if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-                                && response.rect.contains(pos) {
+                        // Painting mode: click/drag to set cells when paused
+                        if !self.playing && matches!(self.draw_mode, DrawMode::Paint) {
+                            let is_down = ui.input(|i| i.pointer.primary_down());
+                            if is_down {
+                                if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+                                    && response.rect.contains(pos)
+                                {
                                     let local = pos - response.rect.min;
                                     let px = local.x.max(0.0) as usize;
                                     let py = local.y.max(0.0) as usize;
                                     let cell_x = px / self.scale.max(1);
                                     let cell_y = py / self.scale.max(1);
-                                    let paint_ty = self.selected_draw_type.unwrap_or_else(CellType::inactive);
+                                    let paint_ty =
+                                        self.selected_draw_type.unwrap_or_else(CellType::inactive);
                                     match self.dim {
                                         Some(Dim::D1) => {
                                             if let Some(g) = &mut self.d1 {
                                                 let total_rows = self.history_1d.len() + 1;
-                                                if total_rows > 0 && cell_y == total_rows - 1 && cell_x < g.width {
+                                                if total_rows > 0
+                                                    && cell_y == total_rows - 1
+                                                    && cell_x < g.width
+                                                {
                                                     let idx = cell_x;
                                                     let prev = g.cell_type(idx);
                                                     if prev != paint_ty {
-                                                        if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
-                                                        if let Some(batch) = &mut self.current_paint_batch
-                                                            && !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev)); }
-                                                        if let Some(err) = g.transition_state_and_buffer(idx, &paint_ty) {
+                                                        if self.current_paint_batch.is_none() {
+                                                            self.current_paint_batch =
+                                                                Some(Vec::new());
+                                                        }
+                                                        if let Some(batch) =
+                                                            &mut self.current_paint_batch
+                                                            && !batch.iter().any(|(j, _)| *j == idx)
+                                                        {
+                                                            batch.push((idx, prev));
+                                                        }
+                                                        if let Some(err) = g
+                                                            .transition_state_and_buffer(
+                                                                idx, &paint_ty,
+                                                            )
+                                                        {
                                                             eprintln!("Paint error: {}", err);
-                                                            self.set_status(format!("Paint error: {}", err));
+                                                            self.set_status(format!(
+                                                                "Paint error: {}",
+                                                                err
+                                                            ));
                                                         }
                                                     }
                                                 }
@@ -1761,31 +2082,51 @@ impl eframe::App for CellaApp {
                                         }
                                         Some(Dim::D2) => {
                                             if let Some(g) = &mut self.d2
-                                                && cell_x < g.width && cell_y < g.height {
-                                                    let idx = cell_y * g.width + cell_x;
-                                                    let prev = g.cell_type(idx);
-                                                    if prev != paint_ty {
-                                                        if self.current_paint_batch.is_none() { self.current_paint_batch = Some(Vec::new()); }
-                                                        if let Some(batch) = &mut self.current_paint_batch
-                                                            && !batch.iter().any(|(j, _)| *j == idx) { batch.push((idx, prev)); }
-                                                        if let Some(err) = g.transition_state_and_buffer(idx, &paint_ty) {
-                                                            eprintln!("Paint error: {}", err);
-                                                            self.set_status(format!("Paint error: {}", err));
-                                                        }
+                                                && cell_x < g.width
+                                                && cell_y < g.height
+                                            {
+                                                let idx = cell_y * g.width + cell_x;
+                                                let prev = g.cell_type(idx);
+                                                if prev != paint_ty {
+                                                    if self.current_paint_batch.is_none() {
+                                                        self.current_paint_batch = Some(Vec::new());
+                                                    }
+                                                    if let Some(batch) =
+                                                        &mut self.current_paint_batch
+                                                        && !batch.iter().any(|(j, _)| *j == idx)
+                                                    {
+                                                        batch.push((idx, prev));
+                                                    }
+                                                    if let Some(err) = g
+                                                        .transition_state_and_buffer(idx, &paint_ty)
+                                                    {
+                                                        eprintln!("Paint error: {}", err);
+                                                        self.set_status(format!(
+                                                            "Paint error: {}",
+                                                            err
+                                                        ));
                                                     }
                                                 }
+                                            }
                                         }
                                         None => {}
                                     }
                                 }
-                        } else {
-                            if let Some(batch) = self.current_paint_batch.take() && !batch.is_empty() { self.undo_stack.push(batch); }
+                            } else {
+                                if let Some(batch) = self.current_paint_batch.take()
+                                    && !batch.is_empty()
+                                {
+                                    self.undo_stack.push(batch);
+                                }
+                            }
                         }
-                    }
 
-                    // Cycle mode: Click to edit when paused
-                    if response.clicked() && !self.playing && matches!(self.draw_mode, DrawMode::Cycle)
-                        && let Some(pos) = response.interact_pointer_pos() {
+                        // Cycle mode: Click to edit when paused
+                        if response.clicked()
+                            && !self.playing
+                            && matches!(self.draw_mode, DrawMode::Cycle)
+                            && let Some(pos) = response.interact_pointer_pos()
+                        {
                             let local = pos - response.rect.min;
                             let px = local.x.max(0.0) as usize;
                             let py = local.y.max(0.0) as usize;
@@ -1805,47 +2146,65 @@ impl eframe::App for CellaApp {
                                             let next = next_in_cycle(&cycle_types, current);
                                             // push undo batch of one cell
                                             self.undo_stack.push(vec![(cell_x, current)]);
-                                            if let Some(err) = g.transition_state_and_buffer(cell_x, &next) {
+                                            if let Some(err) =
+                                                g.transition_state_and_buffer(cell_x, &next)
+                                            {
                                                 eprintln!("Cycle edit error: {}", err);
-                                                self.set_status(format!("Cycle edit error: {}", err));
+                                                self.set_status(format!(
+                                                    "Cycle edit error: {}",
+                                                    err
+                                                ));
                                             }
                                         }
                                     }
                                 }
                                 Some(Dim::D2) => {
                                     if let Some(g) = &mut self.d2
-                                        && cell_x < g.width && cell_y < g.height {
-                                            let i = cell_y * g.width + cell_x;
-                                            let current = g.cell_type(i);
-                                            let next = next_in_cycle(&cycle_types, current);
-                                            self.undo_stack.push(vec![(i, current)]);
-                                            if let Some(err) = g.transition_state_and_buffer(i, &next) {
-                                                eprintln!("Cycle edit error: {}", err);
-                                                self.set_status(format!("Cycle edit error: {}", err));
-                                            }
+                                        && cell_x < g.width
+                                        && cell_y < g.height
+                                    {
+                                        let i = cell_y * g.width + cell_x;
+                                        let current = g.cell_type(i);
+                                        let next = next_in_cycle(&cycle_types, current);
+                                        self.undo_stack.push(vec![(i, current)]);
+                                        if let Some(err) = g.transition_state_and_buffer(i, &next) {
+                                            eprintln!("Cycle edit error: {}", err);
+                                            self.set_status(format!("Cycle edit error: {}", err));
                                         }
+                                    }
                                 }
                                 None => {}
                             }
                         }
-                } else {
-                    ui.label("No grid loaded.");
-                }
-            });
+                    } else {
+                        ui.label("No grid loaded.");
+                    }
+                });
         });
 
         // If an export thread is active, poll for completion and finalize
         if let Some(handle) = &self.export_join
-            && handle.is_finished() {
-                if let Some(handle) = self.export_join.take() {
-                    match handle.join().unwrap_or_else(|_| Err("export thread panicked".to_string())) {
-                        Ok(()) => { self.export_message = Some("Export complete".into()); self.set_status("Export complete"); },
-                        Err(e) => { let msg = format!("Export failed: {}", e); self.export_message = Some(msg.clone()); self.set_status(msg); },
+            && handle.is_finished()
+        {
+            if let Some(handle) = self.export_join.take() {
+                match handle
+                    .join()
+                    .unwrap_or_else(|_| Err("export thread panicked".to_string()))
+                {
+                    Ok(()) => {
+                        self.export_message = Some("Export complete".into());
+                        self.set_status("Export complete");
+                    }
+                    Err(e) => {
+                        let msg = format!("Export failed: {}", e);
+                        self.export_message = Some(msg.clone());
+                        self.set_status(msg);
                     }
                 }
-                self.export_progress = None;
-                self.export_total = 0;
             }
+            self.export_progress = None;
+            self.export_total = 0;
+        }
 
         self.tick_play();
 
@@ -1941,12 +2300,19 @@ mod tests {
 
     #[test]
     fn all_background_row_emits_nothing() {
-        assert_eq!(runs_for(&["_", "_", "_"], 0..3), Vec::<(usize, usize)>::new());
+        assert_eq!(
+            runs_for(&["_", "_", "_"], 0..3),
+            Vec::<(usize, usize)>::new()
+        );
     }
 
     #[test]
     fn next_in_cycle_wraps_and_handles_unknown_types() {
-        let types = [CellType::from("a"), CellType::from("b"), CellType::from("c")];
+        let types = [
+            CellType::from("a"),
+            CellType::from("b"),
+            CellType::from("c"),
+        ];
         assert_eq!(next_in_cycle(&types, types[0]), types[1]);
         assert_eq!(next_in_cycle(&types, types[2]), types[0]);
         // A type that is not declared restarts the cycle at the second entry.

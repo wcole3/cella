@@ -22,8 +22,8 @@
 //! from per-cell counters (e.g. a stateless hash of `(seed, ctx.step, index)`)
 //! rather than from shared mutable RNG state.
 
-use std::any::Any;
 use crate::types::CellType;
+use std::any::Any;
 
 /// Read-only view of a grid handed to [`ExternalModel::attach`].
 pub struct GridView<'a> {
@@ -75,7 +75,11 @@ pub struct ModelEvent {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ModelError {
     #[error("layer '{layer}' has length {got}, expected {expected} (width * height)")]
-    LayerLength { layer: &'static str, expected: usize, got: usize },
+    LayerLength {
+        layer: &'static str,
+        expected: usize,
+        got: usize,
+    },
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
     #[error("cell type name collision: {0}")]
@@ -147,9 +151,9 @@ impl std::fmt::Debug for dyn ExternalModel {
     }
 }
 
-use crate::chunking::{split_chunks, OutChunk};
+use crate::chunking::{OutChunk, split_chunks};
 use crate::grid2d::Grid2D;
-use crate::rules::{apply_counts, TypeCounter};
+use crate::rules::{TypeCounter, apply_counts};
 use crate::threads::{chunks_for_work, pool};
 use rayon::prelude::*;
 
@@ -182,7 +186,10 @@ impl Grid2D {
         let height = self.height;
         let total = width * height;
         let hl = self.history_limit;
-        let model = self.model.as_deref().expect("step_external requires an attached model");
+        let model = self
+            .model
+            .as_deref()
+            .expect("step_external requires an attached model");
         let nchunks = chunks_for_work(total.saturating_mul(model.work_per_cell().max(1)));
         let cells = &self.cells;
         let inactive = self.inactive;
@@ -198,17 +205,28 @@ impl Grid2D {
                 history_heads: &mut self.history_heads,
                 history_counts: &mut self.history_counts,
             };
-            Self::step_chunk_external(model, cells, &mut out, hl, width, height, step, inactive, dt)
+            Self::step_chunk_external(
+                model, cells, &mut out, hl, width, height, step, inactive, dt,
+            )
         } else {
             let chunk = total.div_ceil(nchunks);
             let mut chunks = split_chunks(
-                &mut self.next_cells, &mut self.ages,
-                &mut self.history_data, &mut self.history_heads, &mut self.history_counts,
-                hl, chunk,
+                &mut self.next_cells,
+                &mut self.ages,
+                &mut self.history_data,
+                &mut self.history_heads,
+                &mut self.history_counts,
+                hl,
+                chunk,
             );
             pool(nchunks).install(|| {
-                chunks.par_iter_mut()
-                    .map(|c| Self::step_chunk_external(model, cells, c, hl, width, height, step, inactive, dt))
+                chunks
+                    .par_iter_mut()
+                    .map(|c| {
+                        Self::step_chunk_external(
+                            model, cells, c, hl, width, height, step, inactive, dt,
+                        )
+                    })
                     .reduce(
                         || (TypeCounter::new(), Vec::new()),
                         |mut a, mut b| {
@@ -262,8 +280,14 @@ impl Grid2D {
     #[allow(clippy::too_many_arguments)]
     fn step_chunk_external(
         model: &dyn ExternalModel,
-        cells: &[CellType], out: &mut OutChunk<'_>, history_limit: usize,
-        width: usize, height: usize, step: u64, inactive: CellType, dt: CellType,
+        cells: &[CellType],
+        out: &mut OutChunk<'_>,
+        history_limit: usize,
+        width: usize,
+        height: usize,
+        step: u64,
+        inactive: CellType,
+        dt: CellType,
     ) -> (TypeCounter, Vec<ModelEvent>) {
         let start = out.start;
         let next_cells = &mut *out.next_cells;
@@ -272,7 +296,15 @@ impl Grid2D {
         let history_heads = &mut *out.history_heads;
         let history_counts = &mut *out.history_counts;
 
-        let ctx = ChunkCtx { cells, ages: &*ages, start, width, height, step, inactive };
+        let ctx = ChunkCtx {
+            cells,
+            ages: &*ages,
+            start,
+            width,
+            height,
+            step,
+            inactive,
+        };
         let events = model.step_chunk(&ctx, next_cells);
 
         let mut count_map = TypeCounter::new();
@@ -284,7 +316,11 @@ impl Grid2D {
                 let base = local * history_limit;
                 let h = history_heads[local] as usize;
                 history_data[base + h] = cur;
-                history_heads[local] = if h + 1 == history_limit { 0 } else { (h + 1) as u8 };
+                history_heads[local] = if h + 1 == history_limit {
+                    0
+                } else {
+                    (h + 1) as u8
+                };
                 let c = history_counts[local] as usize;
                 if c < history_limit {
                     history_counts[local] = (c + 1) as u8;
@@ -334,7 +370,10 @@ mod tests {
             let t = CellType::new(&self.out_name);
             next.fill(t);
             match self.event_target {
-                Some(target) => vec![ModelEvent { target, new_type: CellType::new("Marked") }],
+                Some(target) => vec![ModelEvent {
+                    target,
+                    new_type: CellType::new("Marked"),
+                }],
                 None => Vec::new(),
             }
         }
@@ -349,7 +388,11 @@ mod tests {
     }
 
     fn const_model(out_name: &str, event_target: Option<usize>) -> ConstModel {
-        ConstModel { out_name: out_name.into(), event_target, attached: false }
+        ConstModel {
+            out_name: out_name.into(),
+            event_target,
+            attached: false,
+        }
     }
 
     #[test]
@@ -358,7 +401,8 @@ mod tests {
         let a = CellType::new("A");
         let mut g = Grid2D::new(2, 2, 0, vec![a; 4], Rule2D { subrules: vec![] });
         // Out-of-range event target: silently dropped by the engine.
-        g.attach_model(Box::new(const_model("X", Some(usize::MAX)))).unwrap();
+        g.attach_model(Box::new(const_model("X", Some(usize::MAX))))
+            .unwrap();
         g.step();
         let x = CellType::new("X");
         assert!((0..4).all(|i| g.cell_type(i) == x));
@@ -400,7 +444,10 @@ mod tests {
     fn typetag_round_trip_preserves_model() {
         let m: Box<dyn ExternalModel> = Box::new(const_model("X", None));
         let json = serde_json::to_string(&m).unwrap();
-        assert!(json.contains("test_const"), "externally tagged by typetag name: {json}");
+        assert!(
+            json.contains("test_const"),
+            "externally tagged by typetag name: {json}"
+        );
         let back: Box<dyn ExternalModel> = serde_json::from_str(&json).unwrap();
         assert_eq!(back.typetag_name(), "test_const");
         // Untouched wire format carries the payload.
@@ -420,7 +467,13 @@ mod tests {
     fn default_trait_methods() {
         let mut m = const_model("Z", None);
         assert_eq!(ExternalModel::work_per_cell(&m), 12);
-        assert!(m.event_applies(CellType::new("A"), &ModelEvent { target: 0, new_type: CellType::new("B") }));
+        assert!(m.event_applies(
+            CellType::new("A"),
+            &ModelEvent {
+                target: 0,
+                new_type: CellType::new("B")
+            }
+        ));
         assert!(m.declared_types().is_empty());
         m.on_paint(0, CellType::new("A")); // no-op default
         assert!(m.as_any_mut().downcast_mut::<ConstModel>().is_some());
@@ -430,18 +483,41 @@ mod tests {
     fn attach_validates() {
         let mut m = const_model("X", None);
         let cells = vec![CellType::inactive(); 4];
-        let bad = GridView { width: 0, height: 0, cells: &[], inactive: CellType::inactive() };
+        let bad = GridView {
+            width: 0,
+            height: 0,
+            cells: &[],
+            inactive: CellType::inactive(),
+        };
         assert!(matches!(m.attach(&bad), Err(ModelError::InvalidParam(_))));
-        let good = GridView { width: 2, height: 2, cells: &cells, inactive: CellType::inactive() };
+        let good = GridView {
+            width: 2,
+            height: 2,
+            cells: &cells,
+            inactive: CellType::inactive(),
+        };
         assert!(m.attach(&good).is_ok());
         assert!(m.attached);
     }
 
     #[test]
     fn model_error_display() {
-        let e = ModelError::LayerLength { layer: "density", expected: 4, got: 3 };
-        assert_eq!(e.to_string(), "layer 'density' has length 3, expected 4 (width * height)");
-        assert_eq!(ModelError::InvalidParam("p0".into()).to_string(), "invalid parameter: p0");
-        assert_eq!(ModelError::NameCollision("Burning".into()).to_string(), "cell type name collision: Burning");
+        let e = ModelError::LayerLength {
+            layer: "density",
+            expected: 4,
+            got: 3,
+        };
+        assert_eq!(
+            e.to_string(),
+            "layer 'density' has length 3, expected 4 (width * height)"
+        );
+        assert_eq!(
+            ModelError::InvalidParam("p0".into()).to_string(),
+            "invalid parameter: p0"
+        );
+        assert_eq!(
+            ModelError::NameCollision("Burning".into()).to_string(),
+            "cell type name collision: Burning"
+        );
     }
 }
