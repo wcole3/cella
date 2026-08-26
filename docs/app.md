@@ -51,6 +51,29 @@ You can specify the initial window size using command-line arguments:
 - `--width=1920 --height=1080`
 - If only one dimension is provided, the other defaults to a 16:9 ratio.
 
+### Code Layout (Module Map)
+
+The GUI source lives in `src/gui/`. Each file owns one concern, so you can
+usually tell where a change belongs without reading the whole tree. If you are
+adding something, put it in the file whose description matches — and if nothing
+matches, that is a hint the thing deserves its own module.
+
+| File | What lives here |
+|---|---|
+| `gui.rs` | Module list and the single `pub use app::run_gui` the binary calls. Nothing else. |
+| `gui/app.rs` | The `CellaApp` struct and the `eframe::App` impl. The `ui` method is deliberately short: it only says which panel is drawn in what order. |
+| `gui/state.rs` | The nine structs `CellaApp` is made of (`Scenario`, `Playback`, `ViewSettings`, …), each with the app's starting values in its `Default`. Add a new field to the group it belongs to, not to `CellaApp`. |
+| `gui/painter.rs` | Turning grid cells into rectangles, including the run-merging that keeps large grids cheap to draw. |
+| `gui/interact.rs` | Mouse and keyboard gestures on the viewport: zoom, pan, paint, click-to-cycle, undo. Also `cell_index_at`, the "which cell was clicked?" arithmetic. |
+| `gui/sim.rs` | Stepping the simulation and recording statistics. The playback clock. |
+| `gui/scenarios.rs` | Loading demos and JSON configs, resizing the grid, resetting to the initial state. |
+| `gui/types.rs` | Cell-type helpers: which states a scenario declares, what order to list them in, what a click cycles to next. |
+| `gui/export.rs` | Writing GIFs and JSON snapshots, plus the file dialogs that start them. |
+| `gui/render.rs` | The colour palette and the single function that maps a cell type to a colour, shared by the viewport and the GIF exporter so the two cannot disagree. |
+| `gui/panels/` | One file per region of the window — `toolbar`, `scenario`, `rule_editor`, `colors`, `statistics`. |
+| `gui/panels/widgets.rs` | Controls used by more than one panel, such as the cell-type picker. Reach for this before hand-rolling a widget a second time. |
+| `gui/panels/rule_edit_model.rs` | The rule editor's working copy of a rule, held as text so half-typed values are legal until "Apply to grid" converts them. |
+
 ### GUI Features
 
 #### Viewport

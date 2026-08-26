@@ -272,3 +272,95 @@ pub fn export_gif_1d(
 
     Ok(())
 }
+
+use crate::gui::app::{CellaApp, Dim};
+use rfd::FileDialog;
+
+impl CellaApp {
+    pub(in crate::gui) fn save_final_state(&mut self) {
+        let state = match self.scenario.dim {
+            Some(Dim::D1) => self.scenario.d1.as_ref().map(GridState::from_grid1d),
+            Some(Dim::D2) => self.scenario.d2.as_ref().map(GridState::from_grid2d),
+            None => None,
+        };
+        if let Some(st) = state
+            && let Some(path) = FileDialog::new().set_file_name("snapshot.json").save_file()
+        {
+            let json = serde_json::to_string_pretty(&st).unwrap();
+            let _ = std::fs::write(path, json);
+        }
+    }
+    /// Export an animated GIF using the current color settings (including Inactive).
+    /// Runs the export in a background thread and shows a progress bar; optionally
+    /// continues stepping the live grid while exporting based on `export_live_update`.
+    pub(in crate::gui) fn export_gif_dialog(&mut self) {
+        if self.export.join.is_some() {
+            return;
+        }
+        if let Some(path) = FileDialog::new()
+            .add_filter("gif", &["gif"])
+            .set_file_name("cella.gif")
+            .save_file()
+        {
+            let steps = self.export.steps.max(1) as usize;
+            let fps = self.export.fps.max(1);
+            let scale = self.view.scale as u16;
+            let colors = self.view.colors.clone();
+            let palette = self.view.palette.clone();
+            let inactive = self.inactive_color();
+            let progress = Arc::new(AtomicUsize::new(0));
+            self.export.total = steps;
+            self.export.progress = Some(progress.clone());
+            self.set_status(format!("Exporting GIF: {} frames @ {} fps", steps, fps));
+            // `GifExport` borrows the color tables, so it is built inside the worker
+            // thread that owns the clones.
+            match self.scenario.dim {
+                Some(Dim::D1) => {
+                    if let Some(g) = &self.scenario.d1 {
+                        let mut grid_clone = g.clone();
+                        let history_opt = if self.export.with_history_1d {
+                            Some(self.view.history_limit_1d)
+                        } else {
+                            None
+                        };
+                        let handle = std::thread::spawn(move || {
+                            let opts = GifExport {
+                                path,
+                                steps,
+                                fps,
+                                scale,
+                                colors: &colors,
+                                palette: &palette,
+                                inactive,
+                                progress: Some(&progress),
+                            };
+                            export_gif_1d(&mut grid_clone, &opts, history_opt)
+                                .map_err(|e| e.to_string())
+                        });
+                        self.export.join = Some(handle);
+                    }
+                }
+                Some(Dim::D2) => {
+                    if let Some(g) = &self.scenario.d2 {
+                        let mut grid_clone = g.clone();
+                        let handle = std::thread::spawn(move || {
+                            let opts = GifExport {
+                                path,
+                                steps,
+                                fps,
+                                scale,
+                                colors: &colors,
+                                palette: &palette,
+                                inactive,
+                                progress: Some(&progress),
+                            };
+                            export_gif_2d(&mut grid_clone, &opts).map_err(|e| e.to_string())
+                        });
+                        self.export.join = Some(handle);
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+}
