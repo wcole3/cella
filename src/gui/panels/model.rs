@@ -18,8 +18,8 @@ impl CellaApp {
     ///
     /// Renders nothing at all when no model is attached, so a Life or Rule 30
     /// scenario does not grow an empty section. Everything worth testing lives
-    /// in [`group_params`], [`commit_on`] and [`CellaApp::apply_model_param`];
-    /// what is left here is the egui plumbing.
+    /// in [`group_params`], [`commit_on`], [`gesture_ended`] and
+    /// [`CellaApp::apply_model_param`]; what is left here is the egui plumbing.
     pub(in crate::gui) fn ui_model_params(&mut self, ui: &mut egui::Ui) {
         let Some(model) = self.scenario.d2.as_ref().and_then(|g| g.model.as_ref()) else {
             return;
@@ -37,24 +37,33 @@ impl CellaApp {
         // One slot is enough: a person finishes at most one control per frame,
         // and the edit has to leave the closures before `self` can be touched.
         let mut commit: Option<(String, ParamValue)> = None;
-        ui.collapsing(title, |ui| {
-            for (group, descs) in &groups {
-                if let Some(name) = group {
-                    ui.separator();
-                    ui.strong(name);
-                }
-                for desc in descs {
-                    // A key `params` lists but `get_param` will not answer has
-                    // no current value to draw, so it is skipped.
-                    let Some(value) = values.get(&desc.key) else {
-                        continue;
-                    };
-                    if let Some(edited) = param_control(ui, desc, value) {
-                        commit = Some((desc.key.clone(), edited));
+        // Open on first sight: a section that starts closed hides the whole
+        // feature behind a click nobody knows to make.
+        egui::CollapsingHeader::new(title)
+            .default_open(true)
+            .show(ui, |ui| {
+                for (group, descs) in &groups {
+                    if let Some(name) = group {
+                        ui.separator();
+                        ui.strong(name);
+                    }
+                    for desc in descs {
+                        // A key `params` lists but `get_param` will not answer
+                        // has no current value to draw, so it is skipped.
+                        let Some(value) = values.get(&desc.key) else {
+                            continue;
+                        };
+                        if let Some(edited) = param_control(ui, desc, value) {
+                            commit = Some((desc.key.clone(), edited));
+                        }
                     }
                 }
-            }
-        });
+            });
+        // The rule the left panel follows is one separator between sections.
+        // It lives here rather than at the call site because this panel is the
+        // only one that can draw nothing at all: put it there and a scenario
+        // with no model would show two separators with nothing between them.
+        ui.separator();
         if let Some((key, value)) = commit {
             self.apply_model_param(&key, value);
         }
@@ -129,14 +138,47 @@ fn group_params(descs: Vec<ParamDesc>) -> Vec<(Option<String>, Vec<ParamDesc>)> 
 ///
 /// A cheap parameter commits the moment its widget changes, so dragging its
 /// slider looks live. An expensive one — `reattach`, meaning the model rebuilds
-/// derived state on every write — waits for the end of the gesture, so the
-/// rebuild happens once per drag instead of once per frame. A read-only
-/// parameter never commits at all.
-fn commit_on(desc: &ParamDesc, changed: bool, drag_stopped: bool) -> bool {
+/// derived state on every write — waits for the end of the gesture (see
+/// [`gesture_ended`]), so the rebuild happens once per drag instead of once per
+/// frame. A read-only parameter never commits at all.
+fn commit_on(desc: &ParamDesc, changed: bool, ended: bool) -> bool {
     if desc.read_only {
         return false;
     }
-    if desc.reattach { drag_stopped } else { changed }
+    if desc.reattach { ended } else { changed }
+}
+
+/// Whether the person is *done* with this control for now.
+///
+/// Only expensive (`reattach`) parameters ask, because they pay a model
+/// rebuild per commit and so should not commit mid-drag. Three things end a
+/// gesture: letting go of a drag, moving focus off the control, and — the case
+/// that is easy to miss — any change that was not made by dragging at all. A
+/// focused slider accepts arrow keys, and a keystroke is a complete gesture the
+/// moment it lands; waiting for a drag that never starts would throw the edit
+/// away and redraw the old value on the next frame.
+fn gesture_ended(changed: bool, dragged: bool, drag_stopped: bool, lost_focus: bool) -> bool {
+    drag_stopped || lost_focus || (changed && !dragged)
+}
+
+/// Whether this frame commits `desc`, given the widget that just drew it.
+///
+/// `edited` is the only thing that makes a commit possible: it says the
+/// widget's value really differs from the one the model holds. Without that
+/// guard a bare click, a Tab away, or a widget that quietly reformatted its own
+/// value would write the model a value it already had — and, for a `reattach`
+/// parameter, pay a full rebuild for it. Everything else is timing, and that is
+/// [`commit_on`]'s decision.
+fn commit_now(desc: &ParamDesc, resp: &egui::Response, edited: bool) -> bool {
+    let ended = gesture_ended(
+        // A combo box reports no change of its own, so `edited` stands in for
+        // it: the selection landed in a variable, not in the response.
+        resp.changed() || edited,
+        resp.dragged(),
+        resp.drag_stopped(),
+        resp.lost_focus(),
+    );
+    edited && commit_on(desc, edited, ended)
 }
 
 /// Draw the control for one parameter, and return the value to write if this
@@ -147,7 +189,10 @@ fn commit_on(desc: &ParamDesc, changed: bool, drag_stopped: bool) -> bool {
 /// promised is not drawable, so nothing is drawn for it.
 fn param_control(ui: &mut egui::Ui, desc: &ParamDesc, value: &ParamValue) -> Option<ParamValue> {
     if desc.read_only {
-        ui.label(format!("{}: {}", desc.label, value_text(value)));
+        with_help(
+            ui.label(format!("{}: {}", desc.label, value_text(value))),
+            desc,
+        );
         return None;
     }
     match (&desc.kind, value) {
@@ -155,40 +200,48 @@ fn param_control(ui: &mut egui::Ui, desc: &ParamDesc, value: &ParamValue) -> Opt
             let mut v = *current;
             let mut slider = egui::Slider::new(&mut v, *min..=*max)
                 .step_by(*step)
+                // Clamp what someone *types*, never what the model already
+                // holds: the default rounds the existing value onto the step
+                // grid on every draw and reports that as an edit, which would
+                // rewrite a value the model is perfectly happy with the first
+                // time the panel is drawn.
+                .clamping(egui::SliderClamping::Edits)
                 .text(&desc.label);
             if let Some(unit) = &desc.unit {
                 slider = slider.suffix(unit);
             }
             let resp = with_help(ui.add(slider), desc);
-            let gesture_ended = resp.drag_stopped() || resp.lost_focus();
-            commit_on(desc, resp.changed(), gesture_ended).then_some(ParamValue::Float(v))
+            commit_now(desc, &resp, v != *current).then_some(ParamValue::Float(v))
         }
         (ParamKind::Int { min, max }, ParamValue::Int(current)) => {
             let mut v = *current;
             let resp = ui
                 .horizontal(|ui| {
-                    let resp = ui.add(egui::DragValue::new(&mut v).range(*min..=*max));
+                    let resp = ui.add(
+                        egui::DragValue::new(&mut v)
+                            .range(*min..=*max)
+                            // Same reason as the slider above: an existing
+                            // value outside the range is shown as it is, not
+                            // silently pulled to the nearest end stop.
+                            .clamp_existing_to_range(false),
+                    );
                     ui.label(&desc.label);
                     resp
                 })
                 .inner;
             let resp = with_help(resp, desc);
-            // A spinner reports every edit through `changed`, so the same flag
-            // stands for both halves of the commit decision.
-            let changed = resp.changed();
-            commit_on(desc, changed, changed).then_some(ParamValue::Int(v))
+            commit_now(desc, &resp, v != *current).then_some(ParamValue::Int(v))
         }
         (ParamKind::Bool, ParamValue::Bool(current)) => {
             let mut v = *current;
             let resp = with_help(ui.checkbox(&mut v, &desc.label), desc);
-            let changed = resp.changed();
-            commit_on(desc, changed, changed).then_some(ParamValue::Bool(v))
+            commit_now(desc, &resp, v != *current).then_some(ParamValue::Bool(v))
         }
         (ParamKind::Choice { options }, ParamValue::Choice(current)) => {
             let mut sel = current.clone();
-            // Called for the tooltip alone: a combo box's own response says
-            // nothing about which item was picked.
-            with_help(
+            // The response carries the tooltip and the focus signals; what it
+            // does not carry is the selection, which lands in `sel` below.
+            let resp = with_help(
                 egui::ComboBox::from_label(&desc.label)
                     .selected_text(sel.clone())
                     .show_ui(ui, |ui| {
@@ -201,8 +254,7 @@ fn param_control(ui: &mut egui::Ui, desc: &ParamDesc, value: &ParamValue) -> Opt
             );
             // A dropdown has no `changed` of its own: the selection landed in
             // `sel`, so comparing it with the current value is the change.
-            let changed = sel != *current;
-            commit_on(desc, changed, changed).then_some(ParamValue::Choice(sel))
+            commit_now(desc, &resp, sel != *current).then_some(ParamValue::Choice(sel))
         }
         _ => None,
     }
@@ -335,6 +387,42 @@ mod tests {
         assert!(!commit_on(&expensive, false, false));
     }
 
+    /// The gesture-end rule, spelled out for every combination that matters.
+    ///
+    /// The case that used to be wrong is the first one: a focused slider takes
+    /// arrow keys, which change its value with no pointer drag anywhere. An
+    /// expensive parameter that waited for `drag_stopped` threw that keystroke
+    /// away, redrew from the model next frame, and then committed the *old*
+    /// value when focus moved on — a rebuild that changed nothing.
+    #[test]
+    fn any_change_outside_a_drag_ends_the_gesture_by_itself() {
+        // changed, dragged, drag_stopped, lost_focus
+        assert!(
+            gesture_ended(true, false, false, false),
+            "an arrow-key edit is a whole gesture on its own"
+        );
+        assert!(
+            !gesture_ended(true, true, false, false),
+            "a change under the pointer is mid-drag, so it waits"
+        );
+        assert!(
+            gesture_ended(true, true, true, false),
+            "the frame the drag ends on commits it"
+        );
+        assert!(
+            gesture_ended(false, false, true, false),
+            "releasing the slider ends the gesture"
+        );
+        assert!(
+            gesture_ended(false, false, false, true),
+            "so does clicking away from it"
+        );
+        assert!(
+            !gesture_ended(false, false, false, false),
+            "an untouched frame is not the end of anything"
+        );
+    }
+
     #[test]
     fn read_only_values_read_as_plain_text() {
         assert_eq!(value_text(&ParamValue::Float(7.5)), "7.5");
@@ -397,6 +485,45 @@ mod tests {
         });
 
         assert_eq!(committed, vec![None; rows.len()]);
+    }
+
+    /// A value that is not on its descriptor's step grid, or that sits outside
+    /// the range the descriptor declares, must be *shown* — never quietly
+    /// rewritten by the widget that displays it.
+    ///
+    /// egui's default clamping rounds an existing value onto the slider's step
+    /// grid on every draw and reports the widget as changed, so merely opening
+    /// the panel would commit `c2 = 0.131` as `0.13` — and mirror the rounded
+    /// value into the snapshot Reset restores. Nobody touched anything here,
+    /// so there is nothing to commit.
+    #[test]
+    fn a_value_off_the_step_grid_or_outside_the_range_is_shown_not_rewritten() {
+        let off_grid = ParamDesc {
+            kind: ParamKind::Float {
+                min: 0.0,
+                max: 1.0,
+                step: 0.005,
+            },
+            ..desc("off_grid", None, false, false)
+        };
+        let out_of_range = ParamDesc {
+            kind: ParamKind::Int { min: 1, max: 1000 },
+            ..desc("out_of_range", None, false, false)
+        };
+
+        let mut committed = Vec::new();
+        egui::__run_test_ui(|ui| {
+            committed = vec![
+                param_control(ui, &off_grid, &ParamValue::Float(0.131)),
+                param_control(ui, &out_of_range, &ParamValue::Int(1500)),
+            ];
+        });
+
+        assert_eq!(
+            committed,
+            vec![None, None],
+            "an untouched control must not commit a value the widget invented"
+        );
     }
 
     #[test]

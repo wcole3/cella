@@ -287,8 +287,11 @@ impl CellaApp {
                             }
                         });
                         ui.separator();
+                        // No separator after this one: `ui_model_params` draws
+                        // nothing at all for a scenario without a model, and a
+                        // separator on each side of nothing is two rules in a
+                        // row. It draws its own trailing separator instead.
                         self.ui_model_params(ui);
-                        ui.separator();
                         self.ui_colors(ui);
                         ui.separator();
                         self.ui_statistics(ui);

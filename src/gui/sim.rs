@@ -907,6 +907,19 @@ mod tests {
         );
     }
 
+    /// Height a *closed* collapsing section occupies: one header row and
+    /// nothing else. It is the yardstick for "the body did not run".
+    fn closed_header_height() -> f32 {
+        let mut height = 0.0;
+        egui::__run_test_ui(|ui| {
+            egui::CollapsingHeader::new("Model")
+                .default_open(false)
+                .show(ui, |ui| ui.label("body that never draws"));
+            height = ui.min_rect().height();
+        });
+        height
+    }
+
     #[test]
     fn the_model_panel_draws_its_section_when_a_model_is_attached() {
         let mut app = test_app_with_model();
@@ -914,6 +927,23 @@ mod tests {
         assert!(
             model_panel_height(&mut app) > 0.0,
             "an attached model must get a section"
+        );
+    }
+
+    #[test]
+    fn the_model_panel_starts_open_so_its_controls_are_drawn() {
+        // A section that starts closed hides the feature, and its body — every
+        // control, and the whole read/commit path behind them — never runs in
+        // a headless test either. The wildfire model in this fixture declares
+        // more than a dozen parameters, so an open body is far taller than the
+        // lone header row a closed section would leave behind.
+        let mut app = test_app_with_model();
+
+        let drawn = model_panel_height(&mut app);
+
+        assert!(
+            drawn > closed_header_height() * 3.0,
+            "the section must start open: {drawn} points is about a closed header"
         );
     }
 
