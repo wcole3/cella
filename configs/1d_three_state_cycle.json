@@ -1031,28 +1031,28 @@
   "rule": {
     "subrules": [
       {
+        "wolfram_code": "255",
+        "randomness": null,
+        "n": 1,
+        "output_type": "B",
         "current_type": "A",
-        "criteria_type": "A",
-        "wolfram_code": "255",
-        "n": 1,
-        "randomness": null,
-        "output_type": "B"
+        "criteria_type": "A"
       },
       {
+        "wolfram_code": "255",
+        "randomness": null,
+        "n": 1,
+        "output_type": "C",
         "current_type": "B",
-        "criteria_type": "B",
-        "wolfram_code": "255",
-        "n": 1,
-        "randomness": null,
-        "output_type": "C"
+        "criteria_type": "B"
       },
       {
-        "current_type": "C",
-        "criteria_type": "C",
         "wolfram_code": "255",
-        "n": 1,
         "randomness": null,
-        "output_type": "A"
+        "n": 1,
+        "output_type": "A",
+        "current_type": "C",
+        "criteria_type": "C"
       }
     ]
   }

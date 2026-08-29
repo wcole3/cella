@@ -48,7 +48,7 @@ The range modifier determines how far in each cardinal direction the `Cell` need
 The neighborhood type modifier changes what subset of the bounding square defined above in the Range modifer section.  The format is {neighborhood=value} where value can take one of three possible values:
 * Moore: The neighborhood where all `Cell`s in the bounding square are included
 * von Neumann: The neighborhood where only the `Cell`s in the 4 cardinal directions are used (up, down, left, right)
-* Langdon: The neighborhood where only the diagonal neighboring `Cell`s are used.
+* Langton: The neighborhood where only the diagonal neighboring `Cell`s are used.
 
 **Symmetry**
 

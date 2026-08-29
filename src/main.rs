@@ -18,6 +18,7 @@
 //! With `--gui` it opens an egui window for visual simulation, rule editing,
 //! and GIF export.
 
+use std::path::PathBuf;
 mod demos;
 mod gui;
 use std::io::{self, Write};
@@ -45,11 +46,16 @@ fn menu() {
             "3" => demos::demo_1d_n2(),
             "4" => demos::demo_1d_custom(),
             "5" => demos::demo_from_config(),
-            "6" => println!("Langton's ant not yet implemented in this engine (requires moving agent)."),
+            "6" => println!(
+                "Langton's ant not yet implemented in this engine (requires moving agent)."
+            ),
             "7" => demos::demo_1d_three_state_cycle(),
             "8" => demos::demo_2d_three_state_cycle(),
             "9" => demos::demo_2d_straightline(),
-            "0" => { println!("Bye!"); break; }
+            "0" => {
+                println!("Bye!");
+                break;
+            }
             _ => println!("Unknown option."),
         }
     }
@@ -57,17 +63,42 @@ fn menu() {
 
 /// Entry point: dispatches to GUI (`--gui`) or CLI menu.
 fn main() {
+    // Route library log lines (e.g. `rfd` explaining why no file dialog could
+    // open) to stderr. `RUST_LOG=debug` shows more; the default shows warnings
+    // and errors only.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     // Choose GUI or CLI via args: pass --gui to launch GUI
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--gui" || a.eq_ignore_ascii_case("gui")) {
+    if args
+        .iter()
+        .any(|a| a == "--gui" || a.eq_ignore_ascii_case("gui"))
+    {
         // Parse optional GUI size arguments
         let size = parse_gui_size(&args);
-        if let Err(e) = gui::run_gui(size) {
+        let config = parse_gui_config(&args);
+        if let Err(e) = gui::run_gui(size, config) {
             eprintln!("GUI error: {}", e);
         }
         return;
     }
     menu();
+}
+
+/// Parse an optional `--config=PATH` / `--config PATH`: a config file to open
+/// at startup instead of the Life demo. Useful where no file dialog can open.
+fn parse_gui_config(args: &[String]) -> Option<PathBuf> {
+    let mut i = 0usize;
+    while i < args.len() {
+        if let Some(rest) = args[i].strip_prefix("--config=") {
+            if !rest.is_empty() {
+                return Some(PathBuf::from(rest));
+            }
+        } else if args[i] == "--config" {
+            return args.get(i + 1).map(PathBuf::from);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Parse optional GUI window size from command-line arguments.
@@ -86,24 +117,36 @@ fn parse_gui_size(args: &[String]) -> Option<(f32, f32)> {
     let mut i = 0usize;
     while i < args.len() {
         let arg = &args[i];
+        let next = args.get(i + 1);
         if let Some(rest) = arg.strip_prefix("--size=") {
-            if let Some((w, h)) = parse_wh(rest) { width = Some(w); height = Some(h); }
+            if let Some((w, h)) = parse_wh(rest) {
+                width = Some(w);
+                height = Some(h);
+            }
         } else if arg == "--size" {
-            if i + 1 < args.len() {
-                if let Some((w, h)) = parse_wh(&args[i + 1]) { width = Some(w); height = Some(h); i += 1; }
+            if let Some((w, h)) = next.and_then(|s| parse_wh(s)) {
+                width = Some(w);
+                height = Some(h);
+                i += 1;
             }
         } else if let Some(rest) = arg.strip_prefix("--width=") {
-            if let Ok(w) = rest.parse::<f32>() { width = Some(w); }
+            if let Ok(w) = rest.parse::<f32>() {
+                width = Some(w);
+            }
         } else if arg == "--width" {
-            if i + 1 < args.len() {
-                if let Ok(w) = args[i + 1].parse::<f32>() { width = Some(w); i += 1; }
+            if let Some(Ok(w)) = next.map(|s| s.parse::<f32>()) {
+                width = Some(w);
+                i += 1;
             }
         } else if let Some(rest) = arg.strip_prefix("--height=") {
-            if let Ok(h) = rest.parse::<f32>() { height = Some(h); }
-        } else if arg == "--height" {
-            if i + 1 < args.len() {
-                if let Ok(h) = args[i + 1].parse::<f32>() { height = Some(h); i += 1; }
+            if let Ok(h) = rest.parse::<f32>() {
+                height = Some(h);
             }
+        } else if arg == "--height"
+            && let Some(Ok(h)) = next.map(|s| s.parse::<f32>())
+        {
+            height = Some(h);
+            i += 1;
         }
         i += 1;
     }
@@ -134,8 +177,42 @@ fn parse_wh(s: &str) -> Option<(f32, f32)> {
     } else {
         return None;
     };
-    if parts.len() != 2 { return None; }
+    if parts.len() != 2 {
+        return None;
+    }
     let w = parts[0].trim().parse::<f32>().ok()?;
     let h = parts[1].trim().parse::<f32>().ok()?;
-    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 { Some((w, h)) } else { None }
+    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+        Some((w, h))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_gui_config_reads_the_equals_form() {
+        let got = parse_gui_config(&args(&["cella", "--gui", "--config=configs/life.json"]));
+        assert_eq!(got, Some(PathBuf::from("configs/life.json")));
+    }
+
+    #[test]
+    fn parse_gui_config_reads_the_space_form() {
+        let got = parse_gui_config(&args(&["cella", "--config", "configs/life.json", "--gui"]));
+        assert_eq!(got, Some(PathBuf::from("configs/life.json")));
+    }
+
+    #[test]
+    fn parse_gui_config_is_none_when_absent_or_dangling() {
+        assert_eq!(parse_gui_config(&args(&["cella", "--gui"])), None);
+        assert_eq!(parse_gui_config(&args(&["cella", "--gui", "--config"])), None);
+    }
 }

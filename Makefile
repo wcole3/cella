@@ -1,6 +1,6 @@
 .PHONY: all build build-release run run-gui check clippy fmt fmt-check doc clean \
-        test test-all test-all-single test-all-single-run \
-        test-create-snapshots test-update-benchmarks
+		test test-all test-all-single test-all-single-run \
+		coverage coverage-all test-create-snapshots test-update-benchmarks
 
 # ── Default ───────────────────────────────────────────────────────────────────
 all: build
@@ -66,6 +66,14 @@ test-all-single:
 ## Run all tests single-threaded with bench runs=1 and config export enabled
 test-all-single-run:
 	cd cella_lib && CELLA_BENCH_RUNS=1 CELLA_EXPORT_CONFIGS=1 cargo test --package cella_lib -- --include-ignored --test-threads=1
+
+## Generate line coverage for cella_lib (non-ignored tests)
+coverage:
+	cd cella_lib && CELLA_ASCII=0 cargo llvm-cov --package cella_lib --html
+
+## Generate line coverage for cella_lib including ignored tests
+coverage-all:
+	cd cella_lib && CELLA_ASCII=0 cargo llvm-cov --package cella_lib --html -- --include-ignored
 
 ## Regenerate / update snapshot files
 test-create-snapshots:

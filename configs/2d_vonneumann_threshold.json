@@ -2056,26 +2056,26 @@
   "rule": {
     "subrules": [
       {
-        "current_type": "A",
-        "criteria_type": "B",
-        "count": 2,
+        "randomness": null,
         "op": "gt",
         "limit": null,
+        "count": 2,
         "range": 2,
         "neighborhood": "VonNeumann",
-        "randomness": null,
-        "output_type": "B"
+        "output_type": "B",
+        "current_type": "A",
+        "criteria_type": "B"
       },
       {
-        "current_type": "B",
-        "criteria_type": "B",
-        "count": 1,
+        "randomness": null,
         "op": "gt",
         "limit": null,
+        "count": 1,
         "range": 1,
         "neighborhood": "VonNeumann",
-        "randomness": null,
-        "output_type": "B"
+        "output_type": "B",
+        "current_type": "B",
+        "criteria_type": "B"
       }
     ]
   }

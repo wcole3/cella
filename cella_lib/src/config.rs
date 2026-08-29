@@ -1,13 +1,14 @@
 //! Simple JSON configuration format to build grids without writing Rust code.
 //! This format focuses on readability: you specify dimensions, history limit,
 //! an initial array of type names, and the rule definition.
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
-use crate::types::CellType;
-use crate::rules::{Rule1D, Rule2D};
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
+use crate::rules::{Rule1D, Rule2D};
+use crate::types::CellType;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 
 /// Top-level configuration for either a 1D or 2D automaton.
 ///
@@ -43,6 +44,16 @@ pub enum CellaConfig {
     D2(Config2D),
 }
 
+impl CellaConfig {
+    /// The `colors` map of whichever variant this is (empty when the file had none).
+    pub fn colors(&self) -> &BTreeMap<String, String> {
+        match self {
+            CellaConfig::D1(c) => &c.colors,
+            CellaConfig::D2(c) => &c.colors,
+        }
+    }
+}
+
 /// 1D configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config1D {
@@ -54,6 +65,12 @@ pub struct Config1D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule1D,
+    /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
+    /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
+    /// GUI applies them on load, and any type not listed gets an automatic
+    /// colour. `"Inactive"` sets the background colour.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub colors: BTreeMap<String, String>,
 }
 
 /// 2D configuration.
@@ -69,6 +86,16 @@ pub struct Config2D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule2D,
+    /// Optional external transition model (e.g. `{"wildfire": {...}}`); when
+    /// present it replaces the subrule engine. See [`crate::external`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Box<dyn crate::external::ExternalModel>>,
+    /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
+    /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
+    /// GUI applies them on load, and any type not listed gets an automatic
+    /// colour. `"Inactive"` sets the background colour.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub colors: BTreeMap<String, String>,
 }
 
 impl CellaConfig {
@@ -92,7 +119,10 @@ impl CellaConfig {
     /// # let cfg: CellaConfig = serde_json::from_str("{\"dim\":\"2d\",\"width\":1,\"height\":1,\"history_limit\":1,\"initial\":[\"Inactive\"],\"rule\":{\"subrules\":[]}}").unwrap();
     /// cfg.to_file_pretty("out.json").unwrap();
     /// ```
-    pub fn to_file_pretty<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn to_file_pretty<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let s = serde_json::to_string_pretty(self)?;
         fs::write(path, s)?;
         Ok(())
@@ -104,8 +134,10 @@ impl CellaConfig {
     pub fn build_grid1d(&self) -> Option<Grid1D> {
         match self {
             CellaConfig::D1(c) => {
-                if c.initial.len() != c.width { return None; }
-                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
+                if c.initial.len() != c.width {
+                    return None;
+                }
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
                 Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()))
             }
             _ => None,
@@ -114,15 +146,118 @@ impl CellaConfig {
 
     /// Build a Grid2D from D2 config.
     ///
-    /// Returns `None` if `initial.len() != width*height`.
+    /// Returns `None` if `initial.len() != width*height`, or if the config's
+    /// external model fails validation against the grid.
     pub fn build_grid2d(&self) -> Option<Grid2D> {
         match self {
             CellaConfig::D2(c) => {
-                if c.initial.len() != c.width * c.height { return None; }
-                let init: Vec<CellType> = c.initial.iter().map(|s| CellType(s.clone())).collect();
-                Some(Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone()))
+                if c.initial.len() != c.width * c.height {
+                    return None;
+                }
+                let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
+                let mut grid =
+                    Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone());
+                if let Some(model) = &c.model {
+                    grid.attach_model(model.clone()).ok()?;
+                }
+                Some(grid)
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn build_grid_rejects_mismatched_initial_lengths() {
+        let rule1 = Rule1D { subrules: vec![] };
+        let cfg1 = CellaConfig::D1(Config1D {
+            colors: Default::default(),
+            width: 3,
+            history_limit: 1,
+            initial: vec!["A".to_string(), "B".to_string()],
+            rule: rule1,
+        });
+        assert!(cfg1.build_grid1d().is_none());
+
+        let rule2 = Rule2D { subrules: vec![] };
+        let cfg2 = CellaConfig::D2(Config2D {
+            colors: Default::default(),
+            width: 2,
+            height: 2,
+            history_limit: 1,
+            initial: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            rule: rule2,
+            model: None,
+        });
+        assert!(cfg2.build_grid2d().is_none());
+    }
+
+    #[test]
+    fn file_roundtrip_and_build_grid_success_paths() {
+        let a = "A".to_string();
+        let b = "B".to_string();
+
+        let cfg1 = CellaConfig::D1(Config1D {
+            colors: Default::default(),
+            width: 2,
+            history_limit: 1,
+            initial: vec![a.clone(), b.clone()],
+            rule: Rule1D { subrules: vec![] },
+        });
+        assert!(cfg1.build_grid1d().is_some());
+        assert!(cfg1.build_grid2d().is_none());
+
+        let cfg2 = CellaConfig::D2(Config2D {
+            colors: Default::default(),
+            width: 1,
+            height: 2,
+            history_limit: 1,
+            initial: vec![a, b],
+            rule: Rule2D { subrules: vec![] },
+            model: None,
+        });
+        assert!(cfg2.build_grid2d().is_some());
+        assert!(cfg2.build_grid1d().is_none());
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("cella_cfg_{stamp}.json"));
+        cfg2.to_file_pretty(&path).expect("write config");
+        let loaded = CellaConfig::from_file(&path).expect("read config");
+        assert!(matches!(loaded, CellaConfig::D2(_)));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn file_io_error_paths_are_covered() {
+        let missing = std::env::temp_dir().join("cella_missing_config_hopefully.json");
+        assert!(CellaConfig::from_file(&missing).is_err());
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let bad_path = std::env::temp_dir().join(format!("cella_bad_cfg_{stamp}.json"));
+        std::fs::write(&bad_path, "{not json").unwrap();
+        assert!(CellaConfig::from_file(&bad_path).is_err());
+        let _ = std::fs::remove_file(&bad_path);
+
+        let cfg = CellaConfig::D1(Config1D {
+            colors: Default::default(),
+            width: 1,
+            history_limit: 0,
+            initial: vec!["Inactive".to_string()],
+            rule: Rule1D { subrules: vec![] },
+        });
+        // Writing to a directory path fails, covering fs::write error propagation.
+        let dir_path = std::env::temp_dir();
+        assert!(cfg.to_file_pretty(dir_path).is_err());
     }
 }

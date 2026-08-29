@@ -91,9 +91,11 @@ fn main() {
     for _ in 0..50 {
         grid.step();
     }
+    // counts_current is keyed by the interned type handle (Spur)
+    let alive = CellType::from("Alive");
     println!("Step {} — Alive cells: {}",
         grid.step,
-        grid.counts_current.get("Alive").unwrap_or(&0));
+        grid.counts_current.get(&alive.0).unwrap_or(&0));
 
     // Serialise to JSON for later
     let state = GridState::from_grid2d(&grid);
@@ -107,7 +109,8 @@ fn main() {
 use cella_lib::*;
 
 fn main() {
-    let x = CellType("X".into());
+    // CellType is an interned symbol — construct via From<&str>
+    let x = CellType::from("X");
     let inactive = CellType::inactive();
 
     let rule = Rule1D { subrules: vec![
@@ -130,8 +133,8 @@ fn main() {
     let mut grid = Grid1D::new(width, 5, init, rule);
     for _ in 0..40 {
         grid.step();
-        let line: String = grid.cells.iter()
-            .map(|c| if c.current == x { '#' } else { '.' })
+        let line: String = (0..width)
+            .map(|i| if grid.cell_type(i) == x { '#' } else { '.' })
             .collect();
         println!("{}", line);
     }
@@ -212,6 +215,13 @@ Configs are JSON files with a `"dim"` discriminator (`"1d"` or `"2d"`).
 
 </details>
 
+2D subrule notes: `op` (`"lt"`/`"gt"`/`"eq"`) is **inclusive** for `gt`/`lt`
+("at least" / "at most"); `neighborhood` is one of `"Moore"`, `"VonNeumann"`,
+`"Langton"`, `"StraightLine"`, `"Knight"`; an optional `"limit"` field turns
+`gt`/`lt` into an inclusive between-range (e.g. `"count":2, "op":"gt",
+"limit":3` = survive with 2–3 neighbors). `"randomness"` and `"limit"` may be
+omitted.
+
 See the [`configs/`](configs/) directory for complete working examples.
 
 ---
@@ -220,7 +230,7 @@ See the [`configs/`](configs/) directory for complete working examples.
 
 The egui GUI (launched with `--gui`) provides:
 
-- **Preset demos** — Game of Life, Rule 30, three-state cycles, StraightLine neighborhoods
+- **Preset demos** — Game of Life, Rule 30, three-state cycles, specialized neighborhoods (StraightLine, Langton, Knight, …)
 - **Live rule editor** — add/remove subrules, change operators, neighborhoods, and ranges
 - **Grid viewport** — zoomable, pannable cell grid with click-to-paint drawing
 - **Playback controls** — play/pause, step, adjustable speed
@@ -238,6 +248,7 @@ The egui GUI (launched with `--gui`) provides:
 |----------|----------|
 | [Library Documentation](docs/lib.md) | Architecture, module reference, rule system, serialisation, threading |
 | [Application Documentation](docs/app.md) | CLI usage, GUI walkthrough, GIF export, configuration guide |
+| [Performance Review](docs/performance.md) | Engine internals, optimizations, known issues, recommendations, Hashlife notes |
 
 ### Generating Rust API Docs
 
@@ -264,7 +275,8 @@ cella/
 │   └── ...
 ├── docs/
 │   ├── lib.md              # Library reference
-│   └── app.md              # Application guide
+│   ├── app.md              # Application guide
+│   └── performance.md      # Performance review & roadmap
 ├── src/                    # Binary crate
 │   ├── main.rs             # Entry point (CLI menu / --gui)
 │   ├── gui.rs              # GUI module shim

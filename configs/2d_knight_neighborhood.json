@@ -3080,37 +3080,37 @@
   "rule": {
     "subrules": [
       {
-        "current_type": "A",
-        "criteria_type": "B",
-        "count": 4,
+        "randomness": null,
         "op": "gt",
         "limit": null,
+        "count": 4,
         "range": 1,
         "neighborhood": "Knight",
-        "randomness": null,
-        "output_type": "B"
+        "output_type": "B",
+        "current_type": "A",
+        "criteria_type": "B"
       },
       {
-        "current_type": "A",
-        "criteria_type": "B",
-        "count": 2,
+        "randomness": null,
         "op": "gt",
         "limit": 4,
+        "count": 2,
         "range": 1,
         "neighborhood": "Knight",
-        "randomness": null,
-        "output_type": "A"
+        "output_type": "A",
+        "current_type": "A",
+        "criteria_type": "B"
       },
       {
-        "current_type": "B",
-        "criteria_type": "A",
-        "count": 3,
+        "randomness": null,
         "op": "eq",
         "limit": null,
+        "count": 3,
         "range": 1,
         "neighborhood": "Knight",
-        "randomness": null,
-        "output_type": "A"
+        "output_type": "A",
+        "current_type": "B",
+        "criteria_type": "A"
       }
     ]
   }

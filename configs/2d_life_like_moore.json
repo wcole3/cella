@@ -1508,37 +1508,37 @@
   "rule": {
     "subrules": [
       {
-        "current_type": "Alive",
-        "criteria_type": "Alive",
+        "randomness": null,
+        "op": "gt",
+        "limit": null,
         "count": 4,
-        "op": "gt",
-        "limit": null,
         "range": 1,
         "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "Inactive"
-      },
-      {
+        "output_type": "Inactive",
         "current_type": "Alive",
-        "criteria_type": "Alive",
-        "count": 2,
-        "op": "gt",
-        "limit": null,
-        "range": 1,
-        "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "Alive"
+        "criteria_type": "Alive"
       },
       {
-        "current_type": "Inactive",
-        "criteria_type": "Alive",
-        "count": 3,
+        "randomness": null,
+        "op": "gt",
+        "limit": null,
+        "count": 2,
+        "range": 1,
+        "neighborhood": "Moore",
+        "output_type": "Alive",
+        "current_type": "Alive",
+        "criteria_type": "Alive"
+      },
+      {
+        "randomness": null,
         "op": "eq",
         "limit": null,
+        "count": 3,
         "range": 1,
         "neighborhood": "Moore",
-        "randomness": null,
-        "output_type": "Alive"
+        "output_type": "Alive",
+        "current_type": "Inactive",
+        "criteria_type": "Alive"
       }
     ]
   }

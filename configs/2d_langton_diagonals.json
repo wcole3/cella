@@ -2312,15 +2312,15 @@
   "rule": {
     "subrules": [
       {
-        "current_type": "A",
-        "criteria_type": "B",
-        "count": 3,
+        "randomness": null,
         "op": "gt",
         "limit": null,
+        "count": 3,
         "range": 2,
-        "neighborhood": "Langdon",
-        "randomness": null,
-        "output_type": "B"
+        "neighborhood": "Langton",
+        "output_type": "B",
+        "current_type": "A",
+        "criteria_type": "B"
       }
     ]
   }

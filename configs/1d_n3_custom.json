@@ -264,20 +264,20 @@
   "rule": {
     "subrules": [
       {
-        "current_type": "X",
-        "criteria_type": "X",
         "wolfram_code": "17361641481138401520",
-        "n": 3,
         "randomness": null,
-        "output_type": "X"
+        "n": 3,
+        "output_type": "X",
+        "current_type": "X",
+        "criteria_type": "X"
       },
       {
-        "current_type": "Inactive",
-        "criteria_type": "X",
         "wolfram_code": "17361641481138401520",
-        "n": 3,
         "randomness": null,
-        "output_type": "X"
+        "n": 3,
+        "output_type": "X",
+        "current_type": "Inactive",
+        "criteria_type": "X"
       }
     ]
   }

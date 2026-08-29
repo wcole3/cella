@@ -4,6 +4,13 @@
 
 mod app;
 mod export;
+mod interact;
+mod painter;
+mod panels;
 mod render;
+mod scenarios;
+mod sim;
+mod state;
+mod types;
 
 pub use app::run_gui;

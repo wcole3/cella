@@ -1,89 +1,129 @@
 //! Grid state snapshots and (de)serialization helpers.
-use serde::{Deserialize, Serialize};
-use crate::types::CellState;
-use crate::rules::{Rule1D, Rule2D};
+
+use crate::CellType;
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
+use crate::rules::{Rule1D, Rule2D};
+use crate::types::{CellState, interner};
+use lasso2::Spur;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Serializable snapshot of either a 1D or 2D grid.
-///
-/// Use this to save and restore simulations across runs.
-///
-/// Example
-/// ```rust
-/// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, GridState, CountOp};
-/// let alive = CellType("Alive".into());
-/// let inactive = CellType::inactive();
-/// let rule = Rule2D { subrules: vec![
-///   // Overpopulation: Alive with 4+ Alive neighbors becomes Inactive
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 4, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: inactive.clone() },
-///   // Survival: Alive stays Alive if at least 2 Alive neighbors (after overpop check)
-///   Rule2DSubrule { current_type: alive.clone(), criteria_type: alive.clone(), count: 2, op: CountOp::Gt, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-///   // Birth: Inactive becomes Alive if exactly 3 Alive neighbors
-///   Rule2DSubrule { current_type: inactive.clone(), criteria_type: alive.clone(), count: 3, op: CountOp::Eq, limit: None, range: 1, neighborhood: Neighborhood2D::Moore, randomness: None, output_type: alive.clone() },
-/// ]};
-/// let (w,h) = (4usize, 4usize);
-/// let mut init = vec![CellType::inactive(); w*h];
-/// init[1*w + 1] = alive.clone();
-/// init[1*w + 2] = alive.clone();
-/// init[1*w + 3.min(w-1)] = alive.clone();
-/// let mut g = Grid2D::new(w, h, 3, init, rule);
-/// g.step();
-/// let st = GridState::from_grid2d(&g);
-/// let json = st.to_json();
-/// let st2 = GridState::from_json(&json).unwrap();
-/// assert!(matches!(st2, GridState::D2{..}));
-/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum GridState {
     D1 {
         width: usize,
         history_limit: usize,
-        cells: Vec<CellState>,
+        cell_states: Vec<CellState>,
         step: u64,
         rule: Rule1D,
-        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
-        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+        #[serde(default)]
+        counts_current: HashMap<String, u64>,
+        #[serde(default)]
+        peak_counts: HashMap<String, u64>,
     },
     D2 {
         width: usize,
         height: usize,
         history_limit: usize,
-        cells: Vec<CellState>,
+        cell_states: Vec<CellState>,
         step: u64,
         rule: Rule2D,
-        #[serde(default)] counts_current: std::collections::HashMap<String, u64>,
-        #[serde(default)] peak_counts: std::collections::HashMap<String, u64>,
+        #[serde(default)]
+        counts_current: HashMap<String, u64>,
+        #[serde(default)]
+        peak_counts: HashMap<String, u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<Box<dyn crate::external::ExternalModel>>,
     },
 }
 
 impl GridState {
-    /// Snapshot a 1D grid.
-    pub fn from_grid1d(g: &Grid1D) -> Self { Self::D1 { width: g.width, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
-    /// Snapshot a 2D grid.
-    pub fn from_grid2d(g: &Grid2D) -> Self { Self::D2 { width: g.width, height: g.height, history_limit: g.history_limit, cells: g.cells.clone(), step: g.step, rule: g.rule.clone(), counts_current: g.counts_current.clone(), peak_counts: g.peak_counts.clone() } }
+    pub fn from_grid1d(g: &Grid1D) -> Self {
+        let (current_count_map, peak_count_map) =
+            convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
+        let cell_states = g.to_cell_states();
+        Self::D1 {
+            width: g.width,
+            history_limit: g.history_limit,
+            cell_states,
+            step: g.step,
+            rule: g.rule.clone(),
+            counts_current: current_count_map,
+            peak_counts: peak_count_map,
+        }
+    }
 
-    /// Serialize to pretty JSON.
-    pub fn to_json_pretty(&self) -> String { serde_json::to_string_pretty(self).unwrap() }
-    /// Serialize to compact JSON.
-    pub fn to_json(&self) -> String { serde_json::to_string(self).unwrap() }
+    pub fn from_grid2d(g: &Grid2D) -> Self {
+        let (current_count_map, peak_count_map) =
+            convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
+        let cell_states = g.to_cell_states();
+        Self::D2 {
+            width: g.width,
+            height: g.height,
+            history_limit: g.history_limit,
+            cell_states,
+            step: g.step,
+            rule: g.rule.clone(),
+            counts_current: current_count_map,
+            peak_counts: peak_count_map,
+            model: g.model.clone(),
+        }
+    }
 
-    /// Deserialize from JSON string.
-    pub fn from_json(s: &str) -> serde_json::Result<Self> { serde_json::from_str(s) }
+    pub fn to_json_pretty(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
+    }
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+    pub fn from_json(s: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(s)
+    }
 }
 
 impl Grid1D {
-    /// Build a Grid1D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D1 { width, history_limit, cells, step, rule, counts_current, peak_counts } => {
-                let mut counts = counts_current.clone();
-                if counts.is_empty() {
-                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
-                }
-                let mut peaks = peak_counts.clone();
-                if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+            GridState::D1 {
+                width,
+                history_limit,
+                cell_states,
+                step,
+                rule,
+                counts_current,
+                peak_counts,
+            } => {
+                let (new_counts, new_peak_counts) =
+                    convert_map_string_to_spur(cell_states, counts_current, peak_counts);
+                let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
+                let next_cells: Vec<CellType> = vec![CellType::inactive(); *width];
+                let ages: Vec<u32> = cell_states.iter().map(|c| c.age_in_state).collect();
+                let history_data = Self::soa_history(cell_states, *history_limit);
+                let history_heads = Self::soa_heads(cell_states, *history_limit);
+                let history_counts = Self::soa_counts(cell_states, *history_limit);
+                let dominant_type: CellType = new_counts
+                    .iter()
+                    .max_by_key(|entry| entry.1)
+                    .map(|(spur, _)| CellType(*spur))
+                    .unwrap_or(CellType::inactive());
+                Some(Self {
+                    width: *width,
+                    history_limit: *history_limit,
+                    ages,
+                    cells,
+                    next_cells,
+                    history_data,
+                    history_heads,
+                    history_counts,
+                    step: *step,
+                    rule: rule.clone(),
+                    counts_current: new_counts,
+                    peak_counts: new_peak_counts,
+                    inactive: CellType::inactive(),
+                    dominant_type,
+                })
             }
             _ => None,
         }
@@ -91,24 +131,165 @@ impl Grid1D {
 }
 
 impl Grid2D {
-    /// Build a Grid2D from a matching GridState variant.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
-            GridState::D2 { width, height, history_limit, cells, step, rule, counts_current, peak_counts } => {
-                let mut counts = counts_current.clone();
-                if counts.is_empty() {
-                    for c in cells { *counts.entry(c.current.0.clone()).or_insert(0) += 1; }
+            GridState::D2 {
+                width,
+                height,
+                history_limit,
+                cell_states,
+                step,
+                rule,
+                counts_current,
+                peak_counts,
+                model,
+            } => {
+                let (new_counts, new_peak_counts) =
+                    convert_map_string_to_spur(cell_states, counts_current, peak_counts);
+                let next_cells: Vec<CellType> = vec![CellType::inactive(); cell_states.len()];
+                let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
+                let ages: Vec<u32> = cell_states.iter().map(|c| c.age_in_state).collect();
+                let history_data = Grid1D::soa_history(cell_states, *history_limit);
+                let history_heads = Grid1D::soa_heads(cell_states, *history_limit);
+                let history_counts = Grid1D::soa_counts(cell_states, *history_limit);
+                let dominant_type: CellType = counts_current
+                    .iter()
+                    .max_by_key(|entry| entry.1)
+                    .map(|(k, _v)| CellType::from(k.as_str()))
+                    .unwrap_or(CellType::inactive());
+                let mut grid = Self {
+                    width: *width,
+                    height: *height,
+                    history_limit: *history_limit,
+                    ages,
+                    cells,
+                    next_cells,
+                    history_data,
+                    history_heads,
+                    history_counts,
+                    step: *step,
+                    rule: rule.clone(),
+                    counts_current: new_counts,
+                    peak_counts: new_peak_counts,
+                    inactive: CellType::inactive(),
+                    dominant_type,
+                    model: None,
+                };
+                if let Some(model) = model {
+                    // A model that fails validation against its own snapshot is
+                    // a malformed state; treat it like a dimension mismatch.
+                    grid.attach_model(model.clone()).ok()?;
                 }
-                let mut peaks = peak_counts.clone();
-                if peaks.is_empty() { peaks = counts.clone(); }
-                Some(Self { width: *width, height: *height, history_limit: *history_limit, cells: cells.clone(), step: *step, rule: rule.clone(), counts_current: counts, peak_counts: peaks })
+                Some(grid)
             }
             _ => None,
         }
     }
 }
 
-/// Back-compat helper kept for examples.
-///
-/// Prefer `GridState::from_grid2d(&g).to_json_pretty()`.
-pub fn grid2d_to_json(g: &Grid2D) -> String { GridState::from_grid2d(g).to_json_pretty() }
+pub fn grid2d_to_json(g: &Grid2D) -> String {
+    GridState::from_grid2d(g).to_json_pretty()
+}
+
+fn convert_map_string_to_spur(
+    cells: &Vec<CellState>,
+    counts_current: &HashMap<String, u64>,
+    peak_counts: &HashMap<String, u64>,
+) -> (HashMap<Spur, u64>, HashMap<Spur, u64>) {
+    let mut new_counts: HashMap<Spur, u64> = HashMap::new();
+    let mut new_peak_counts: HashMap<Spur, u64> = HashMap::new();
+    if counts_current.is_empty() {
+        for c in cells {
+            *new_counts.entry(c.current.0).or_insert(0) += 1;
+        }
+    } else {
+        for (k, v) in counts_current.iter() {
+            new_counts.insert(interner().get_or_intern(k), *v);
+        }
+    }
+    if peak_counts.is_empty() {
+        new_peak_counts = new_counts.clone();
+    } else {
+        for (k, v) in peak_counts.iter() {
+            new_peak_counts.insert(interner().get_or_intern(k), *v);
+        }
+    }
+    (new_counts, new_peak_counts)
+}
+
+fn convert_map_spur_to_string(
+    counts_current: &HashMap<Spur, u64>,
+    peak_counts: &HashMap<Spur, u64>,
+) -> (HashMap<String, u64>, HashMap<String, u64>) {
+    let mut new_counts: HashMap<String, u64> = HashMap::new();
+    let mut new_peak_counts: HashMap<String, u64> = HashMap::new();
+    for (k, v) in counts_current.iter() {
+        new_counts.insert(interner().resolve(k).to_string(), *v);
+    }
+    for (k, v) in peak_counts.iter() {
+        new_peak_counts.insert(interner().resolve(k).to_string(), *v);
+    }
+    (new_counts, new_peak_counts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_state_rebuilds_counts_when_serialized_maps_are_empty() {
+        let a = CellType::from("A");
+        let rule = Rule1D { subrules: vec![] };
+        let mut g = Grid1D::new(3, 2, vec![a.clone(), a.clone(), CellType::inactive()], rule);
+        g.counts_current.clear();
+        g.peak_counts.clear();
+
+        let state = GridState::from_grid1d(&g);
+        let restored = Grid1D::from_state(&state).expect("restore 1D grid");
+        assert_eq!(restored.counts_current.get(&a.0), Some(&2));
+        assert_eq!(restored.peak_counts.get(&a.0), Some(&2));
+    }
+
+    #[test]
+    fn from_state_rebuilds_counts_when_serialized_maps_are_empty_2d() {
+        let a = CellType::from("A");
+        let rule = Rule2D { subrules: vec![] };
+        let mut g = Grid2D::new(
+            2,
+            2,
+            2,
+            vec![
+                a.clone(),
+                a.clone(),
+                CellType::inactive(),
+                CellType::inactive(),
+            ],
+            rule,
+        );
+        g.counts_current.clear();
+        g.peak_counts.clear();
+
+        let state = GridState::from_grid2d(&g);
+        let restored = Grid2D::from_state(&state).expect("restore 2D grid");
+        assert_eq!(restored.counts_current.get(&a.0), Some(&2));
+        assert_eq!(restored.peak_counts.get(&a.0), Some(&2));
+    }
+
+    #[test]
+    fn json_helpers_and_mismatched_from_state_paths_are_covered() {
+        let a = CellType::from("A");
+        let g2 = Grid2D::new(1, 1, 0, vec![a], Rule2D { subrules: vec![] });
+        let pretty = GridState::from_grid2d(&g2).to_json_pretty();
+        assert!(pretty.contains("D2"));
+
+        let via_fn = grid2d_to_json(&g2);
+        assert!(via_fn.contains("D2"));
+
+        let s2 = GridState::from_grid2d(&g2);
+        assert!(Grid1D::from_state(&s2).is_none());
+
+        let g1 = Grid1D::new(1, 0, vec![a], Rule1D { subrules: vec![] });
+        let s1 = GridState::from_grid1d(&g1);
+        assert!(Grid2D::from_state(&s1).is_none());
+    }
+}
