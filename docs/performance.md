@@ -1043,11 +1043,17 @@ suspicion, then got measured after the fact:
   clock-free `run_to_batch` that advances in `RUN_TO_CHUNK`-sized (32-step)
   chunks, Pause cancels a run in progress, and `start_run_to` restores
   whatever play state was active before the button was pressed.
-- **§2.3** — the per-step work behind a burst is now split into
-  `advance_grid` (steps and records a statistics sample) and
-  `step_once_untracked` (steps only), so `tick_play` samples statistics
-  once per burst frame instead of once per simulation step, and the play
-  timer refresh is hoisted to once per chunk instead of once per step.
+- **§2.3** — the per-step work is now split so a burst can skip the parts
+  it doesn't need: `advance_grid` is the step itself (1D history push,
+  `Grid1D::step` / `Grid2D::step`, `timed_steps`) with no clock read and no
+  statistics sample; `step_once_untracked` adds the play-timer refresh on
+  top of that; and `step_once` (the Step button, paced play) adds
+  `stats_record_step` on top of `step_once_untracked`, one sample per step.
+  `run_to_batch` loops `advance_grid` directly, and `tick_play`'s burst
+  branch calls `stats_record_step` once after its whole chunk loop
+  finishes — so a burst now samples statistics once per frame instead of
+  once per simulation step, with the play-timer refresh also hoisted to
+  once per chunk instead of once per step.
 
 **Painter (§2.1), measured with `paint_bench`:** a synthetic 2000-cell row
 (3 foreground types plus background, laid out as one long run, a few
@@ -1066,22 +1072,26 @@ threshold, so §2.1 is filed as a real win, not a cleanup: comparing
 `CellType` instead of resolving and comparing `Color32` cut paint time by
 roughly 2.6x. The number held steady across Phase 2 — §2.2 and §2.3 don't
 touch `emit_row`, and re-running `paint_bench` after all of Phase 2 landed
-gave the same ~1.18–1.19 ms/frame as right after §2.1 alone.
+gave ~1.18–1.19 ms/frame, at or just below the after-§2.1 range of
+~1.19–1.22 ms/frame measured right after that change landed — no further
+change expected or seen, since §2.2 and §2.3 don't touch the paint path.
 
 **Run-to (§2.2):** the number that matters is wall-clock time for "Run to
 +100000" from the toolbar on `configs/2d_large_moore_256.json`, taken by
-hand with a stopwatch. Before: predicted ~1000 steps/s (the old fixed
-`RUN_TO_STEPS_PER_FRAME = 100` at the old fixed `refresh_ms` default of
-100, i.e. ~100 s / ~1.7 min for the full run) — a prediction, never
-measured by hand, since the GUI could not be launched before or after the
-change in this environment. After: time-budgeted, to be measured by hand
-on a GL machine.
+hand with a stopwatch. Before: predicted ~1000 steps/s, from the old
+`RUN_TO_STEPS_PER_FRAME` constant (100 steps per frame, now removed) at the
+old fixed `refresh_ms` default of 100, i.e. ~100 s / ~1.7 min for the full
+run — a prediction, never measured by hand, since the GUI could not be
+launched before or after the change in this environment. After:
+time-budgeted, to be measured by hand on a GL machine.
 
 Statistics sampling (§2.3) has no standalone stopwatch number of its own —
 it changes how many chart samples a burst appends, not how fast the burst
 runs — so it is covered by the Run-to number above and by the `cella`
 binary's existing unit tests on `advance_grid` / `step_once_untracked` /
 `run_to_batch` (see `src/gui/sim.rs`), which assert sample counts directly.
+
+### Net effect (four kept rounds)
 
 Comparable-40-entry suite total (sum of avgs):
 **800.01 → 785.46 → 764.34 → 580.67 ms** (−27 %), and the six wildfire
