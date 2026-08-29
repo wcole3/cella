@@ -434,12 +434,16 @@ Commits `6d7e9b3..ad3654d`.
   tests cover this file and the mirroring behavior in `src/gui/sim.rs`'s test
   module. Grepping `src/gui/panels/model.rs` for `wildfire`/`Wildfire` finds
   nothing, confirming the file stays model-agnostic.
-- **Acceptance tests**: the out-of-tree `TestModel` and the in-crate
-  `ConstModel` in `cella_lib/tests/external_model.rs` each grew a `params()`
-  implementation covering one parameter per `ParamKind`, including a
-  deliberately-narrower `attach` threshold than the descriptor's range so the
-  rollback branch (value accepted by step 3, then rejected by `attach`) is
-  exercised and covered.
+- **Acceptance tests**: the out-of-tree `TestModel` in
+  `cella_lib/tests/external_model.rs` grew a `params()` implementation
+  covering one parameter per `ParamKind` (`rate`: `Float`, `steps`: `Int`,
+  `enabled`: `Bool`, `mode`: `Choice`, plus a read-only `Int`); the in-crate
+  `ConstModel` in `cella_lib/src/external.rs`'s own test module grew one
+  editable `Float` (`threshold`) and a read-only `Choice` (`out_name`). Both
+  models' `attach` rejects a value inside its descriptor's range but above a
+  narrower threshold (`TestModel`'s `rate > 0.9`, `ConstModel`'s
+  `threshold > 5.0`), which is what makes the rollback branch (value
+  accepted by step 3, then rejected by `attach`) reachable and covered.
 - **Bit-identity result**: re-running `wildfire_validate` for all six
   validation scenarios (`Bear_2020`, `Brattain_2020`, `Buck_2017`,
   `Chimney_2016`, `Ferguson_2018`, `Pier_2017`) against the Task 1 baseline
