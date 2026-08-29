@@ -216,6 +216,7 @@ mod tests {
 
     const RED: Color32 = Color32::RED;
     const BLUE: Color32 = Color32::BLUE;
+    const GREEN: Color32 = Color32::GREEN;
     const BG: Color32 = Color32::BLACK;
 
     /// Run `emit_row` over `cells` and return the (x, width) of each emitted rect
@@ -247,6 +248,102 @@ mod tests {
                 other => panic!("expected a rect, got {other:?}"),
             })
             .collect()
+    }
+
+    /// Build the synthetic row used by `paint_bench`: three foreground types
+    /// (`A`, `B`, `C`) plus background, laid out as one long stretch, three
+    /// single-cell islands, and background gaps — a stand-in for the strongly
+    /// spatially correlated rows a real cellular-automaton grid produces.
+    /// Repeating this 200-cell unit 10 times gives a 2000-cell row.
+    ///
+    /// Returns the row and the number of rectangles `emit_row` should paint
+    /// for it, computed from the same segment list that builds the row
+    /// (background segments are never painted, so only the other three count
+    /// per unit).
+    fn synthetic_paint_row() -> (Vec<CellType>, usize) {
+        const UNITS: usize = 10;
+        // (type tag, run length); "_" is background and is never painted.
+        const SEGMENTS: [(&str, usize); 9] = [
+            ("_", 80),
+            ("A", 60),
+            ("_", 10),
+            ("B", 1),
+            ("_", 10),
+            ("B", 1),
+            ("_", 10),
+            ("C", 1),
+            ("_", 27),
+        ];
+
+        let mut row = Vec::with_capacity(2000);
+        let mut expected_rects = 0usize;
+        for _ in 0..UNITS {
+            for &(tag, len) in &SEGMENTS {
+                if tag != "_" {
+                    expected_rects += 1;
+                }
+                row.extend(std::iter::repeat_n(CellType::from(tag), len));
+            }
+        }
+        assert_eq!(row.len(), 2000, "synthetic row layout must total 2000 cells");
+        (row, expected_rects)
+    }
+
+    /// Timing baseline for `emit_row` (Phase 2, §2.4 / §8 E10 in
+    /// `docs/performance.md`). Not a correctness test on its own — the
+    /// rect-count assertion below is what guards behaviour; the printed
+    /// number is the "before" figure later phases compare against.
+    ///
+    /// Run with:
+    /// `cargo test --release --package cella --bin cella -- --ignored paint_bench --nocapture`
+    #[test]
+    #[ignore]
+    fn paint_bench() {
+        const ROWS_PER_FRAME: usize = 900;
+        const WARMUP_FRAMES: usize = 2;
+        const TIMED_FRAMES: usize = 20;
+
+        let (row, expected_rects_per_row) = synthetic_paint_row();
+        let expected_rects_per_frame = expected_rects_per_row * ROWS_PER_FRAME;
+
+        let mut shapes = Vec::new();
+        let mut min_ms = f64::INFINITY;
+
+        for frame in 0..(WARMUP_FRAMES + TIMED_FRAMES) {
+            // Cleared every frame so the buffer does not grow, matching how
+            // `paint_grid_viewport` reuses `self.view.shape_buf`.
+            shapes.clear();
+            let start = std::time::Instant::now();
+            {
+                let mut painter = RowPainter {
+                    shapes: &mut shapes,
+                    color_cache: Vec::new(),
+                    resolve: |ty: CellType| match ty.as_str() {
+                        "A" => RED,
+                        "B" => BLUE,
+                        "C" => GREEN,
+                        _ => BG,
+                    },
+                    origin: egui::pos2(0.0, 0.0),
+                    scale: 1.0,
+                    bg: BG,
+                };
+                for row_y in 0..ROWS_PER_FRAME {
+                    painter.emit_row(row_y, 0..row.len(), |x| row[x]);
+                }
+            }
+            if frame >= WARMUP_FRAMES {
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                min_ms = min_ms.min(elapsed_ms);
+            }
+            assert_eq!(
+                shapes.len(),
+                expected_rects_per_frame,
+                "frame {frame}: emitted rect count drifted from the synthetic row's expected count"
+            );
+        }
+
+        println!("paint_bench: {min_ms:.3} ms/frame (min of {TIMED_FRAMES})");
     }
 
     #[test]
