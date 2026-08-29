@@ -18,6 +18,7 @@
 //! With `--gui` it opens an egui window for visual simulation, rule editing,
 //! and GIF export.
 
+use std::path::PathBuf;
 mod demos;
 mod gui;
 use std::io::{self, Write};
@@ -62,6 +63,10 @@ fn menu() {
 
 /// Entry point: dispatches to GUI (`--gui`) or CLI menu.
 fn main() {
+    // Route library log lines (e.g. `rfd` explaining why no file dialog could
+    // open) to stderr. `RUST_LOG=debug` shows more; the default shows warnings
+    // and errors only.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     // Choose GUI or CLI via args: pass --gui to launch GUI
     let args: Vec<String> = std::env::args().collect();
     if args
@@ -70,12 +75,30 @@ fn main() {
     {
         // Parse optional GUI size arguments
         let size = parse_gui_size(&args);
-        if let Err(e) = gui::run_gui(size) {
+        let config = parse_gui_config(&args);
+        if let Err(e) = gui::run_gui(size, config) {
             eprintln!("GUI error: {}", e);
         }
         return;
     }
     menu();
+}
+
+/// Parse an optional `--config=PATH` / `--config PATH`: a config file to open
+/// at startup instead of the Life demo. Useful where no file dialog can open.
+fn parse_gui_config(args: &[String]) -> Option<PathBuf> {
+    let mut i = 0usize;
+    while i < args.len() {
+        if let Some(rest) = args[i].strip_prefix("--config=") {
+            if !rest.is_empty() {
+                return Some(PathBuf::from(rest));
+            }
+        } else if args[i] == "--config" {
+            return args.get(i + 1).map(PathBuf::from);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Parse optional GUI window size from command-line arguments.
@@ -163,5 +186,33 @@ fn parse_wh(s: &str) -> Option<(f32, f32)> {
         Some((w, h))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_gui_config_reads_the_equals_form() {
+        let got = parse_gui_config(&args(&["cella", "--gui", "--config=configs/life.json"]));
+        assert_eq!(got, Some(PathBuf::from("configs/life.json")));
+    }
+
+    #[test]
+    fn parse_gui_config_reads_the_space_form() {
+        let got = parse_gui_config(&args(&["cella", "--config", "configs/life.json", "--gui"]));
+        assert_eq!(got, Some(PathBuf::from("configs/life.json")));
+    }
+
+    #[test]
+    fn parse_gui_config_is_none_when_absent_or_dangling() {
+        assert_eq!(parse_gui_config(&args(&["cella", "--gui"])), None);
+        assert_eq!(parse_gui_config(&args(&["cella", "--gui", "--config"])), None);
     }
 }

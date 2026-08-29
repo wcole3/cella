@@ -4,6 +4,7 @@
 //! loading a JSON config from disk, resizing the grid, and resetting back to
 //! the state a scenario started in.
 
+use std::path::Path;
 use std::time::Duration;
 
 use super::app::{CellaApp, Dim};
@@ -186,15 +187,51 @@ impl CellaApp {
             self.refresh_rule_editor_from_current();
         }
     }
+    /// "Load Config JSON..." button: ask for a file, then load it.
     pub(in crate::gui) fn load_config_dialog(&mut self) {
-        if let Some(path) = FileDialog::new().add_filter("json", &["json"]).pick_file() {
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("config.json")
-                .to_string();
-            match config::CellaConfig::from_file(&path) {
-                Ok(cfg) => match cfg {
+        match FileDialog::new().add_filter("json", &["json"]).pick_file() {
+            Some(path) => self.load_config_from_path(&path),
+            None => self.report_no_file_chosen("config"),
+        }
+    }
+
+    /// Explain an empty file-dialog result.
+    ///
+    /// `rfd` answers `None` both when the user presses Cancel and when no dialog
+    /// could be shown at all — on Linux it needs `xdg-desktop-portal` reachable
+    /// over the D-Bus session bus, or the `zenity` program as a fallback; a bare
+    /// WSL has neither. Cancel needs no message, but "nothing happened" does, so
+    /// say what to do. `rfd` logs the underlying error at ERROR level (see
+    /// `main` for where the logger is installed).
+    pub(in crate::gui) fn report_no_file_chosen(&mut self, what: &str) {
+        self.set_status(format!(
+            "No {what} chosen. If no dialog appeared, this desktop has no file-dialog \
+             service: start with --config <path>, or see docs/app.md (Troubleshooting)."
+        ));
+    }
+
+    /// What the window shows at startup: the Life demo, with the given config
+    /// file loaded on top of it when there is one. Loading the demo first means
+    /// a bad `--config` path still leaves a working grid on screen, with the
+    /// error in the status bar.
+    pub(in crate::gui) fn apply_startup_config(&mut self, path: Option<&Path>) {
+        self.load_demo_life();
+        if let Some(p) = path {
+            self.load_config_from_path(p);
+        }
+    }
+
+    /// Load a config file, replacing the grid, the Reset snapshot, and the editor
+    /// state. Reports success or failure in the status bar.
+    pub(in crate::gui) fn load_config_from_path(&mut self, path: &Path) {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("config.json")
+            .to_string();
+        match config::CellaConfig::from_file(path) {
+            Ok(cfg) => {
+                match cfg {
                     config::CellaConfig::D1(_) => {
                         if let Some(g) = cfg.build_grid1d() {
                             self.scenario.dim = Some(Dim::D1);
@@ -233,18 +270,18 @@ impl CellaApp {
                             self.stats_clear_and_init();
                         }
                     }
-                },
-                Err(e) => {
-                    let msg = format!("Failed to load config: {}", e);
-                    eprintln!("{}", msg);
-                    self.set_status(msg);
                 }
             }
-            // After loading any config, sync the rule editor
-            self.refresh_rule_editor_from_current();
+            Err(e) => {
+                let msg = format!("Failed to load config: {}", e);
+                eprintln!("{}", msg);
+                self.set_status(msg);
+            }
         }
+        // After loading any config, sync the rule editor
+        self.refresh_rule_editor_from_current();
     }
-    /// Reset the current grid to its initial snapshot captured on load.
+
     pub(in crate::gui) fn reset_to_initial(&mut self) {
         // Cancel first: cancelling restores whatever play state a pending
         // "Run to +N" interrupted, and Reset always stops.
@@ -280,5 +317,76 @@ impl CellaApp {
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
         self.set_status("Reset to initial state");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::sim::tests::test_app;
+    use std::path::Path;
+
+    fn status(app: &CellaApp) -> String {
+        app.chrome.status_message.clone().unwrap_or_default()
+    }
+
+    #[test]
+    fn load_config_from_path_loads_a_2d_config_and_names_it_in_the_status() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/life.json"));
+        assert!(matches!(app.scenario.dim, Some(Dim::D2)));
+        assert!(app.scenario.d2.is_some());
+        assert!(
+            status(&app).contains("life.json"),
+            "status should name the file, got {:?}",
+            status(&app)
+        );
+    }
+
+    #[test]
+    fn load_config_from_path_reports_a_missing_file_in_the_status() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/does_not_exist.json"));
+        assert!(app.scenario.dim.is_none(), "nothing should be loaded");
+        assert!(
+            status(&app).starts_with("Failed to load config"),
+            "got {:?}",
+            status(&app)
+        );
+    }
+
+    #[test]
+    fn an_empty_dialog_result_explains_itself_in_the_status() {
+        let mut app = test_app();
+        app.report_no_file_chosen("config");
+        let msg = status(&app);
+        assert!(msg.starts_with("No config chosen"), "got {msg:?}");
+        assert!(msg.contains("--config"), "should point at the workaround, got {msg:?}");
+        assert!(msg.contains("docs/app.md"), "should point at the docs, got {msg:?}");
+    }
+
+    #[test]
+    fn apply_startup_config_loads_the_given_file_instead_of_the_demo() {
+        let mut app = test_app();
+        app.apply_startup_config(Some(Path::new("configs/1d_rule30_center.json")));
+        assert!(matches!(app.scenario.dim, Some(Dim::D1)));
+        assert!(status(&app).contains("1d_rule30_center.json"));
+    }
+
+    #[test]
+    fn apply_startup_config_keeps_the_life_demo_under_a_bad_path_and_says_why() {
+        let mut app = test_app();
+        app.apply_startup_config(Some(Path::new("configs/does_not_exist.json")));
+        assert!(matches!(app.scenario.dim, Some(Dim::D2)), "Life demo should be on screen");
+        assert_eq!((app.inputs.grid_width, app.inputs.grid_height), (50, 30));
+        assert!(status(&app).starts_with("Failed to load config"), "got {:?}", status(&app));
+    }
+
+    #[test]
+    fn apply_startup_config_falls_back_to_the_life_demo_when_none() {
+        let mut app = test_app();
+        app.apply_startup_config(None);
+        assert!(matches!(app.scenario.dim, Some(Dim::D2)));
+        assert_eq!((app.inputs.grid_width, app.inputs.grid_height), (50, 30));
     }
 }

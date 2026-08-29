@@ -51,6 +51,41 @@ You can specify the initial window size using command-line arguments:
 - `--width=1920 --height=1080`
 - If only one dimension is provided, the other defaults to a 16:9 ratio.
 
+#### Opening a config at startup
+```bash
+cargo run --release -- --gui --config configs/2d_wildfire_demo.json
+```
+`--config PATH` (or `--config=PATH`) opens that file instead of the Life demo.
+It is the same as pressing "Load Config JSON..." and picking the file — handy
+on machines where no file dialog can open (see Troubleshooting below).
+
+#### Troubleshooting: "Load Config JSON..." does nothing
+The app does not draw its own file dialog. It asks the desktop for one, through
+the `rfd` crate. On Linux that means: talk to `xdg-desktop-portal` over the
+D-Bus *session* bus, and if that fails, run the `zenity` program. When neither
+is available, `rfd` gives up in a few milliseconds and reports "no file chosen"
+— exactly what pressing Cancel reports — so the button looks dead. The status
+bar now says so ("No config chosen. If no dialog appeared…"), and the reason is
+printed to the terminal, e.g.:
+
+```
+ERROR rfd::backend::xdg_desktop_portal::portal::libdbus] Failed to connect to session bus: ... /run/user/1000/bus: No such file or directory
+WARN  rfd::backend::xdg_desktop_portal] Using zenity fallback
+ERROR rfd::backend::xdg_desktop_portal] Failed to pick file with zenity: No such file or directory
+```
+
+This is typical of WSL without a user session. Any one of these fixes it:
+- **Install `zenity`** (`sudo apt install zenity`) — the simplest; `rfd` uses
+  it whenever the portal is unreachable.
+- **Turn on systemd in WSL** so the session bus and the portal exist: add
+  `[boot]` / `systemd=true` to `/etc/wsl.conf`, then `wsl --shutdown` from
+  Windows and reopen. You also need `xdg-desktop-portal-gtk` installed.
+- **Skip the dialog**: launch with `--config PATH` as above.
+
+Save Final State and Export GIF use the same dialog and fail the same way;
+their status messages say "No save path chosen" / "No GIF path chosen". To
+see more detail from `rfd`, run with `RUST_LOG=rfd=debug`.
+
 ### Code Layout (Module Map)
 
 The GUI source lives in `src/gui/`. Each file owns one concern, so you can

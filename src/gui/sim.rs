@@ -379,7 +379,7 @@ impl CellaApp {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::gui) mod tests {
     use super::*;
     use crate::gui::state::{
         Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
@@ -392,7 +392,7 @@ mod tests {
     /// The production constructor needs an `eframe::CreationContext`, which only
     /// exists once a window is open, so the struct is built field by field here
     /// and a demo is loaded on top of it exactly as `CellaApp::new` does.
-    fn test_app() -> CellaApp {
+    pub(in crate::gui) fn test_app() -> CellaApp {
         let ctx = egui::Context::default();
         CellaApp {
             scenario: Scenario::default(),

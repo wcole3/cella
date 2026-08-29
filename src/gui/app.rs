@@ -8,6 +8,7 @@ use super::state::{
     Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
     ViewSettings,
 };
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -28,8 +29,9 @@ pub(in crate::gui) enum DrawMode {
     Paint,
 }
 
-/// Run the native GUI application.
-pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
+/// Run the native GUI application. `config` is an optional config file to
+/// show instead of the Life demo (the `--config` command-line option).
+pub fn run_gui(size: Option<(f32, f32)>, config: Option<PathBuf>) -> eframe::Result<()> {
     // Configure the initial window via NativeOptions/ViewportBuilder.
     // If size is provided, use it; otherwise default to a 16:9 reasonable size.
     let (mut w, mut h) = if let Some((w, h)) = size {
@@ -58,7 +60,7 @@ pub fn run_gui(size: Option<(f32, f32)>) -> eframe::Result<()> {
     eframe::run_native(
         "Cella GUI",
         options,
-        Box::new(|cc| Ok(Box::new(CellaApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(CellaApp::new(cc, config.as_deref())))),
     )
 }
 
@@ -92,7 +94,7 @@ impl CellaApp {
         self.chrome.status_message = Some(msg.into());
     }
 
-    pub(in crate::gui) fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub(in crate::gui) fn new(cc: &eframe::CreationContext<'_>, config: Option<&Path>) -> Self {
         let mut app = Self {
             scenario: Scenario::default(),
             playback: Playback::default(),
@@ -104,8 +106,7 @@ impl CellaApp {
             chrome: Chrome::new(&cc.egui_ctx),
             inputs: Inputs::default(),
         };
-        // Start with a default 2D Life-like demo
-        app.load_demo_life();
+        app.apply_startup_config(config);
         app
     }
 

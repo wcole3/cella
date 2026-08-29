@@ -283,11 +283,15 @@ impl CellaApp {
             Some(Dim::D2) => self.scenario.d2.as_ref().map(GridState::from_grid2d),
             None => None,
         };
-        if let Some(st) = state
-            && let Some(path) = FileDialog::new().set_file_name("snapshot.json").save_file()
-        {
-            let json = serde_json::to_string_pretty(&st).unwrap();
-            let _ = std::fs::write(path, json);
+        let Some(st) = state else {
+            return;
+        };
+        match FileDialog::new().set_file_name("snapshot.json").save_file() {
+            Some(path) => {
+                let json = serde_json::to_string_pretty(&st).unwrap();
+                let _ = std::fs::write(path, json);
+            }
+            None => self.report_no_file_chosen("save path"),
         }
     }
     /// Export an animated GIF using the current color settings (including Inactive).
@@ -297,10 +301,14 @@ impl CellaApp {
         if self.export.join.is_some() {
             return;
         }
-        if let Some(path) = FileDialog::new()
+        let Some(path) = FileDialog::new()
             .add_filter("gif", &["gif"])
             .set_file_name("cella.gif")
             .save_file()
+        else {
+            self.report_no_file_chosen("GIF path");
+            return;
+        };
         {
             let steps = self.export.steps.max(1) as usize;
             let fps = self.export.fps.max(1);
