@@ -238,6 +238,58 @@ use crate::rules::{TypeCounter, apply_counts};
 use crate::threads::{chunks_for_work, pool};
 use rayon::prelude::*;
 
+/// Check a value against a parameter's declared kind and bounds.
+///
+/// This is the generic validation the engine runs before any model code sees
+/// the value, which is why a model author writes no range checks at all: the
+/// value must be the variant the kind asks for, a `Float` must be a real
+/// number inside `[min, max]`, an `Int` must be inside `[min, max]`, and a
+/// `Choice` must be one of the declared options.
+///
+/// A rejected value comes back as [`ModelError::InvalidParam`] saying what was
+/// wrong with it. The message does not name the parameter; callers add that
+/// with [`with_param_key`].
+fn check_value_against_kind(kind: &ParamKind, value: &ParamValue) -> Result<(), ModelError> {
+    let reject = |msg: String| Err(ModelError::InvalidParam(msg));
+    match (kind, value) {
+        (ParamKind::Float { min, max, .. }, ParamValue::Float(v)) => {
+            if v.is_nan() {
+                return reject("value is not a number".into());
+            }
+            if v < min || v > max {
+                return reject(format!("{v} is outside the allowed range {min} to {max}"));
+            }
+            Ok(())
+        }
+        (ParamKind::Int { min, max }, ParamValue::Int(v)) => {
+            if v < min || v > max {
+                return reject(format!("{v} is outside the allowed range {min} to {max}"));
+            }
+            Ok(())
+        }
+        (ParamKind::Bool, ParamValue::Bool(_)) => Ok(()),
+        (ParamKind::Choice { options }, ParamValue::Choice(v)) => {
+            if options.iter().any(|o| o == v) {
+                Ok(())
+            } else {
+                reject(format!("'{v}' is not one of: {}", options.join(", ")))
+            }
+        }
+        // Every other pairing is a value of the wrong shape for this control.
+        _ => reject(format!("expected {kind:?}, got {value:?}")),
+    }
+}
+
+/// Put the parameter key in front of a validation message, so an error shown
+/// in a status bar says which control was refused and why. Errors that are not
+/// about a parameter value pass through unchanged.
+fn with_param_key(key: &str, err: ModelError) -> ModelError {
+    match err {
+        ModelError::InvalidParam(why) => ModelError::InvalidParam(format!("'{key}': {why}")),
+        other => other,
+    }
+}
+
 impl Grid2D {
     /// Attach an external model, validating it against this grid and building
     /// its derived state. Replaces any previously attached model.
@@ -257,6 +309,79 @@ impl Grid2D {
     /// parameters between steps.
     pub fn model_mut(&mut self) -> Option<&mut (dyn ExternalModel + 'static)> {
         self.model.as_deref_mut()
+    }
+
+    /// Set one parameter on the attached model, re-validating through
+    /// [`ExternalModel::attach`].
+    ///
+    /// The engine does the generic work so a model does not have to. The value
+    /// is checked against the parameter's own [`ParamDesc`] — its kind and its
+    /// bounds — before the model is touched. Only if the descriptor says
+    /// [`ParamDesc::reattach`] does `attach` run afterwards, rebuilding any
+    /// derived state and applying whatever deeper checks the model makes.
+    ///
+    /// On a failed re-attach the previous value is written back and `attach` is
+    /// run again, so a rejected edit cannot leave the model in a state `attach`
+    /// would not accept.
+    ///
+    /// The call fails with [`ModelError::InvalidParam`] when no model is
+    /// attached, the key is unknown, the parameter is read-only, or the value
+    /// does not fit the parameter's [`ParamKind`]. An error from the model's
+    /// own [`ExternalModel::set_param`], or from a rejected `attach`, is
+    /// returned unchanged.
+    pub fn set_model_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
+        // Borrow the fields separately so a read-only view of the grid can be
+        // built while the model is mutably borrowed.
+        let Grid2D {
+            width,
+            height,
+            cells,
+            inactive,
+            model,
+            ..
+        } = self;
+        let model = model.as_deref_mut().ok_or_else(|| {
+            ModelError::InvalidParam(format!("no model is attached, cannot set '{key}'"))
+        })?;
+
+        // The model's own description of the parameter decides everything
+        // below: whether it may be written, what values are legal, and whether
+        // derived state has to be rebuilt.
+        let desc = model
+            .params()
+            .into_iter()
+            .find(|d| d.key == key)
+            .ok_or_else(|| ModelError::InvalidParam(format!("unknown parameter '{key}'")))?;
+        if desc.read_only {
+            return Err(ModelError::InvalidParam(format!(
+                "parameter '{key}' is read-only"
+            )));
+        }
+        check_value_against_kind(&desc.kind, &value).map_err(|e| with_param_key(key, e))?;
+
+        let prev = model.get_param(key);
+        model.set_param(key, value)?;
+
+        if desc.reattach {
+            let view = GridView {
+                width: *width,
+                height: *height,
+                cells: cells.as_slice(),
+                inactive: *inactive,
+            };
+            if let Err(e) = model.attach(&view) {
+                // Roll back: the old value is one the model already accepted,
+                // so both calls here are expected to succeed and their results
+                // carry no new information — the original error is what the
+                // caller needs.
+                if let Some(prev) = prev {
+                    let _ = model.set_param(key, prev);
+                }
+                let _ = model.attach(&view);
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     /// One step driven by the attached [`ExternalModel`]. Mirrors the subrule
@@ -435,6 +560,11 @@ mod tests {
         pub event_target: Option<usize>,
         #[serde(skip)]
         pub attached: bool,
+        /// Tunable parameter used to exercise `Grid2D::set_model_param`. Its
+        /// descriptor allows `0.0..=10.0`, but `attach` refuses anything above
+        /// `5.0` — a range deliberately wider than `attach` accepts, so the
+        /// rollback path is reachable.
+        pub threshold: f64,
     }
 
     #[typetag::serde(name = "test_const")]
@@ -443,8 +573,64 @@ mod tests {
             if view.width == 0 {
                 return Err(ModelError::InvalidParam("zero width".into()));
             }
+            if self.threshold > 5.0 {
+                return Err(ModelError::InvalidParam(
+                    "threshold above 5 is rejected by attach".into(),
+                ));
+            }
             self.attached = true;
             Ok(())
+        }
+
+        fn params(&self) -> Vec<ParamDesc> {
+            vec![
+                ParamDesc {
+                    key: "threshold".into(),
+                    label: "Threshold".into(),
+                    group: None,
+                    help: None,
+                    unit: None,
+                    kind: ParamKind::Float {
+                        min: 0.0,
+                        max: 10.0,
+                        step: 0.5,
+                    },
+                    reattach: true,
+                    read_only: false,
+                },
+                ParamDesc {
+                    key: "out_name".into(),
+                    label: "Output type".into(),
+                    group: None,
+                    help: None,
+                    unit: None,
+                    kind: ParamKind::Choice {
+                        options: vec!["X".into(), "Y".into()],
+                    },
+                    reattach: false,
+                    read_only: true,
+                },
+            ]
+        }
+
+        fn get_param(&self, key: &str) -> Option<ParamValue> {
+            match key {
+                "threshold" => Some(ParamValue::Float(self.threshold)),
+                "out_name" => Some(ParamValue::Choice(self.out_name.clone())),
+                _ => None,
+            }
+        }
+
+        fn set_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
+            match (key, value) {
+                ("threshold", ParamValue::Float(v)) => {
+                    self.threshold = v;
+                    Ok(())
+                }
+                _ => Err(ModelError::InvalidParam(format!(
+                    "unknown parameter '{key}'"
+                ))),
+            }
         }
 
         fn step_chunk(&self, _ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
@@ -473,7 +659,63 @@ mod tests {
             out_name: out_name.into(),
             event_target,
             attached: false,
+            threshold: 1.0,
         }
+    }
+
+    /// A model that overrides nothing beyond the four required methods, so the
+    /// trait's default implementations are the ones under test.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub(crate) struct BareModel;
+
+    #[typetag::serde(name = "test_bare")]
+    impl ExternalModel for BareModel {
+        fn attach(&mut self, _view: &GridView<'_>) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+            next.fill(ctx.inactive);
+            Vec::new()
+        }
+
+        fn boxed_clone(&self) -> Box<dyn ExternalModel> {
+            Box::new(self.clone())
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    /// A 2x2 grid with a `ConstModel` attached, ready for parameter edits.
+    fn param_grid() -> crate::Grid2D {
+        use crate::{Grid2D, Rule2D};
+        let a = CellType::new("A");
+        let mut g = Grid2D::new(2, 2, 0, vec![a; 4], Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(const_model("X", None))).unwrap();
+        g
+    }
+
+    /// Whether `ConstModel::attach` has run since `clear_attached` last cleared
+    /// the flag — this is how the tests below see if a re-attach happened.
+    fn attached_flag(g: &mut crate::Grid2D) -> bool {
+        g.model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<ConstModel>()
+            .unwrap()
+            .attached
+    }
+
+    /// Clear the attach marker so the next check reports only new attaches.
+    fn clear_attached(g: &mut crate::Grid2D) {
+        g.model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<ConstModel>()
+            .unwrap()
+            .attached = false;
     }
 
     #[test]
@@ -546,7 +788,8 @@ mod tests {
 
     #[test]
     fn default_trait_methods() {
-        let mut m = const_model("Z", None);
+        use crate::{Grid2D, Rule2D};
+        let mut m = BareModel;
         assert_eq!(ExternalModel::work_per_cell(&m), 12);
         assert!(m.event_applies(
             CellType::new("A"),
@@ -557,7 +800,7 @@ mod tests {
         ));
         assert!(m.declared_types().is_empty());
         m.on_paint(0, CellType::new("A")); // no-op default
-        assert!(m.as_any_mut().downcast_mut::<ConstModel>().is_some());
+        assert!(m.as_any_mut().downcast_mut::<BareModel>().is_some());
         // A model with no overrides declares no parameters, ...
         assert!(m.params().is_empty());
         // ... reports no value for any key, ...
@@ -571,6 +814,23 @@ mod tests {
             err.to_string().contains("wind_speed"),
             "message names the key: {err}"
         );
+        // The same model still clones through the trait object, round-trips,
+        // and drives a grid.
+        let boxed: Box<dyn ExternalModel> = Box::new(m);
+        let boxed = boxed.clone();
+        let back: Box<dyn ExternalModel> =
+            serde_json::from_str(&serde_json::to_string(&boxed).unwrap()).unwrap();
+        assert_eq!(back.typetag_name(), "test_bare");
+        let mut g = Grid2D::new(
+            1,
+            1,
+            0,
+            vec![CellType::new("A")],
+            Rule2D { subrules: vec![] },
+        );
+        g.attach_model(back).unwrap();
+        g.step();
+        assert_eq!(g.cell_type(0), CellType::inactive());
     }
 
     #[test]
@@ -659,6 +919,193 @@ mod tests {
         assert_eq!(
             ModelError::NameCollision("Burning".into()).to_string(),
             "cell type name collision: Burning"
+        );
+    }
+
+    #[test]
+    fn check_value_against_kind_accepts_and_rejects() {
+        let float = ParamKind::Float {
+            min: 0.0,
+            max: 10.0,
+            step: 0.5,
+        };
+        // Inside the inclusive bounds, including both endpoints.
+        assert!(check_value_against_kind(&float, &ParamValue::Float(5.0)).is_ok());
+        assert!(check_value_against_kind(&float, &ParamValue::Float(0.0)).is_ok());
+        assert!(check_value_against_kind(&float, &ParamValue::Float(10.0)).is_ok());
+        let low = check_value_against_kind(&float, &ParamValue::Float(-0.5)).unwrap_err();
+        assert!(low.to_string().contains("-0.5"), "names the value: {low}");
+        let high = check_value_against_kind(&float, &ParamValue::Float(10.5)).unwrap_err();
+        assert!(high.to_string().contains("10.5"), "names the value: {high}");
+        let nan = check_value_against_kind(&float, &ParamValue::Float(f64::NAN)).unwrap_err();
+        assert!(nan.to_string().contains("not a number"), "{nan}");
+
+        let int = ParamKind::Int { min: 1, max: 4 };
+        assert!(check_value_against_kind(&int, &ParamValue::Int(1)).is_ok());
+        assert!(check_value_against_kind(&int, &ParamValue::Int(4)).is_ok());
+        assert!(check_value_against_kind(&int, &ParamValue::Int(0)).is_err());
+        assert!(check_value_against_kind(&int, &ParamValue::Int(5)).is_err());
+
+        // A bool has no range to check.
+        assert!(check_value_against_kind(&ParamKind::Bool, &ParamValue::Bool(true)).is_ok());
+
+        let choice = ParamKind::Choice {
+            options: vec!["Light".into(), "Heavy".into()],
+        };
+        assert!(check_value_against_kind(&choice, &ParamValue::Choice("Heavy".into())).is_ok());
+        let unknown =
+            check_value_against_kind(&choice, &ParamValue::Choice("Medium".into())).unwrap_err();
+        assert!(
+            unknown.to_string().contains("Light, Heavy"),
+            "lists the options: {unknown}"
+        );
+
+        // A value of the wrong variant for the kind is rejected too.
+        let mismatch = check_value_against_kind(&float, &ParamValue::Int(3)).unwrap_err();
+        assert!(matches!(mismatch, ModelError::InvalidParam(_)));
+        assert!(mismatch.to_string().contains("Int(3)"), "{mismatch}");
+        assert!(check_value_against_kind(&int, &ParamValue::Float(3.0)).is_err());
+        assert!(
+            check_value_against_kind(&ParamKind::Bool, &ParamValue::Choice("x".into())).is_err()
+        );
+        assert!(check_value_against_kind(&choice, &ParamValue::Bool(false)).is_err());
+    }
+
+    #[test]
+    fn with_param_key_names_the_parameter() {
+        let e = with_param_key("threshold", ModelError::InvalidParam("too big".into()));
+        assert_eq!(e.to_string(), "invalid parameter: 'threshold': too big");
+        // Any other kind of error passes through untouched.
+        let other = with_param_key("threshold", ModelError::NameCollision("Burning".into()));
+        assert_eq!(other, ModelError::NameCollision("Burning".into()));
+    }
+
+    #[test]
+    fn set_model_param_applies_within_bounds_and_reattaches() {
+        let mut g = param_grid();
+        clear_attached(&mut g);
+        g.set_model_param("threshold", ParamValue::Float(0.0))
+            .unwrap();
+        assert_eq!(
+            g.model_mut().unwrap().get_param("threshold"),
+            Some(ParamValue::Float(0.0)),
+            "the lower bound is accepted and readable back"
+        );
+        assert!(
+            attached_flag(&mut g),
+            "a reattach: true parameter re-runs attach"
+        );
+        // The largest value attach accepts.
+        g.set_model_param("threshold", ParamValue::Float(5.0))
+            .unwrap();
+        assert_eq!(
+            g.model_mut().unwrap().get_param("threshold"),
+            Some(ParamValue::Float(5.0))
+        );
+    }
+
+    #[test]
+    fn set_model_param_outside_descriptor_bounds_leaves_model_untouched() {
+        let mut g = param_grid();
+        g.set_model_param("threshold", ParamValue::Float(2.0))
+            .unwrap();
+        clear_attached(&mut g);
+        let err = g
+            .set_model_param("threshold", ParamValue::Float(11.0))
+            .unwrap_err();
+        assert!(matches!(err, ModelError::InvalidParam(_)));
+        assert!(
+            err.to_string().contains("threshold"),
+            "names the key: {err}"
+        );
+        assert_eq!(
+            g.model_mut().unwrap().get_param("threshold"),
+            Some(ParamValue::Float(2.0)),
+            "the model never saw the rejected value"
+        );
+        assert!(
+            !attached_flag(&mut g),
+            "a value the descriptor rejects never reaches attach"
+        );
+        // A value of the wrong kind is refused the same way.
+        assert!(g.set_model_param("threshold", ParamValue::Int(3)).is_err());
+        assert!(!attached_flag(&mut g));
+    }
+
+    #[test]
+    fn set_model_param_rolls_back_when_attach_rejects() {
+        let mut g = param_grid();
+        g.set_model_param("threshold", ParamValue::Float(2.0))
+            .unwrap();
+        clear_attached(&mut g);
+        // 7.0 is inside the descriptor's 0..=10, so the bounds check lets it
+        // through, but ConstModel::attach refuses anything above 5.
+        let err = g
+            .set_model_param("threshold", ParamValue::Float(7.0))
+            .unwrap_err();
+        assert!(matches!(err, ModelError::InvalidParam(_)));
+        assert_eq!(
+            g.model_mut().unwrap().get_param("threshold"),
+            Some(ParamValue::Float(2.0)),
+            "the previous value was put back"
+        );
+        assert!(
+            attached_flag(&mut g),
+            "the rollback re-attached, so derived state matches the value"
+        );
+        // The model is still attached and the grid still steps.
+        g.step();
+        assert_eq!(g.cell_type(0), CellType::new("X"));
+    }
+
+    #[test]
+    fn set_model_param_rejects_unknown_read_only_and_missing_model() {
+        use crate::{Grid2D, Rule2D};
+        let mut g = param_grid();
+        let unknown = g
+            .set_model_param("nope", ParamValue::Float(1.0))
+            .unwrap_err();
+        assert!(matches!(unknown, ModelError::InvalidParam(_)));
+        assert!(
+            unknown.to_string().contains("nope"),
+            "names the key: {unknown}"
+        );
+        let read_only = g
+            .set_model_param("out_name", ParamValue::Choice("Y".into()))
+            .unwrap_err();
+        assert!(
+            read_only.to_string().contains("read-only"),
+            "says why: {read_only}"
+        );
+        assert_eq!(
+            g.model_mut().unwrap().get_param("out_name"),
+            Some(ParamValue::Choice("X".into())),
+            "a read-only parameter is never written"
+        );
+        // The model's own get_param and set_param still ignore keys it does
+        // not have.
+        assert!(g.model_mut().unwrap().get_param("nope").is_none());
+        let direct = g
+            .model_mut()
+            .unwrap()
+            .set_param("nope", ParamValue::Float(1.0))
+            .unwrap_err();
+        assert!(matches!(direct, ModelError::InvalidParam(_)));
+        // With no model attached there is nothing to set.
+        let mut bare = Grid2D::new(
+            1,
+            1,
+            0,
+            vec![CellType::new("A")],
+            Rule2D { subrules: vec![] },
+        );
+        let none = bare
+            .set_model_param("threshold", ParamValue::Float(1.0))
+            .unwrap_err();
+        assert!(matches!(none, ModelError::InvalidParam(_)));
+        assert!(
+            none.to_string().contains("threshold"),
+            "names the key: {none}"
         );
     }
 }

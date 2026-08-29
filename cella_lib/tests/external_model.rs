@@ -4,7 +4,9 @@
 //! `TestModel` below implements `ExternalModel` from outside the library,
 //! proving the seam works for downstream crates.
 
-use cella_lib::external::{ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent};
+use cella_lib::external::{
+    ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
+};
 use cella_lib::wildfire::{
     FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams, cell_rand,
 };
@@ -26,6 +28,25 @@ fn empty_rule() -> Rule2D {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct TestModel {
     event_target: Option<usize>,
+    /// One tunable parameter per `ParamKind`, and nothing else. They do not
+    /// change how the model steps; they exist so the acceptance test can drive
+    /// every kind of control through `Grid2D::set_model_param` without the
+    /// engine knowing anything about this model. `attach` refuses a `rate`
+    /// above 0.9, which is what makes the rollback path reachable.
+    rate: f64,
+    steps: i64,
+    enabled: bool,
+    mode: String,
+}
+
+fn test_model(event_target: Option<usize>) -> TestModel {
+    TestModel {
+        event_target,
+        rate: 0.5,
+        steps: 3,
+        enabled: false,
+        mode: "Fast".into(),
+    }
 }
 
 #[typetag::serde(name = "integration_test_model")]
@@ -33,6 +54,79 @@ impl ExternalModel for TestModel {
     fn attach(&mut self, view: &GridView<'_>) -> Result<(), ModelError> {
         if view.width * view.height == 0 {
             return Err(ModelError::InvalidParam("empty grid".into()));
+        }
+        if self.rate > 0.9 {
+            return Err(ModelError::InvalidParam(
+                "rate above 0.9 is rejected by attach".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn params(&self) -> Vec<ParamDesc> {
+        let desc = |key: &str, kind: ParamKind, reattach: bool, read_only: bool| ParamDesc {
+            key: key.into(),
+            label: key.into(),
+            group: None,
+            help: None,
+            unit: None,
+            kind,
+            reattach,
+            read_only,
+        };
+        vec![
+            desc(
+                "rate",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.05,
+                },
+                true,
+                false,
+            ),
+            desc("steps", ParamKind::Int { min: 1, max: 10 }, false, false),
+            desc("enabled", ParamKind::Bool, false, false),
+            desc(
+                "mode",
+                ParamKind::Choice {
+                    options: vec!["Fast".into(), "Slow".into()],
+                },
+                false,
+                false,
+            ),
+            // Shown but not editable: set once when the model is built.
+            desc(
+                "event_target",
+                ParamKind::Int { min: -1, max: 8 },
+                false,
+                true,
+            ),
+        ]
+    }
+
+    fn get_param(&self, key: &str) -> Option<ParamValue> {
+        match key {
+            "rate" => Some(ParamValue::Float(self.rate)),
+            "steps" => Some(ParamValue::Int(self.steps)),
+            "enabled" => Some(ParamValue::Bool(self.enabled)),
+            "mode" => Some(ParamValue::Choice(self.mode.clone())),
+            "event_target" => Some(ParamValue::Int(self.event_target.map_or(-1, |t| t as i64))),
+            _ => None,
+        }
+    }
+
+    fn set_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
+        match (key, value) {
+            ("rate", ParamValue::Float(v)) => self.rate = v,
+            ("steps", ParamValue::Int(v)) => self.steps = v,
+            ("enabled", ParamValue::Bool(v)) => self.enabled = v,
+            ("mode", ParamValue::Choice(v)) => self.mode = v,
+            _ => {
+                return Err(ModelError::InvalidParam(format!(
+                    "unknown parameter '{key}'"
+                )));
+            }
         }
         Ok(())
     }
@@ -71,6 +165,112 @@ impl ExternalModel for TestModel {
     }
 }
 
+// ─── Acceptance: a generic caller tunes an out-of-tree model ───
+
+/// Grid with the out-of-tree `TestModel` attached, ready for parameter edits.
+fn param_grid() -> Grid2D {
+    let a = CellType::new("A");
+    let mut g = Grid2D::new(2, 2, 0, vec![a; 4], empty_rule());
+    g.attach_model(Box::new(test_model(None))).unwrap();
+    g
+}
+
+#[test]
+fn out_of_tree_params_round_trip_through_the_engine() {
+    let mut g = param_grid();
+    g.set_model_param("rate", ParamValue::Float(0.75)).unwrap();
+    g.set_model_param("steps", ParamValue::Int(7)).unwrap();
+    g.set_model_param("enabled", ParamValue::Bool(true))
+        .unwrap();
+    g.set_model_param("mode", ParamValue::Choice("Slow".into()))
+        .unwrap();
+    let m = g.model_mut().unwrap();
+    assert_eq!(m.get_param("rate"), Some(ParamValue::Float(0.75)));
+    assert_eq!(m.get_param("steps"), Some(ParamValue::Int(7)));
+    assert_eq!(m.get_param("enabled"), Some(ParamValue::Bool(true)));
+    assert_eq!(m.get_param("mode"), Some(ParamValue::Choice("Slow".into())));
+    assert_eq!(m.get_param("nothing_like_this"), None);
+    // What a generic panel would draw: one control per descriptor, no
+    // model-specific code anywhere.
+    let keys: Vec<String> = m.params().into_iter().map(|d| d.key).collect();
+    assert_eq!(keys, ["rate", "steps", "enabled", "mode", "event_target"]);
+    // The model still steps after the edits.
+    g.step();
+    assert_eq!(
+        g.cell_type(0),
+        CellType::new("B"),
+        "the A -> B cycle still runs"
+    );
+}
+
+#[test]
+fn out_of_tree_param_bounds_are_enforced_for_every_kind() {
+    let mut g = param_grid();
+    // Float: below, above, and not-a-number.
+    assert!(g.set_model_param("rate", ParamValue::Float(-0.1)).is_err());
+    assert!(g.set_model_param("rate", ParamValue::Float(1.1)).is_err());
+    assert!(
+        g.set_model_param("rate", ParamValue::Float(f64::NAN))
+            .is_err()
+    );
+    // Int: below and above the declared range.
+    assert!(g.set_model_param("steps", ParamValue::Int(0)).is_err());
+    assert!(g.set_model_param("steps", ParamValue::Int(11)).is_err());
+    // Choice: a name that is not on the list.
+    assert!(
+        g.set_model_param("mode", ParamValue::Choice("Sideways".into()))
+            .is_err()
+    );
+    // A value of the wrong kind for the control.
+    assert!(g.set_model_param("enabled", ParamValue::Int(1)).is_err());
+    assert!(g.set_model_param("rate", ParamValue::Bool(true)).is_err());
+    // An unknown key is refused, and the message names it.
+    let err = g
+        .set_model_param("no_such_param", ParamValue::Int(1))
+        .unwrap_err();
+    assert!(matches!(err, ModelError::InvalidParam(_)));
+    assert!(err.to_string().contains("no_such_param"), "{err}");
+    // Nothing above was written.
+    let m = g.model_mut().unwrap();
+    assert_eq!(m.get_param("rate"), Some(ParamValue::Float(0.5)));
+    assert_eq!(m.get_param("steps"), Some(ParamValue::Int(3)));
+    assert_eq!(m.get_param("enabled"), Some(ParamValue::Bool(false)));
+    assert_eq!(m.get_param("mode"), Some(ParamValue::Choice("Fast".into())));
+}
+
+#[test]
+fn out_of_tree_param_rolls_back_when_attach_rejects_and_read_only_is_refused() {
+    let mut g = param_grid();
+    // 0.95 is inside the descriptor's 0..=1, so the engine's bounds check
+    // passes it on, but TestModel::attach refuses anything above 0.9.
+    let err = g
+        .set_model_param("rate", ParamValue::Float(0.95))
+        .unwrap_err();
+    assert!(matches!(err, ModelError::InvalidParam(_)));
+    assert_eq!(
+        g.model_mut().unwrap().get_param("rate"),
+        Some(ParamValue::Float(0.5)),
+        "the previous value was put back"
+    );
+    // The grid is still attached and steps as before.
+    g.step();
+    assert_eq!(g.step, 1);
+
+    // A read-only parameter is refused before anything is written.
+    let err = g
+        .set_model_param("event_target", ParamValue::Int(2))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("read-only"),
+        "says why it was refused: {err}"
+    );
+    assert_eq!(
+        g.model_mut().unwrap().get_param("event_target"),
+        Some(ParamValue::Int(-1)),
+        "a read-only parameter is never written"
+    );
+}
+
 fn counts_total(g: &Grid2D) -> u64 {
     g.counts_current.values().sum()
 }
@@ -80,8 +280,7 @@ fn out_of_tree_model_drives_step_ages_history_and_counts() {
     let (a, b, c) = (CellType::new("A"), CellType::new("B"), CellType::new("C"));
     let init = vec![a, b, c, CellType::inactive()];
     let mut g = Grid2D::new(2, 2, 3, init, empty_rule());
-    g.attach_model(Box::new(TestModel { event_target: None }))
-        .unwrap();
+    g.attach_model(Box::new(test_model(None))).unwrap();
     g.step();
     assert_eq!(g.cell_type(0), b);
     assert_eq!(g.cell_type(1), c);
@@ -104,10 +303,7 @@ fn model_events_apply_through_step_and_fix_counts() {
     let a = CellType::new("A");
     let init = vec![a; 9];
     let mut g = Grid2D::new(3, 3, 0, init, empty_rule());
-    g.attach_model(Box::new(TestModel {
-        event_target: Some(4),
-    }))
-    .unwrap();
+    g.attach_model(Box::new(test_model(Some(4)))).unwrap();
     g.step();
     assert_eq!(
         g.cell_type(4),
