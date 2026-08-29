@@ -44,25 +44,20 @@ impl CellaApp {
     ///
     /// This is the step the user asked for: the Step button and the paced
     /// `playing` tick, both of which produce one visible frame per step and so
-    /// should produce one point on the chart per step. A burst does not use
-    /// this — see [`CellaApp::step_once_untracked`].
-    pub(in crate::gui) fn step_once(&mut self) {
-        self.step_once_untracked();
-        self.stats_record_step();
-    }
-    /// Everything [`CellaApp::step_once`] does except appending the statistics
-    /// sample: the play timer's segment boundary, then the step itself.
+    /// should produce one point on the chart per step.
     ///
-    /// A burst runs steps nobody ever sees, and the chart's rolling window
-    /// ([`crate::gui::state::StatsState::window_len`]) would discard almost all
-    /// of them the moment they were recorded, so it samples once per frame in
-    /// [`CellaApp::tick_play`] instead. Bursts also split this method's two
-    /// halves apart: [`CellaApp::refresh_play_timer`] runs once per batch and
-    /// [`CellaApp::advance_grid`] once per step, which keeps the clock reads
-    /// out of the inner loop.
-    pub(in crate::gui) fn step_once_untracked(&mut self) {
+    /// A burst does not use this. It runs steps nobody ever sees, and the
+    /// chart's rolling window
+    /// ([`crate::gui::state::StatsState::window_len`]) would discard almost
+    /// all of their samples the moment they were recorded, so
+    /// [`CellaApp::tick_play`] samples once per frame instead. A burst also
+    /// pulls these three calls apart: [`CellaApp::refresh_play_timer`] runs
+    /// once per chunk and [`CellaApp::advance_grid`] once per step, which
+    /// keeps the clock reads out of the inner loop.
+    pub(in crate::gui) fn step_once(&mut self) {
         self.refresh_play_timer();
         self.advance_grid();
+        self.stats_record_step();
     }
     /// Close the current play-timer segment and open a new one, so `elapsed`
     /// only ever counts time actually spent playing.
@@ -149,6 +144,47 @@ impl CellaApp {
         }
         self.set_status(format!("Running to {}", target));
     }
+    /// Cancel a pending "Run to +N", handing `playing` back the way the run
+    /// found it, and do nothing at all when no run is pending.
+    ///
+    /// Anything that replaces or rewinds the grid has to call this. The target
+    /// is an absolute step number on the grid the run started from, so a new
+    /// scenario (or a reset) would otherwise leave the burst loop chasing a
+    /// number that no longer means anything — and, if the new target is far
+    /// ahead, chasing it at full speed with only Reset able to stop it.
+    pub(in crate::gui) fn cancel_run_to(&mut self) {
+        if self.playback.run_to_target.is_some() {
+            self.playback.run_to_target = None;
+            self.playback.playing = self.playback.playing_before_run_to;
+        }
+    }
+    /// Flip between playing and paused, as the toolbar's Play/Pause button does.
+    ///
+    /// Pausing is the stronger of the two: besides stopping the paced tick it
+    /// cancels any pending "Run to +N" (which would otherwise keep bursting)
+    /// and closes the stopwatch segment, so `elapsed` only counts time the
+    /// simulation was actually running.
+    pub(in crate::gui) fn toggle_play(&mut self) {
+        self.playback.playing = !self.playback.playing;
+        self.playback.last_tick = Instant::now();
+        if self.playback.playing {
+            // Start a new play segment for the timer
+            self.playback.play_start = Some(Instant::now());
+            self.set_status("Playing");
+        } else {
+            // Pause: cancel any pending "Run to +N" too, otherwise the burst
+            // loop keeps stepping and only Reset can stop it. Cancelling
+            // restores the play state the run interrupted, which may itself be
+            // "playing", so Pause has the last word.
+            self.cancel_run_to();
+            self.playback.playing = false;
+            // Flush the current play segment into accumulated elapsed
+            if let Some(start) = self.playback.play_start.take() {
+                self.playback.elapsed += start.elapsed();
+            }
+            self.set_status("Paused");
+        }
+    }
     /// The step number this frame should burst towards, or `None` when
     /// playback is paced (or stopped) and so runs at most one step per frame.
     ///
@@ -181,23 +217,33 @@ impl CellaApp {
     }
     /// Play loop: exactly one of two branches steps per frame — a time-budgeted
     /// burst, or a single step paced by the refresh interval.
-    pub(in crate::gui) fn tick_play(&mut self) {
-        let run_to = self.playback.run_to_target;
+    ///
+    /// Returns whether any step ran. The caller draws the panels *before*
+    /// calling this, so a frame that stepped has left a stale step counter,
+    /// chart, and status line on screen and must be drawn again — see
+    /// [`CellaApp::request_next_repaint`].
+    pub(in crate::gui) fn tick_play(&mut self) -> bool {
         if let Some(target) = self.burst_target() {
             // Burst: keep stepping until the frame's time budget is spent. The
             // clock is read once per chunk rather than once per step, which on
             // any realistic grid is noise next to the steps themselves.
             let deadline = Instant::now() + RUN_TO_FRAME_BUDGET;
             let mut done = 0u32;
-            while Instant::now() < deadline && done < RUN_TO_MAX_STEPS_PER_FRAME {
-                // The stopwatch is read once per batch instead of once per
-                // step; the batch is where the time actually goes, and
+            loop {
+                // The stopwatch is read once per chunk instead of once per
+                // step; the chunk is where the time actually goes, and
                 // `advance_grid` still counts every step it runs.
                 self.refresh_play_timer();
                 let n = self.run_to_batch(target, RUN_TO_CHUNK);
                 done += n;
-                if n < RUN_TO_CHUNK {
-                    break; // reached the target
+                // Tested after the chunk, never before it: a frame that starts
+                // late (the thread was descheduled past the budget) must still
+                // make progress rather than spin without stepping.
+                if n < RUN_TO_CHUNK
+                    || done >= RUN_TO_MAX_STEPS_PER_FRAME
+                    || Instant::now() >= deadline
+                {
+                    break; // target reached, backstop hit, or budget spent
                 }
             }
             if done > 0 {
@@ -206,7 +252,7 @@ impl CellaApp {
                 // window would drop all but the last few of them anyway.
                 self.stats_record_step();
             }
-            if run_to.is_some() && self.current_step() >= target {
+            if self.playback.run_to_target.is_some() && self.current_step() >= target {
                 // The run finished: hand `playing` back the way "Run to +N"
                 // found it, and close the timer segment only if it stops here.
                 self.playback.run_to_target = None;
@@ -216,8 +262,12 @@ impl CellaApp {
                 {
                     self.playback.elapsed += start.elapsed();
                 }
+                self.set_status(format!(
+                    "Run to {target} finished at step {}",
+                    self.current_step()
+                ));
             }
-            return;
+            return done > 0;
         }
         // Paced: step at most once per refresh interval under play.
         let now = Instant::now();
@@ -225,11 +275,18 @@ impl CellaApp {
         if self.playback.playing && now.duration_since(self.playback.last_tick) >= interval {
             self.playback.last_tick = now;
             self.step_once();
+            return true;
         }
+        false
     }
     /// Internal: clear and initialize statistics history/toggles from current grid.
-    /// Also resets the simulation timer.
+    ///
+    /// Also resets *playback* state, because every caller is swapping the grid
+    /// out from under it: the stopwatch goes back to zero, and any pending
+    /// "Run to +N" is cancelled (its target is a step number on the grid being
+    /// replaced, so it means nothing on the new one).
     pub(in crate::gui) fn stats_clear_and_init(&mut self) {
+        self.cancel_run_to();
         self.playback.elapsed = Duration::ZERO;
         self.playback.timed_steps = 0;
         self.playback.play_start = None;
@@ -580,6 +637,149 @@ mod tests {
             app.view.history_1d.len(),
             8,
             "the window must still drop the oldest rows during a burst"
+        );
+    }
+
+    #[test]
+    fn a_burst_frame_runs_at_least_one_chunk() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.run_to_steps = u64::from(RUN_TO_CHUNK) * 2;
+        app.start_run_to();
+
+        app.tick_play();
+
+        assert!(
+            app.current_step() - start >= u64::from(RUN_TO_CHUNK),
+            "the first chunk must run before the budget is checked, or a frame \
+             that starts late makes no progress at all"
+        );
+    }
+
+    #[test]
+    fn tick_play_reports_whether_it_stepped() {
+        let mut app = test_app_with_life();
+        assert!(!app.playback.playing, "the app starts paused");
+
+        assert!(!app.tick_play(), "a paused frame runs no steps");
+
+        app.playback.run_to_steps = 5;
+        app.start_run_to();
+        assert!(
+            app.tick_play(),
+            "the frame a run finishes on still ran steps, and so still needs drawing"
+        );
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "the run should have finished"
+        );
+        assert!(
+            !app.tick_play(),
+            "with the run over there is nothing left to step"
+        );
+    }
+
+    #[test]
+    fn a_paced_frame_reports_the_step_it_ran() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.playing = true;
+        app.playback.refresh_ms = 0; // every frame is due
+
+        assert!(app.tick_play(), "a paced frame that steps must say so");
+        assert_eq!(app.current_step(), start + 1);
+    }
+
+    #[test]
+    fn a_finished_run_says_so_in_the_status_bar() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.run_to_steps = 5;
+
+        app.start_run_to();
+        assert_eq!(
+            app.chrome.status_message.as_deref(),
+            Some(format!("Running to {}", start + 5).as_str())
+        );
+
+        app.tick_play();
+
+        assert_eq!(
+            app.chrome.status_message.as_deref(),
+            Some(format!("Run to {} finished at step {}", start + 5, start + 5).as_str()),
+            "the status line must stop claiming the run is still going"
+        );
+    }
+
+    #[test]
+    fn pause_cancels_a_pending_run_to() {
+        let mut app = test_app_with_life();
+        app.playback.run_to_steps = 10_000; // far enough that one frame cannot finish it
+        app.start_run_to();
+        assert!(app.playback.playing, "a run forces playback on");
+
+        app.toggle_play();
+
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "Pause must cancel the pending run, not just stop the paced tick"
+        );
+        assert!(!app.playback.playing, "Pause must leave playback stopped");
+
+        let paused_at = app.current_step();
+        app.tick_play();
+        assert_eq!(
+            app.current_step(),
+            paused_at,
+            "a paused app must not keep bursting towards the old target"
+        );
+    }
+
+    #[test]
+    fn loading_a_scenario_cancels_a_pending_run_to() {
+        let mut app = test_app_with_life();
+        app.playback.run_to_steps = 10_000;
+        app.start_run_to();
+        assert!(app.playback.run_to_target.is_some(), "the run is pending");
+
+        // Every loader ends in `stats_clear_and_init`; this one also swaps the
+        // grid out from under the target the run was aiming for.
+        app.load_demo_1d_rule30();
+
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "a new scenario must not inherit the old scenario's run target"
+        );
+        assert!(
+            !app.playback.playing,
+            "the run forced playback on, so cancelling stops it"
+        );
+
+        let start = app.current_step();
+        app.tick_play();
+        assert_eq!(
+            app.current_step(),
+            start,
+            "the fresh scenario must sit still"
+        );
+    }
+
+    #[test]
+    fn reset_cancels_a_pending_run_to() {
+        let mut app = test_app_with_life();
+        app.playback.run_to_steps = 10_000;
+        app.start_run_to();
+        app.tick_play(); // get some steps on the clock
+
+        app.reset_to_initial();
+
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "Reset must cancel a pending run"
+        );
+        assert!(
+            !app.playback.playing,
+            "Reset always leaves playback stopped"
         );
     }
 }

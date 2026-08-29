@@ -246,8 +246,10 @@ impl CellaApp {
     }
     /// Reset the current grid to its initial snapshot captured on load.
     pub(in crate::gui) fn reset_to_initial(&mut self) {
+        // Cancel first: cancelling restores whatever play state a pending
+        // "Run to +N" interrupted, and Reset always stops.
+        self.cancel_run_to();
         self.playback.playing = false;
-        self.playback.run_to_target = None;
         // Reset simulation timer
         self.playback.elapsed = Duration::ZERO;
         self.playback.timed_steps = 0;

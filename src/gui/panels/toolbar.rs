@@ -2,7 +2,6 @@
 
 use crate::gui::app::CellaApp;
 use egui::Context;
-use std::time::Instant;
 
 impl CellaApp {
     /// Build the top toolbar: play/pause, step, run-to, scale, export/save/reset.
@@ -16,22 +15,7 @@ impl CellaApp {
                 })
                 .clicked()
             {
-                self.playback.playing = !self.playback.playing;
-                self.playback.last_tick = Instant::now();
-                if self.playback.playing {
-                    // Start a new play segment for the timer
-                    self.playback.play_start = Some(Instant::now());
-                    self.set_status("Playing");
-                } else {
-                    // Pause: cancel any pending "Run to +N" too, otherwise the
-                    // burst loop keeps stepping and only Reset can stop it.
-                    self.playback.run_to_target = None;
-                    // Flush the current play segment into accumulated elapsed
-                    if let Some(start) = self.playback.play_start.take() {
-                        self.playback.elapsed += start.elapsed();
-                    }
-                    self.set_status("Paused");
-                }
+                self.toggle_play();
             }
             if ui.button("Step").clicked() {
                 self.step_once();

@@ -238,7 +238,6 @@ impl CellaApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::render::palette_index_for;
 
     const RED: Color32 = Color32::RED;
     const BLUE: Color32 = Color32::BLUE;

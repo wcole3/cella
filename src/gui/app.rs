@@ -378,11 +378,21 @@ impl CellaApp {
     }
 
     /// Ask egui to wake up again only when something is actually animating.
-    pub(in crate::gui) fn request_next_repaint(&self, ctx: &Context) {
+    ///
+    /// `stepped` is what [`CellaApp::tick_play`] just reported. The panels were
+    /// built before it ran, so a frame that stepped is already out of date the
+    /// moment it is drawn — including the frame a "Run to +N" finishes on,
+    /// which clears the run and so matches none of the branches below. Without
+    /// this the screen would keep showing the old step counter and "Running
+    /// to N" until the next mouse move.
+    pub(in crate::gui) fn request_next_repaint(&self, ctx: &Context, stepped: bool) {
         // Only drive continuous repaints when something is actually animating.
         // Previously this pinned the app at ~100 fps (and full CPU/GPU) even while
         // paused with nothing on screen changing; egui repaints on input anyway.
-        if self.burst_target().is_some() {
+        if stepped {
+            // Draw the state this frame's steps produced.
+            ctx.request_repaint();
+        } else if self.burst_target().is_some() {
             // Bursting: come straight back so consecutive frame budgets run
             // back-to-back and throughput is set by the engine, not the clock.
             ctx.request_repaint();
@@ -412,7 +422,7 @@ impl eframe::App for CellaApp {
         self.ui_viewport(ui);
 
         self.poll_export();
-        self.tick_play();
-        self.request_next_repaint(ctx);
+        let stepped = self.tick_play();
+        self.request_next_repaint(ctx, stepped);
     }
 }
