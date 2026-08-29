@@ -13,7 +13,7 @@ section, which lists what lives in which `src/gui/` file.
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Reorganize the GUI so the rest is safe to change | *(done)* — commit `b092beb` |
-| 2 | GUI performance: measure, then fix three suspected defects | *(open)* |
+| 2 | GUI performance: measure, then fix three suspected defects | *(done)* — commits `e5c304d..8c1c1a7` |
 | 3 | Let external models describe their own parameters | *(open)* |
 | 4 | Usability and fun | *(open)* |
 
@@ -116,7 +116,7 @@ does work headless and was smoke-tested.
 
 ---
 
-## 2. Phase 2 — GUI performance *(open)*
+## 2. Phase 2 — GUI performance *(done)*
 
 Three suspected defects. **None has been measured yet** — they are reasoned
 from the code, so do §2.4 first and let the numbers decide what is worth

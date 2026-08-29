@@ -1024,7 +1024,64 @@ contention (load average up to 17 from unrelated builds); the *relative*
 chain-vs-scalar losses were consistent enough to reject, but absolute
 numbers from the contended window were discarded.
 
-### Net effect (four kept rounds)
+### Round 6
+
+### E10 — GUI: type-compare painter, time-budgeted Run-to, per-frame stats ✅ KEPT
+
+The first GUI-side measurement in this log (everything above is
+`cella_lib`, the simulation engine; this one is the `cella` binary's egui
+frontend, §2 of `docs/roadmap.md`). Three changes went in on reasoned
+suspicion, then got measured after the fact:
+
+- **§2.1** — `RowPainter::emit_row` used to resolve every cell's `Color32`
+  and compare colours to decide whether a paint run continues; it now
+  compares `CellType` (a single `u32` under the hood) and only resolves a
+  colour when the type actually changes, while still merging adjacent runs
+  that happen to share a colour.
+- **§2.2** — "Run to +N" used to run a fixed step count per frame; it is
+  now budgeted by wall-clock time (`RUN_TO_FRAME_BUDGET`, 8 ms) via a
+  clock-free `run_to_batch` that advances in `RUN_TO_CHUNK`-sized (32-step)
+  chunks, Pause cancels a run in progress, and `start_run_to` restores
+  whatever play state was active before the button was pressed.
+- **§2.3** — the per-step work behind a burst is now split into
+  `advance_grid` (steps and records a statistics sample) and
+  `step_once_untracked` (steps only), so `tick_play` samples statistics
+  once per burst frame instead of once per simulation step, and the play
+  timer refresh is hoisted to once per chunk instead of once per step.
+
+**Painter (§2.1), measured with `paint_bench`:** a synthetic 2000-cell row
+(3 foreground types plus background, laid out as one long run, a few
+single-cell islands, and background gaps) painted 900 times per "frame" —
+a stand-in for a 1600×900 window at `scale = 1`, not a number pulled from a
+live GUI frame, since the GUI cannot be launched in this environment (no
+GL: `winit EventLoopError` under WSLg/Mesa). Min-of-20-frames, three runs
+each side:
+
+| Bench | before | after | Δ |
+|---|---|---|---|
+| `paint_bench` (synthetic row, 900 rows/frame) | ~3.1–3.2 ms/frame | ~1.18–1.19 ms/frame | **~−62%** |
+
+The baseline was well above the 1 ms mark the plan used as the cleanup/win
+threshold, so §2.1 is filed as a real win, not a cleanup: comparing
+`CellType` instead of resolving and comparing `Color32` cut paint time by
+roughly 2.6x. The number held steady across Phase 2 — §2.2 and §2.3 don't
+touch `emit_row`, and re-running `paint_bench` after all of Phase 2 landed
+gave the same ~1.18–1.19 ms/frame as right after §2.1 alone.
+
+**Run-to (§2.2):** the number that matters is wall-clock time for "Run to
++100000" from the toolbar on `configs/2d_large_moore_256.json`, taken by
+hand with a stopwatch. Before: predicted ~1000 steps/s (the old fixed
+`RUN_TO_STEPS_PER_FRAME = 100` at the old fixed `refresh_ms` default of
+100, i.e. ~100 s / ~1.7 min for the full run) — a prediction, never
+measured by hand, since the GUI could not be launched before or after the
+change in this environment. After: time-budgeted, to be measured by hand
+on a GL machine.
+
+Statistics sampling (§2.3) has no standalone stopwatch number of its own —
+it changes how many chart samples a burst appends, not how fast the burst
+runs — so it is covered by the Run-to number above and by the `cella`
+binary's existing unit tests on `advance_grid` / `step_once_untracked` /
+`run_to_batch` (see `src/gui/sim.rs`), which assert sample counts directly.
 
 Comparable-40-entry suite total (sum of avgs):
 **800.01 → 785.46 → 764.34 → 580.67 ms** (−27 %), and the six wildfire
