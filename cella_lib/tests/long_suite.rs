@@ -222,6 +222,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
         .map(|i| g.cell_type(i).as_str().to_string())
         .collect();
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: g.width,
         height: g.height,
         history_limit: g.history_limit,
@@ -244,6 +245,7 @@ fn export_config_1d(name: &str, g: &Grid1D) {
         .map(|i| g.cell_type(i).as_str().to_string())
         .collect();
     let cfg = CellaConfig::D1(Config1D {
+        colors: Default::default(),
         width: g.width,
         history_limit: g.history_limit,
         initial,
@@ -1615,6 +1617,7 @@ fn stress_config_load_and_run() {
     }
 
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: w,
         height: h,
         history_limit: hist,

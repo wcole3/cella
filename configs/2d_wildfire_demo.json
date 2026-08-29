@@ -3,6 +3,12 @@
  "width": 64,
  "height": 40,
  "history_limit": 0,
+ "colors": {
+  "Forest": "#2e8b57",
+  "Shrub": "#9acd32",
+  "Burning": "#ff4500",
+  "BurnedOut": "#6b6b6b"
+ },
  "initial": [
   "Forest",
   "Shrub",

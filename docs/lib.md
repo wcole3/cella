@@ -275,6 +275,11 @@ Pools are built on first use per thread count and live for the process, so stepp
 ### JSON Configuration
 The `CellaConfig` enum (in `config.rs`) provides a unified way to load 1D and 2D setups from JSON.
 
+Both variants carry an optional `colors: BTreeMap<String, String>` — type name
+to `#rrggbb` — read back with `CellaConfig::colors()`. The library only stores
+it (missing means empty, and an empty map is not written out); the GUI applies
+it on load. It never influences a simulation.
+
 ```json
 {
   "dim": "2d",

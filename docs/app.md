@@ -193,6 +193,21 @@ The application uses a common JSON format for storing both rules and grid states
 ### `dim` Discriminator
 Every configuration must have a `"dim"` field, which is either `"1d"` or `"2d"`.
 
+### `colors` (optional)
+A map from cell-type name to an `#rrggbb` colour. Types you leave out get an
+automatic colour, and `"Inactive"` sets the background:
+
+```json
+"colors": { "Forest": "#2e8b57", "Shrub": "#9acd32", "Burning": "#ff4500", "BurnedOut": "#6b6b6b" }
+```
+
+Without this, the GUI hands each declared type the next free slot of its
+8-colour palette, in alphabetical order, so types never share a colour until a
+scenario has more than eight. (Earlier versions hashed the name into a slot,
+which let Forest and Burning both land on sky blue in the wildfire demo.) A
+value that is not `#rrggbb` is reported in the status bar and ignored. Colours
+are display-only: the engine, snapshots, and validation runs never see them.
+
 ### Example: Rule 30 (1D)
 ```json
 {

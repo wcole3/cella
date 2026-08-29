@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::app::{CellaApp, Dim};
+use super::render::{distinct_palette_slots, parse_hex_color};
 use crate::demos::{
     build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline,
     build_2d_three_state_cycle,
@@ -76,7 +77,7 @@ impl CellaApp {
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
         self.edit.current_paint_batch = None;
-        self.view.colors.clear();
+        self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
         self.inputs.grid_height = h;
         self.update_selected_draw_type_default();
@@ -97,7 +98,7 @@ impl CellaApp {
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
         self.edit.current_paint_batch = None;
-        self.view.colors.clear();
+        self.reset_colors_for_scenario();
         self.inputs.grid_width = width;
         self.inputs.grid_height = 1;
         self.update_selected_draw_type_default();
@@ -118,7 +119,7 @@ impl CellaApp {
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
         self.edit.current_paint_batch = None;
-        self.view.colors.clear();
+        self.reset_colors_for_scenario();
         self.inputs.grid_width = width;
         self.inputs.grid_height = 1;
         self.update_selected_draw_type_default();
@@ -135,7 +136,7 @@ impl CellaApp {
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
         self.edit.current_paint_batch = None;
-        self.view.colors.clear();
+        self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
         self.inputs.grid_height = h;
         self.update_selected_draw_type_default();
@@ -152,7 +153,7 @@ impl CellaApp {
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
         self.edit.current_paint_batch = None;
-        self.view.colors.clear();
+        self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
         self.inputs.grid_height = h;
         self.update_selected_draw_type_default();
@@ -179,7 +180,7 @@ impl CellaApp {
             self.view.history_1d.clear();
             self.edit.undo_stack.clear();
             self.edit.current_paint_batch = None;
-            self.view.colors.clear();
+            self.reset_colors_for_scenario();
             self.inputs.grid_width = width;
             self.inputs.grid_height = 1;
             self.update_selected_draw_type_default();
@@ -246,7 +247,7 @@ impl CellaApp {
                             self.view.history_1d.clear();
                             self.edit.undo_stack.clear();
                             self.edit.current_paint_batch = None;
-                            self.view.colors.clear();
+                            self.reset_colors_for_scenario();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
                         }
@@ -265,12 +266,13 @@ impl CellaApp {
                             self.view.history_1d.clear();
                             self.edit.undo_stack.clear();
                             self.edit.current_paint_batch = None;
-                            self.view.colors.clear();
+                            self.reset_colors_for_scenario();
                             self.update_selected_draw_type_default();
                             self.stats_clear_and_init();
                         }
                     }
                 }
+                self.apply_config_colors(cfg.colors());
             }
             Err(e) => {
                 let msg = format!("Failed to load config: {}", e);
@@ -280,6 +282,43 @@ impl CellaApp {
         }
         // After loading any config, sync the rule editor
         self.refresh_rule_editor_from_current();
+    }
+
+    /// Give every declared type its own colour for the scenario that was just
+    /// loaded. Hashing names into eight palette slots collides easily (the
+    /// wildfire demo had Forest and Burning both land on sky blue), so instead
+    /// each type takes the next free slot, in the stable order `declared_types`
+    /// returns. Explicit colours from a config are applied on top afterwards.
+    pub(in crate::gui) fn reset_colors_for_scenario(&mut self) {
+        self.view.colors.clear();
+        let types: Vec<CellType> = self
+            .declared_types()
+            .into_iter()
+            .filter(|t| *t != CellType::inactive())
+            .collect();
+        let names: Vec<&str> = types.iter().map(|t| t.as_str()).collect();
+        let slots = distinct_palette_slots(&names, self.view.palette.len());
+        for (ty, slot) in types.iter().zip(slots) {
+            if let Some(&c) = self.view.palette.get(slot) {
+                self.view.colors.insert(ty.0, c);
+            }
+        }
+    }
+
+    /// Apply the `colors` map from a config file. Unparseable values are
+    /// reported in the status bar and the automatic colour stays.
+    pub(in crate::gui) fn apply_config_colors(
+        &mut self,
+        colors: &std::collections::BTreeMap<String, String>,
+    ) {
+        for (name, hex) in colors {
+            match parse_hex_color(hex) {
+                Some(c) => self.set_color_for(&CellType::from(name.as_str()), c),
+                None => self.set_status(format!(
+                    "Config colour for '{name}' is not #rrggbb: {hex:?} (ignored)"
+                )),
+            }
+        }
     }
 
     pub(in crate::gui) fn reset_to_initial(&mut self) {
@@ -380,6 +419,57 @@ mod tests {
         assert!(matches!(app.scenario.dim, Some(Dim::D2)), "Life demo should be on screen");
         assert_eq!((app.inputs.grid_width, app.inputs.grid_height), (50, 30));
         assert!(status(&app).starts_with("Failed to load config"), "got {:?}", status(&app));
+    }
+
+    #[test]
+    fn loading_a_scenario_gives_each_declared_type_its_own_colour() {
+        let mut app = test_app();
+        app.load_demo_2d_three_state_cycle();
+        let types: Vec<CellType> = app
+            .declared_types()
+            .into_iter()
+            .filter(|t| *t != CellType::inactive())
+            .collect();
+        assert!(types.len() >= 3, "demo declares at least three types");
+        let colours: Vec<_> = types.iter().map(|t| app.color_of(t)).collect();
+        for i in 0..colours.len() {
+            for j in (i + 1)..colours.len() {
+                assert_ne!(colours[i], colours[j], "{} and {} share a colour", types[i].as_str(), types[j].as_str());
+            }
+        }
+    }
+
+    #[test]
+    fn config_colours_override_the_automatic_ones() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("cella_colour_test_{}.json", std::process::id()));
+        std::fs::write(
+            &path,
+            r##"{"dim":"2d","width":2,"height":1,"history_limit":0,
+                "initial":["Forest","Burning"],
+                "rule":{"subrules":[{"current_type":"Forest","criteria_type":"Burning","count":1,"op":"gt","range":1,"neighborhood":"Moore","randomness":null,"output_type":"Burning"}]},
+                "colors":{"Forest":"#2e8b57"}}"##,
+        )
+        .unwrap();
+        let mut app = test_app();
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(app.scenario.dim, Some(Dim::D2)), "got {:?}", status(&app));
+        let forest = app.color_of(&CellType::from("Forest"));
+        let burning = app.color_of(&CellType::from("Burning"));
+        assert_eq!(forest, egui::Color32::from_rgb(0x2e, 0x8b, 0x57), "config colour wins");
+        assert_ne!(forest, burning, "the other type still gets a distinct automatic colour");
+    }
+
+    #[test]
+    fn the_wildfire_demo_loads_with_its_four_evocative_colours() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_demo.json"));
+        let c = |n: &str| app.color_of(&CellType::from(n));
+        assert_eq!(c("Forest"), egui::Color32::from_rgb(0x2e, 0x8b, 0x57));
+        assert_eq!(c("Shrub"), egui::Color32::from_rgb(0x9a, 0xcd, 0x32));
+        assert_eq!(c("Burning"), egui::Color32::from_rgb(0xff, 0x45, 0x00));
+        assert_eq!(c("BurnedOut"), egui::Color32::from_rgb(0x6b, 0x6b, 0x6b));
     }
 
     #[test]

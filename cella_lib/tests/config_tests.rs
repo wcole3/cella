@@ -15,6 +15,7 @@ fn test_config_1d_file_io() {
     let init = vec!["A".to_string(), "B".to_string()];
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
+        colors: Default::default(),
         width: 2,
         history_limit: 5,
         initial: init.clone(),
@@ -53,6 +54,7 @@ fn test_config_2d_file_io() {
     ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: 2,
         height: 2,
         history_limit: 3,
@@ -86,6 +88,7 @@ fn test_build_grid1d_success() {
     let init = vec!["A".to_string(), "A".to_string()];
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
+        colors: Default::default(),
         width: 2,
         history_limit: 2,
         initial: init,
@@ -102,6 +105,7 @@ fn test_build_grid1d_fail_length() {
     let init = vec!["A".to_string()]; // Length 1
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
+        colors: Default::default(),
         width: 2, // Width 2 -> Mismatch
         history_limit: 2,
         initial: init,
@@ -119,6 +123,7 @@ fn test_build_grid1d_fail_wrong_dim() {
     let init = vec!["A".to_string()];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: 1,
         height: 1,
         history_limit: 2,
@@ -143,6 +148,7 @@ fn test_build_grid2d_success() {
     ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: 2,
         height: 2,
         history_limit: 2,
@@ -162,6 +168,7 @@ fn test_build_grid2d_fail_length() {
     let init = vec!["A".to_string()]; // Length 1
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        colors: Default::default(),
         width: 2,
         height: 2, // Need 4
         history_limit: 2,
@@ -181,6 +188,7 @@ fn test_build_grid2d_fail_wrong_dim() {
     let init = vec!["A".to_string()];
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
+        colors: Default::default(),
         width: 1,
         history_limit: 2,
         initial: init,
@@ -191,4 +199,22 @@ fn test_build_grid2d_fail_wrong_dim() {
         cfg.build_grid2d().is_none(),
         "Should return None when building Grid2D from D1 config"
     );
+}
+
+#[test]
+fn colors_parse_from_json_and_default_to_empty() {
+    let json = r##"{"dim":"2d","width":2,"height":1,"history_limit":0,
+        "initial":["A","B"],"rule":{"subrules":[]},
+        "colors":{"A":"#2e8b57","B":"#ff4500"}}"##;
+    let cfg: CellaConfig = serde_json::from_str(json).expect("parse");
+    assert_eq!(cfg.colors().get("A").map(String::as_str), Some("#2e8b57"));
+    assert_eq!(cfg.colors().get("B").map(String::as_str), Some("#ff4500"));
+
+    let json_1d = r#"{"dim":"1d","width":3,"history_limit":0,"initial":["A","B","A"],
+        "rule":{"subrules":[]}}"#;
+    let cfg_1d: CellaConfig = serde_json::from_str(json_1d).expect("parse 1d");
+    assert!(cfg_1d.colors().is_empty(), "missing field means no colours");
+    // An empty map is left out again when written back.
+    let back = serde_json::to_string(&cfg_1d).unwrap();
+    assert!(!back.contains("colors"), "got {back}");
 }

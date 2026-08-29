@@ -6,6 +6,7 @@ use crate::grid2d::Grid2D;
 use crate::rules::{Rule1D, Rule2D};
 use crate::types::CellType;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -43,6 +44,16 @@ pub enum CellaConfig {
     D2(Config2D),
 }
 
+impl CellaConfig {
+    /// The `colors` map of whichever variant this is (empty when the file had none).
+    pub fn colors(&self) -> &BTreeMap<String, String> {
+        match self {
+            CellaConfig::D1(c) => &c.colors,
+            CellaConfig::D2(c) => &c.colors,
+        }
+    }
+}
+
 /// 1D configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config1D {
@@ -54,6 +65,12 @@ pub struct Config1D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule1D,
+    /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
+    /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
+    /// GUI applies them on load, and any type not listed gets an automatic
+    /// colour. `"Inactive"` sets the background colour.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub colors: BTreeMap<String, String>,
 }
 
 /// 2D configuration.
@@ -73,6 +90,12 @@ pub struct Config2D {
     /// present it replaces the subrule engine. See [`crate::external`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<Box<dyn crate::external::ExternalModel>>,
+    /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
+    /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
+    /// GUI applies them on load, and any type not listed gets an automatic
+    /// colour. `"Inactive"` sets the background colour.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub colors: BTreeMap<String, String>,
 }
 
 impl CellaConfig {
@@ -153,6 +176,7 @@ mod tests {
     fn build_grid_rejects_mismatched_initial_lengths() {
         let rule1 = Rule1D { subrules: vec![] };
         let cfg1 = CellaConfig::D1(Config1D {
+            colors: Default::default(),
             width: 3,
             history_limit: 1,
             initial: vec!["A".to_string(), "B".to_string()],
@@ -162,6 +186,7 @@ mod tests {
 
         let rule2 = Rule2D { subrules: vec![] };
         let cfg2 = CellaConfig::D2(Config2D {
+            colors: Default::default(),
             width: 2,
             height: 2,
             history_limit: 1,
@@ -178,6 +203,7 @@ mod tests {
         let b = "B".to_string();
 
         let cfg1 = CellaConfig::D1(Config1D {
+            colors: Default::default(),
             width: 2,
             history_limit: 1,
             initial: vec![a.clone(), b.clone()],
@@ -187,6 +213,7 @@ mod tests {
         assert!(cfg1.build_grid2d().is_none());
 
         let cfg2 = CellaConfig::D2(Config2D {
+            colors: Default::default(),
             width: 1,
             height: 2,
             history_limit: 1,
@@ -223,6 +250,7 @@ mod tests {
         let _ = std::fs::remove_file(&bad_path);
 
         let cfg = CellaConfig::D1(Config1D {
+            colors: Default::default(),
             width: 1,
             history_limit: 0,
             initial: vec!["Inactive".to_string()],

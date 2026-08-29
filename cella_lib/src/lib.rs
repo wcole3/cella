@@ -382,6 +382,7 @@ mod tests {
         initial[1 * w + 2] = alive.as_str().to_string();
         initial[1 * w + 3.min(w - 1)] = alive.as_str().to_string();
         let cfg = CellaConfig::D2(Config2D {
+            colors: Default::default(),
             width: w,
             height: h,
             history_limit: hist,
@@ -1053,6 +1054,7 @@ mod more_tests {
             ],
         };
         let cfg = CellaConfig::D2(Config2D {
+            colors: Default::default(),
             width: w,
             height: h,
             history_limit: hist,
