@@ -1,20 +1,37 @@
 //! Driving the simulation forward and recording what happened.
 //!
-//! This is the clock of the application: it decides *when* a step runs
-//! (paced playback, or a "Run to +N" burst), performs the step, and appends
-//! the resulting population counts to the statistics series the chart reads.
+//! This is the clock of the application: it decides *when* a step runs,
+//! performs the step, and appends the resulting population counts to the
+//! statistics series the chart reads.
+//!
+//! Each frame takes exactly one of two paths. Ordinary playback is *paced*:
+//! at most one step per `refresh_ms`, because that interval is the animation
+//! speed the user chose. A "Run to +N" (and, later, "Max speed" playback) is a
+//! *burst*: it runs as many steps as fit in [`RUN_TO_FRAME_BUDGET`], so
+//! throughput is set by the engine rather than by the frame rate. The clock
+//! lives in [`CellaApp::tick_play`]; the stepping itself lives in the
+//! time-free [`CellaApp::run_to_batch`], which is what the tests drive.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use super::app::{CellaApp, Dim};
+use super::state::Pacing;
 use cella_lib::types::interner;
 use cella_lib::*;
 use lasso2::Spur;
 
-/// Upper bound on simulation steps executed in a single frame while a
-/// "Run to +N" target is pending, so the UI stays responsive.
-pub(in crate::gui) const RUN_TO_STEPS_PER_FRAME: u32 = 100;
+/// How long one frame may spend running steps during a burst, roughly half a
+/// 60 fps frame, so the UI still gets its turn and stays responsive.
+pub(in crate::gui) const RUN_TO_FRAME_BUDGET: Duration = Duration::from_millis(8);
+
+/// Absolute backstop on steps run in a single frame, so a trivial rule on a
+/// coarse system clock cannot make the burst loop effectively unbounded.
+pub(in crate::gui) const RUN_TO_MAX_STEPS_PER_FRAME: u32 = 1_000_000;
+
+/// How many steps a burst runs between readings of the clock. Small enough
+/// that the budget is honoured, large enough that `Instant::now()` is noise.
+pub(in crate::gui) const RUN_TO_CHUNK: u32 = 32;
 
 impl CellaApp {
     /// Advance the automaton one step and maintain the 1D history buffer.
@@ -68,31 +85,69 @@ impl CellaApp {
             None => 0,
         }
     }
-    /// Play loop with fixed refresh step cadence; also handles "Run to +N".
+    /// The step number this frame should burst towards, or `None` when
+    /// playback is paced (or stopped) and so runs at most one step per frame.
+    ///
+    /// A pending "Run to +N" bursts towards its target; unbounded playback has
+    /// no target, so it bursts towards `u64::MAX` and simply never arrives.
+    pub(in crate::gui) fn burst_target(&self) -> Option<u64> {
+        match self.playback.run_to_target {
+            Some(target) => Some(target),
+            None if self.playback.playing && self.playback.pacing == Pacing::Unbounded => {
+                Some(u64::MAX)
+            }
+            None => None,
+        }
+    }
+    /// Step towards `target` up to `max_steps` times, and report how many steps
+    /// actually ran (fewer than `max_steps` means the target was reached).
+    ///
+    /// Reads no clock at all: [`CellaApp::tick_play`] owns the time budget and
+    /// calls this in small chunks, which is what makes the loop unit-testable.
+    pub(in crate::gui) fn run_to_batch(&mut self, target: u64, max_steps: u32) -> u32 {
+        let mut done = 0;
+        while done < max_steps && self.current_step() < target {
+            self.step_once();
+            done += 1;
+        }
+        done
+    }
+    /// Play loop: exactly one of two branches steps per frame — a time-budgeted
+    /// burst, or a single step paced by the refresh interval.
     pub(in crate::gui) fn tick_play(&mut self) {
-        // Fixed refresh: step at most once per refresh interval under play.
+        let run_to = self.playback.run_to_target;
+        if let Some(target) = self.burst_target() {
+            // Burst: keep stepping until the frame's time budget is spent. The
+            // clock is read once per chunk rather than once per step, which on
+            // any realistic grid is noise next to the steps themselves.
+            let deadline = Instant::now() + RUN_TO_FRAME_BUDGET;
+            let mut done = 0u32;
+            while Instant::now() < deadline && done < RUN_TO_MAX_STEPS_PER_FRAME {
+                let n = self.run_to_batch(target, RUN_TO_CHUNK);
+                done += n;
+                if n < RUN_TO_CHUNK {
+                    break; // reached the target
+                }
+            }
+            if run_to.is_some() && self.current_step() >= target {
+                // The run finished: hand `playing` back the way "Run to +N"
+                // found it, and close the timer segment only if it stops here.
+                self.playback.run_to_target = None;
+                self.playback.playing = self.playback.playing_before_run_to;
+                if !self.playback.playing
+                    && let Some(start) = self.playback.play_start.take()
+                {
+                    self.playback.elapsed += start.elapsed();
+                }
+            }
+            return;
+        }
+        // Paced: step at most once per refresh interval under play.
         let now = Instant::now();
         let interval = Duration::from_millis(self.playback.refresh_ms);
         if self.playback.playing && now.duration_since(self.playback.last_tick) >= interval {
             self.playback.last_tick = now;
             self.step_once();
-        }
-        if let Some(target) = self.playback.run_to_target {
-            // Cap steps per frame so a large "Run to +N" still lets the UI render.
-            for _ in 0..RUN_TO_STEPS_PER_FRAME {
-                if self.current_step() >= target {
-                    break;
-                }
-                self.step_once();
-            }
-            if self.current_step() >= target {
-                self.playback.run_to_target = None;
-                self.playback.playing = false;
-                // Stop timer when run-to completes
-                if let Some(start) = self.playback.play_start.take() {
-                    self.playback.elapsed += start.elapsed();
-                }
-            }
         }
     }
     /// Internal: clear and initialize statistics history/toggles from current grid.
@@ -186,5 +241,81 @@ impl CellaApp {
 
         self.stats.history = history;
         self.stats.show = show;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::state::{
+        Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
+        ViewSettings,
+    };
+
+    /// A real `CellaApp` running the built-in 2D Life demo.
+    ///
+    /// The production constructor needs an `eframe::CreationContext`, which only
+    /// exists once a window is open, so the struct is built field by field here
+    /// and then handed the same demo scenario `CellaApp::new` loads.
+    fn test_app_with_life() -> CellaApp {
+        let ctx = egui::Context::default();
+        let mut app = CellaApp {
+            scenario: Scenario::default(),
+            playback: Playback::default(),
+            view: ViewSettings::default(),
+            edit: EditState::default(),
+            export: ExportState::default(),
+            stats: StatsState::default(),
+            editor: EditorState::default(),
+            chrome: Chrome::new(&ctx),
+            inputs: Inputs::default(),
+        };
+        app.load_demo_life();
+        app
+    }
+
+    #[test]
+    fn run_to_batch_stops_early_when_it_reaches_the_target() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+
+        let done = app.run_to_batch(start + 5, 32);
+
+        assert_eq!(done, 5, "should stop at the target, not run the whole batch");
+        assert_eq!(app.current_step(), start + 5);
+    }
+
+    #[test]
+    fn run_to_batch_stops_at_max_steps_for_a_far_target() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+
+        let done = app.run_to_batch(start + 10_000, 32);
+
+        assert_eq!(done, 32, "a far target should use the whole batch");
+        assert_eq!(app.current_step(), start + 32);
+    }
+
+    #[test]
+    fn run_to_batch_does_nothing_when_the_target_is_already_reached() {
+        let mut app = test_app_with_life();
+        app.run_to_batch(app.current_step() + 3, 32);
+        let start = app.current_step();
+
+        let done = app.run_to_batch(start, 32);
+
+        assert_eq!(done, 0);
+        assert_eq!(app.current_step(), start, "the grid must not have stepped");
+    }
+
+    #[test]
+    fn run_to_batch_advances_the_step_counter_by_what_it_returns() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+
+        let done = app.run_to_batch(start + 7, 32);
+
+        assert_eq!(app.current_step(), start + u64::from(done));
+        assert_eq!(done, 7);
     }
 }

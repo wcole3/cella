@@ -30,6 +30,16 @@ pub(in crate::gui) struct Scenario {
     pub(in crate::gui) initial_state: Option<GridState>,
 }
 
+/// How playback is paced: one step per interval, or as many as fit in a frame budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::gui) enum Pacing {
+    /// One step per `refresh_ms`, the animation speed the user chose.
+    Interval,
+    /// As many steps as fit in one frame's time budget. Reserved for the
+    /// "Max speed" playback setting; nothing selects it yet.
+    Unbounded,
+}
+
 /// Play/pause, the "Run to +N" target, and the stopwatch behind the
 /// "Avg ms/step" readout in the status bar.
 pub(in crate::gui) struct Playback {
@@ -37,10 +47,16 @@ pub(in crate::gui) struct Playback {
     /// Milliseconds between steps while playing.
     pub(in crate::gui) refresh_ms: u64,
     pub(in crate::gui) last_tick: Instant,
+    /// Whether playing means one step per `refresh_ms` or a full frame budget
+    /// of steps. "Run to +N" bursts regardless of this setting.
+    pub(in crate::gui) pacing: Pacing,
     /// How many steps the "Run to +N" button should advance.
     pub(in crate::gui) run_to_steps: u64,
     /// The step number a pending "Run to +N" is heading for.
     pub(in crate::gui) run_to_target: Option<u64>,
+    /// Whether playback was already running when "Run to +N" was pressed, so a
+    /// finished run can leave `playing` the way it found it.
+    pub(in crate::gui) playing_before_run_to: bool,
     /// Time accumulated over completed play segments.
     pub(in crate::gui) elapsed: Duration,
     /// Steps counted while the stopwatch was running.
@@ -55,8 +71,10 @@ impl Default for Playback {
             playing: false,
             refresh_ms: 100,
             last_tick: Instant::now(),
+            pacing: Pacing::Interval,
             run_to_steps: 100,
             run_to_target: None,
+            playing_before_run_to: false,
             elapsed: Duration::ZERO,
             timed_steps: 0,
             play_start: None,

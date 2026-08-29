@@ -23,7 +23,10 @@ impl CellaApp {
                     self.playback.play_start = Some(Instant::now());
                     self.set_status("Playing");
                 } else {
-                    // Pause: flush the current play segment into accumulated elapsed
+                    // Pause: cancel any pending "Run to +N" too, otherwise the
+                    // burst loop keeps stepping and only Reset can stop it.
+                    self.playback.run_to_target = None;
+                    // Flush the current play segment into accumulated elapsed
                     if let Some(start) = self.playback.play_start.take() {
                         self.playback.elapsed += start.elapsed();
                     }
@@ -51,6 +54,9 @@ impl CellaApp {
                     .current_step()
                     .saturating_add(self.playback.run_to_steps);
                 self.playback.run_to_target = Some(target);
+                // Remember how playback was set up so the finished run can
+                // restore it instead of always stopping.
+                self.playback.playing_before_run_to = self.playback.playing;
                 self.playback.playing = true; // ensure stepping
                 if self.playback.play_start.is_none() {
                     self.playback.play_start = Some(Instant::now());

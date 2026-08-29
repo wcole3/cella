@@ -382,7 +382,11 @@ impl CellaApp {
         // Only drive continuous repaints when something is actually animating.
         // Previously this pinned the app at ~100 fps (and full CPU/GPU) even while
         // paused with nothing on screen changing; egui repaints on input anyway.
-        if self.playback.playing || self.playback.run_to_target.is_some() {
+        if self.burst_target().is_some() {
+            // Bursting: come straight back so consecutive frame budgets run
+            // back-to-back and throughput is set by the engine, not the clock.
+            ctx.request_repaint();
+        } else if self.playback.playing {
             // Wake up in time for the next simulation tick, capped so the timer
             // readout in the status bar still updates smoothly.
             ctx.request_repaint_after(Duration::from_millis(self.playback.refresh_ms.min(100)));
