@@ -40,6 +40,16 @@ impl<F: Fn(CellType) -> Color32> RowPainter<'_, F> {
     }
 
     /// Emit merged runs of same-colored cells for the cells `xs` of grid row `row_y`.
+    ///
+    /// A run extends while the **cell type** stays the same: comparing
+    /// `CellType` (a `u32`-sized interned key) is a single integer
+    /// comparison, so most cells cost nothing more than that. A color is
+    /// resolved only when the type changes, and if that new color happens
+    /// to equal the run's current color — two distinct types can share a
+    /// color, via a user's choice in the Colors panel or a palette-index
+    /// collision (`palette_index_for`) — the run is extended anyway rather
+    /// than flushed, so the emitted rectangles match comparing colors
+    /// directly, cell for cell.
     pub(in crate::gui) fn emit_row(
         &mut self,
         row_y: usize,
@@ -50,26 +60,42 @@ impl<F: Fn(CellType) -> Color32> RowPainter<'_, F> {
             return;
         }
         let (x_start, x_end) = (xs.start, xs.end);
+        let (origin_x, scale, bg) = (self.origin.x, self.scale, self.bg);
         let y = self.origin.y + row_y as f32 * self.scale;
+        // Doesn't capture `self`, so it can be called while `self.color_of`
+        // still holds a mutable borrow of `self` further down the loop.
+        let flush = |shapes: &mut Vec<Shape>, start: usize, end: usize, color: Color32| {
+            if color != bg {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(origin_x + start as f32 * scale, y),
+                    egui::vec2((end - start) as f32 * scale, scale),
+                );
+                shapes.push(Shape::rect_filled(rect, 0.0, color));
+            }
+        };
         let mut run_start = x_start;
-        let mut run_color = self.color_of(cell_at(x_start));
+        let mut run_ty = cell_at(x_start);
+        let mut run_color = self.color_of(run_ty);
         for x in (x_start + 1)..=x_end {
             // At `x_end` the sentinel forces the final run to be flushed.
-            let col = if x < x_end {
-                self.color_of(cell_at(x))
-            } else {
-                run_color
-            };
-            if x == x_end || col != run_color {
-                if run_color != self.bg {
-                    let rect = egui::Rect::from_min_size(
-                        egui::pos2(self.origin.x + run_start as f32 * self.scale, y),
-                        egui::vec2((x - run_start) as f32 * self.scale, self.scale),
-                    );
-                    self.shapes.push(Shape::rect_filled(rect, 0.0, run_color));
+            if x < x_end {
+                let ty = cell_at(x);
+                if ty == run_ty {
+                    continue;
                 }
+                // Type changed: only now is a color resolved, to check
+                // whether the run really ends or just changed type.
+                let color = self.color_of(ty);
+                run_ty = ty;
+                if color == run_color {
+                    // Different type, same color: extend the run anyway.
+                    continue;
+                }
+                flush(self.shapes, run_start, x, run_color);
                 run_start = x;
-                run_color = col;
+                run_color = color;
+            } else {
+                flush(self.shapes, run_start, x, run_color);
             }
         }
     }
@@ -355,6 +381,41 @@ mod tests {
     fn background_runs_are_not_painted() {
         // Only the two "R" cells at x=1..3 should produce geometry.
         assert_eq!(runs_for(&["_", "R", "R", "_"], 0..4), vec![(1, 2)]);
+    }
+
+    #[test]
+    fn distinct_types_sharing_a_color_merge_into_one_rect() {
+        // "R" and "R2" are different cell types but both resolve to RED (a
+        // palette collision or a user assigning the same color to two
+        // types). The old color-only merge and the new type-aware merge
+        // must agree here: one rectangle, not two.
+        const SCALE: f32 = 4.0;
+        let cells = ["R", "R2", "R", "R2"];
+        let types: Vec<CellType> = cells.iter().map(|s| CellType::from(*s)).collect();
+        let mut shapes = Vec::new();
+        let mut painter = RowPainter {
+            shapes: &mut shapes,
+            color_cache: Vec::new(),
+            resolve: |ty: CellType| match ty.as_str() {
+                "R" | "R2" => RED,
+                _ => BG,
+            },
+            origin: egui::pos2(0.0, 0.0),
+            scale: SCALE,
+            bg: BG,
+        };
+        painter.emit_row(0, 0..types.len(), |x| types[x]);
+        let runs: Vec<(usize, usize)> = shapes
+            .iter()
+            .map(|s| match s {
+                Shape::Rect(r) => (
+                    (r.rect.min.x / SCALE).round() as usize,
+                    (r.rect.width() / SCALE).round() as usize,
+                ),
+                other => panic!("expected a rect, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(runs, vec![(0, 4)]);
     }
 
     #[test]
