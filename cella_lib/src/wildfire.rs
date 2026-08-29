@@ -1745,6 +1745,15 @@ mod tests {
             for end in ends {
                 g.set_model_param(&d.key, end.clone())
                     .unwrap_or_else(|e| panic!("'{}' rejected its own bound {end:?}: {e}", d.key));
+                // set_model_param only re-runs attach for a `reattach`
+                // parameter, so for all the others — every spotting key among
+                // them — nothing above has yet asked attach what it makes of
+                // the value. Handing the model back through attach_model asks
+                // it, about this end stop and every one already set.
+                let model = g.model.take().expect("the fixture attached a model");
+                g.attach_model(model).unwrap_or_else(|e| {
+                    panic!("attach refused '{}' at its bound {end:?}: {e}", d.key)
+                });
             }
         }
         // The one read-only control is refused by the engine, not by a bound.

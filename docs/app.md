@@ -100,19 +100,29 @@ matches, that is a hint the thing deserves its own module.
 #### Model Panel (Left Side)
 This panel only appears when the loaded config has a `model` (e.g.
 `configs/2d_wildfire_demo.json`) — a scenario with no model, like Game of
-Life, shows nothing here. Its controls are grouped under headings the model
-supplies (for the wildfire model: Wind, Fire, Terrain, and Spotting when
-spotting is turned on). Cheap parameters commit as soon as you move their
-slider, so the effect looks live; a handful of expensive ones wait until you
-release the slider or click away, so an internal rebuild only happens once
-per edit instead of once per frame. A read-only parameter, such as the seed,
-shows as a plain label instead of a control — there is nothing to drag.
-Entering a value outside a parameter's allowed range is refused: the error
-appears in the status bar and the control snaps back to its last accepted
-value. Pressing **Reset** rewinds the grid but keeps the values you set with
-the sliders — an accepted edit is mirrored into the same snapshot Reset
-restores from, so tuning a model and then resetting the cells does not also
-undo your tuning.
+Life, shows nothing here. The section starts expanded, and its controls are
+grouped under headings the model supplies (for the wildfire model: Wind, Fire,
+Terrain, and Spotting when spotting is turned on). Cheap parameters commit as
+soon as you move their slider, so the effect looks live; a handful of
+expensive ones wait until the gesture is over — you release the slider, tap an
+arrow key, or click away — so an internal rebuild only happens once per edit
+instead of once per frame. Opening the panel changes nothing by itself: a
+value is only written when it actually differs from the one the model already
+holds. A read-only parameter, such as the seed, shows as a plain label instead
+of a control — there is nothing to drag.
+
+The controls keep you inside each parameter's allowed range: a slider stops at
+its end stops, and a value you type is pulled back into range before the panel
+sees it, so an out-of-range number never reaches the model. A parameter error
+in the status bar therefore means something rarer — the model's own validation
+refused a value its own descriptor said was allowed. No wildfire parameter
+does that today (a test pins every descriptor's end stops to values the model
+accepts), so in practice you will not see one.
+
+Pressing **Reset** rewinds the grid but keeps the values you set with the
+sliders — an accepted edit is mirrored into the same snapshot Reset restores
+from, so tuning a model and then resetting the cells does not also undo your
+tuning.
 
 While you step or play normally, the history chart gains one point per step. A
 "Run to +N" run is different: it packs as many steps as it can into each drawn

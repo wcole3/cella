@@ -418,13 +418,19 @@ Commits `6d7e9b3..ad3654d`.
 - **§3.4 — the generic panel**, new file `src/gui/panels/model.rs`, wired
   into `ui_left_panel` in `src/gui/app.rs`. `ui_model_params` draws nothing
   when no model is attached, otherwise one control per `ParamDesc` under a
-  heading of `model.typetag_name()`. All of its decision logic lives in two
-  pure, unit-tested functions with no egui dependency: `group_params` (stable
-  ordering — ungrouped first, then each group in first-appearance order) and
-  `commit_on` (a `reattach: false` parameter commits on every widget change;
-  `reattach: true` waits for the drag or edit to end; `read_only` never
-  commits). `CellaApp::apply_model_param` calls `Grid2D::set_model_param` and,
-  on success, `mirror_param_into_initial_state`, which copies the accepted
+  heading of `model.typetag_name()`, in a section that starts expanded. Its
+  decision logic lives in pure, unit-tested functions with no egui dependency:
+  `group_params` (stable ordering — ungrouped first, then each group in
+  first-appearance order), `commit_on` (a `reattach: false` parameter commits
+  on every widget change; `reattach: true` waits for the gesture to end;
+  `read_only` never commits), and `gesture_ended` (a drag release, a lost
+  focus, or any change made without dragging). `commit_now` joins them to an
+  `egui::Response` and refuses to commit a value equal to the one the model
+  already holds; the widgets themselves clamp only edits
+  (`SliderClamping::Edits`, `clamp_existing_to_range(false)`), so an existing
+  off-grid value is shown rather than rewritten. `CellaApp::apply_model_param`
+  calls `Grid2D::set_model_param` and, on success,
+  `mirror_param_into_initial_state`, which copies the accepted
   key/value into the model cloned inside `scenario.initial_state` with a
   plain `set_param` call — so `reset_to_initial` rewinds the cells but keeps
   the parameter value someone just set with a slider, instead of snapping it
@@ -453,7 +459,12 @@ Commits `6d7e9b3..ad3654d`.
   per-scenario commands and checksums.
 - **Still owed**: the manual GL checks in §5 for §3.4 (the wildfire-demo
   panel walkthrough and the "no model" negative case) have not been run —
-  this environment cannot launch the GUI (see §1's WSLg/Mesa blocker).
+  this environment cannot launch the GUI (see §1's WSLg/Mesa blocker). The
+  walkthrough must include one check the headless tests can only approximate:
+  open the demo's panel, touch nothing, and confirm `c2` still reads exactly
+  `0.131`. A widget that rewrites an existing value onto its own step grid
+  would show `0.13` there and would have written that value to the model and
+  to the Reset snapshot.
 
 ### The problem
 
@@ -659,11 +670,20 @@ called from `ui_left_panel` alongside the colours and statistics panels.
 - Read `model.params()`, group by `ParamDesc::group`, and map each `kind` to a
   widget: `Float` → `Slider` with `step_by`, `suffix`, and `on_hover_text`;
   `Int` → `DragValue` with `.range()`; `Bool` → `Checkbox`; `Choice` →
-  `ComboBox`.
+  `ComboBox`. Sliders must also set `.clamping(SliderClamping::Edits)` (and
+  `DragValue` `.clamp_existing_to_range(false)`), so a value that is already
+  off the step grid or outside the range is *displayed* rather than rewritten:
+  egui 0.35 defaults to clamping existing values on every draw and reporting
+  that as a change, which would make "commit on `changed()` for cheap
+  parameters" write a value nobody touched the first time the panel is drawn.
 - **Commit timing follows `reattach`:** use `response.changed()` for
-  `reattach: false` so cheap parameters stay smooth under a drag, and
-  `response.drag_stopped() || response.lost_focus()` for `reattach: true` so the
-  expensive rebuild happens once per gesture rather than once per frame.
+  `reattach: false` so cheap parameters stay smooth under a drag, and, for
+  `reattach: true`, the end of the gesture — `drag_stopped() || lost_focus() ||
+  (changed() && !dragged())` — so the expensive rebuild happens once per
+  gesture rather than once per frame. The last clause matters: a focused slider
+  takes arrow keys, and a keyboard edit is a whole gesture with no drag in it.
+  Guard every commit with "the widget's value differs from the model's", so a
+  bare click or a Tab away never pays for a rebuild that changes nothing.
 - `read_only` descriptors render as a label, never a control.
 - On `Err` from `set_model_param`, report via the existing `set_status` and
   redraw the widget from `get_param` — rollback has already restored it.
@@ -679,12 +699,17 @@ model; Reset should rewind the cells, not the sliders. After a successful
 `attach` on restore anyway. Mention this in the app.md note from §2.3 too.
 
 **Keep egui out of the decision logic.** Automated tests cannot easily enter
-egui closures (see §1), so put everything worth testing in two pure functions:
+egui closures (see §1), so put everything worth testing in pure functions:
 
 ```rust
 fn group_params(descs: Vec<ParamDesc>) -> Vec<(Option<String>, Vec<ParamDesc>)>
-fn commit_on(desc: &ParamDesc, changed: bool, drag_stopped: bool) -> bool
+fn commit_on(desc: &ParamDesc, changed: bool, ended: bool) -> bool
+fn gesture_ended(changed: bool, dragged: bool, drag_stopped: bool, lost_focus: bool) -> bool
 ```
+
+Only the thin adapter that reads those four flags off an `egui::Response` and
+compares the widget's value with the model's needs a real `Ui`, and
+`egui::__run_test_ui` gives the tests one of those headlessly.
 
 Group order must be stable: the ungrouped bucket first, then groups in
 first-appearance order. This mirrors how `RowPainter` is already tested through
@@ -893,11 +918,17 @@ cargo run --release -- --gui --size=1600x900
   button must stay clickable throughout **and must actually stop the run**
   (today it does not — see §2.2).
 - **§3.4** — load `configs/2d_wildfire_demo.json`. A panel titled with the model
-  name appears, with Wind / Fire / Terrain / Spotting groups. Dragging Wind
-  direction visibly bends the fire front on the next step, with no stutter.
-  Entering an out-of-range `p0` shows an error in the status bar and the slider
-  snaps back to its previous value. Seed shows as a label, not a control.
-  Change Wind speed, press Reset: the new wind speed must survive.
+  name appears already expanded, with Wind / Fire / Terrain / Spotting groups.
+  Dragging Wind direction visibly bends the fire front on the next step, with
+  no stutter. Without touching anything, check that `c2` still reads `0.131`
+  exactly, the value the demo config sets — the controls must display an
+  off-grid value, not round it onto the slider's step grid. The controls hold
+  you inside each range (the `p0` slider stops at its end stops, a typed value
+  is clamped before the panel sees it), so no out-of-range value can reach the
+  model; a status-bar error appears only if a model's own `attach` refuses a
+  value its descriptor allowed, which no wildfire parameter does today. Seed
+  shows as a label, not a control, and hovering it shows its tooltip. Change
+  Wind speed, press Reset: the new wind speed must survive.
 - **§3.4, negative case** — load `configs/life.json`, which has no model. No
   model panel should appear at all.
 - **§4** — exercise every shortcut. Confirm that Randomize with a fixed seed,

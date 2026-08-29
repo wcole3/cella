@@ -198,12 +198,25 @@ pub trait ExternalModel: Send + Sync {
 
     /// Current value of `key`, or `None` if this model has no such
     /// parameter. Default: `None` for every key.
+    ///
+    /// Every key [`Self::params`] lists must return `Some` — the engine's
+    /// rollback depends on it. [`crate::Grid2D::set_model_param`] restores the
+    /// value this method reported when a re-attach rejects an edit, so a
+    /// `reattach` key with no value here has no way back; the engine refuses
+    /// to write such a key at all rather than strand the model.
     fn get_param(&self, _key: &str) -> Option<ParamValue> {
         None
     }
 
     /// Write `key`. Implementations need only check what `attach` does not;
     /// the engine re-runs `attach` and rolls back on failure.
+    ///
+    /// This method validates nothing and rebuilds nothing on its own: it does
+    /// not check the descriptor's bounds, and it does not refresh derived
+    /// state. Library callers should go through
+    /// [`crate::Grid2D::set_model_param`], which does both. Calling it
+    /// directly is for a model that is not attached to a grid — the clone
+    /// inside a snapshot, say, which is re-attached when it is restored.
     ///
     /// Default: every key is rejected with [`ModelError::InvalidParam`],
     /// which is correct for a model that declares no parameters via
@@ -321,14 +334,20 @@ impl Grid2D {
     /// derived state and applying whatever deeper checks the model makes.
     ///
     /// On a failed re-attach the previous value is written back and `attach` is
-    /// run again, so a rejected edit cannot leave the model in a state `attach`
-    /// would not accept.
+    /// run again. That is what keeps a rejected edit from leaving the model in
+    /// a state `attach` would not accept — and it rests on one contract the
+    /// model has to keep: every key [`ExternalModel::params`] lists must have a
+    /// value [`ExternalModel::get_param`] returns, because that value is the
+    /// only thing there is to put back. A `reattach` key that breaks the
+    /// contract is refused before the model is written, since a rollback for it
+    /// would have nowhere to go.
     ///
     /// The call fails with [`ModelError::InvalidParam`] when no model is
-    /// attached, the key is unknown, the parameter is read-only, or the value
-    /// does not fit the parameter's [`ParamKind`]. An error from the model's
-    /// own [`ExternalModel::set_param`], or from a rejected `attach`, is
-    /// returned unchanged.
+    /// attached, the key is unknown, the parameter is read-only, the value does
+    /// not fit the parameter's [`ParamKind`], or the parameter says `reattach`
+    /// while `get_param` has no value for it. An error from the model's own
+    /// [`ExternalModel::set_param`], or from a rejected `attach`, is returned
+    /// unchanged.
     pub fn set_model_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
         // Borrow the fields separately so a read-only view of the grid can be
         // built while the model is mutably borrowed.
@@ -359,7 +378,17 @@ impl Grid2D {
         }
         check_value_against_kind(&desc.kind, &value).map_err(|e| with_param_key(key, e))?;
 
+        // Read the old value before anything is written: it is what a failed
+        // re-attach has to put back. A `reattach` parameter the model will not
+        // report a value for has no such fallback, so the write is refused
+        // here, with the model untouched, rather than risking a rollback that
+        // cannot restore anything.
         let prev = model.get_param(key);
+        if desc.reattach && prev.is_none() {
+            return Err(ModelError::InvalidParam(format!(
+                "'{key}' is listed by params() but get_param returns no value for it"
+            )));
+        }
         model.set_param(key, value)?;
 
         if desc.reattach {
@@ -373,7 +402,9 @@ impl Grid2D {
                 // Roll back: the old value is one the model already accepted,
                 // so both calls here are expected to succeed and their results
                 // carry no new information — the original error is what the
-                // caller needs.
+                // caller needs. `prev` is always `Some` on this path, because
+                // the guard above refuses a `reattach` key without one; the
+                // `if let` is only how that is unwrapped without a panic.
                 if let Some(prev) = prev {
                     let _ = model.set_param(key, prev);
                 }
@@ -671,6 +702,69 @@ mod tests {
     #[typetag::serde(name = "test_bare")]
     impl ExternalModel for BareModel {
         fn attach(&mut self, _view: &GridView<'_>) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+            next.fill(ctx.inactive);
+            Vec::new()
+        }
+
+        fn boxed_clone(&self) -> Box<dyn ExternalModel> {
+            Box::new(self.clone())
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    /// A model that breaks the one promise `params()` makes: it advertises two
+    /// keys — one `reattach: true`, one not — that its `get_param` will not
+    /// answer.
+    ///
+    /// `get_param` is left at the trait default (`None` for everything), which
+    /// is exactly the mistake a model author makes by forgetting to extend
+    /// `get_param` after adding a descriptor. `set_param` records that it was
+    /// called, so a test can prove the engine refused the write before the
+    /// model was touched.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub(crate) struct ForgetfulModel {
+        #[serde(skip)]
+        pub written: bool,
+    }
+
+    #[typetag::serde(name = "test_forgetful")]
+    impl ExternalModel for ForgetfulModel {
+        fn attach(&mut self, _view: &GridView<'_>) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        fn params(&self) -> Vec<ParamDesc> {
+            // The same omission twice, once on each side of the guard:
+            // `ghost` needs a rollback value and has none, `cheap` never
+            // rebuilds anything and so never needs one.
+            ["ghost", "cheap"]
+                .into_iter()
+                .map(|key| ParamDesc {
+                    key: key.into(),
+                    label: key.into(),
+                    group: None,
+                    help: None,
+                    unit: None,
+                    kind: ParamKind::Float {
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.1,
+                    },
+                    reattach: key == "ghost",
+                    read_only: false,
+                })
+                .collect()
+        }
+
+        fn set_param(&mut self, _key: &str, _value: ParamValue) -> Result<(), ModelError> {
+            self.written = true;
             Ok(())
         }
 
@@ -1056,6 +1150,61 @@ mod tests {
         // The model is still attached and the grid still steps.
         g.step();
         assert_eq!(g.cell_type(0), CellType::new("X"));
+    }
+
+    #[test]
+    fn set_model_param_refuses_a_reattach_key_get_param_will_not_answer() {
+        // Rollback after a rejected attach can only put back a value
+        // `get_param` handed out. For a `reattach` parameter with no such
+        // value the engine would have no way home, so it refuses the write
+        // outright rather than risk stranding the model in a state its own
+        // attach would not accept.
+        use crate::{Grid2D, Rule2D};
+        let a = CellType::new("A");
+        let mut g = Grid2D::new(2, 2, 0, vec![a; 4], Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(ForgetfulModel { written: false }))
+            .unwrap();
+
+        let err = g
+            .set_model_param("ghost", ParamValue::Float(0.5))
+            .unwrap_err();
+
+        assert!(matches!(err, ModelError::InvalidParam(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("ghost"), "names the key: {msg}");
+        assert!(
+            msg.contains("get_param"),
+            "says which half of the model is at fault: {msg}"
+        );
+        let written = g
+            .model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<ForgetfulModel>()
+            .unwrap()
+            .written;
+        assert!(!written, "the model must never have been written");
+
+        // The guard is exactly as wide as the rollback that needs it. The same
+        // model forgets `cheap` too, but nothing re-attaches for a
+        // `reattach: false` parameter, so there is no rollback to strand and
+        // the write goes through.
+        g.set_model_param("cheap", ParamValue::Float(0.5))
+            .expect("a cheap parameter needs no rollback value");
+        let written = g
+            .model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<ForgetfulModel>()
+            .unwrap()
+            .written;
+        assert!(written, "the cheap write reached the model");
+
+        // And nothing else about it was disturbed: the grid it is attached to
+        // still clones and still steps.
+        let mut copy = g.clone();
+        copy.step();
+        assert_eq!(copy.step, 1, "a refused parameter does not stop the model");
     }
 
     #[test]
