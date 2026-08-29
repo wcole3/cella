@@ -287,6 +287,8 @@ impl CellaApp {
                             }
                         });
                         ui.separator();
+                        self.ui_model_params(ui);
+                        ui.separator();
                         self.ui_colors(ui);
                         ui.separator();
                         self.ui_statistics(ui);

@@ -782,4 +782,149 @@ mod tests {
             "Reset always leaves playback stopped"
         );
     }
+
+    /// A `CellaApp` running the Life demo with an external model attached to
+    /// both the live grid and the snapshot Reset restores.
+    ///
+    /// Naming a concrete model is fine here: this is the test module, and the
+    /// panel under test (`gui/panels/model.rs`) still knows nothing about it.
+    /// A real model is what makes the test meaningful — it exercises the same
+    /// `params()` / `set_param` path the panel drives.
+    fn test_app_with_model() -> CellaApp {
+        let mut app = test_app_with_life();
+        let params = WildfireParams {
+            seed: 7,
+            p0: 0.3,
+            fuels: vec![FuelClass {
+                name: "Forest".to_string(),
+                veg_factor: 1.0,
+            }],
+            wind_speed: 1.0,
+            wind_dir_deg: 0.0,
+            c1: 0.045,
+            c2: 0.131,
+            slope_a: 0.078,
+            cell_size: 30.0,
+            burn_duration: 1,
+            spotting: None,
+            burning_name: None,
+            burned_name: None,
+        };
+        let model = WildfireModel::new(params, WildfireEnv::default());
+        app.scenario
+            .d2
+            .as_mut()
+            .expect("the Life demo loads a 2D grid")
+            .attach_model(Box::new(model))
+            .expect("the model must validate against the demo grid");
+        // Re-take the snapshot so Reset would restore the model too, exactly
+        // as loading a config with a model does.
+        app.scenario.initial_state = app.scenario.d2.as_ref().map(GridState::from_grid2d);
+        // Loading the demo left a status message behind; clear it so a test can
+        // tell whether a parameter edit produced one.
+        app.chrome.status_message = None;
+        app
+    }
+
+    /// What the live grid's model currently says `key` is worth.
+    fn live_param(app: &CellaApp, key: &str) -> Option<ParamValue> {
+        app.scenario.d2.as_ref()?.model.as_ref()?.get_param(key)
+    }
+
+    /// What the snapshot Reset restores currently says `key` is worth.
+    fn snapshot_param(app: &CellaApp, key: &str) -> Option<ParamValue> {
+        match app.scenario.initial_state.as_ref()? {
+            GridState::D2 { model, .. } => model.as_ref()?.get_param(key),
+            GridState::D1 { .. } => None,
+        }
+    }
+
+    #[test]
+    fn editing_a_model_parameter_also_moves_the_reset_snapshot() {
+        let mut app = test_app_with_model();
+
+        app.apply_model_param("wind_speed", ParamValue::Float(7.5));
+
+        assert_eq!(
+            live_param(&app, "wind_speed"),
+            Some(ParamValue::Float(7.5)),
+            "the live model takes the edit"
+        );
+        assert_eq!(
+            snapshot_param(&app, "wind_speed"),
+            Some(ParamValue::Float(7.5)),
+            "Reset must rewind the cells, not the sliders"
+        );
+        assert_eq!(app.chrome.status_message, None, "a good edit is not news");
+    }
+
+    #[test]
+    fn a_rejected_model_parameter_leaves_both_models_alone() {
+        let mut app = test_app_with_model();
+        let before = snapshot_param(&app, "wind_speed");
+
+        // Far outside the descriptor's range, so the engine refuses it.
+        app.apply_model_param("wind_speed", ParamValue::Float(9_999.0));
+
+        assert_eq!(
+            live_param(&app, "wind_speed"),
+            before,
+            "a refused edit is rolled back on the live model"
+        );
+        assert_eq!(
+            snapshot_param(&app, "wind_speed"),
+            before,
+            "and never reaches the snapshot"
+        );
+        let msg = app.chrome.status_message.expect("a refusal is shown");
+        assert!(
+            msg.contains("wind_speed"),
+            "the status line should name the parameter, got {msg:?}"
+        );
+    }
+
+    /// Height the model panel occupied in one headless egui pass.
+    ///
+    /// `egui::__run_test_ui` builds a throwaway context, so the panel's widget
+    /// code really runs — no window, no GPU. Zero height means it drew nothing.
+    fn model_panel_height(app: &mut CellaApp) -> f32 {
+        let mut height = 0.0;
+        egui::__run_test_ui(|ui| {
+            app.ui_model_params(ui);
+            height = ui.min_rect().height();
+        });
+        height
+    }
+
+    #[test]
+    fn the_model_panel_draws_nothing_when_no_model_is_attached() {
+        let mut app = test_app_with_life();
+
+        assert_eq!(
+            model_panel_height(&mut app),
+            0.0,
+            "a scenario with no model must not grow an empty section"
+        );
+    }
+
+    #[test]
+    fn the_model_panel_draws_its_section_when_a_model_is_attached() {
+        let mut app = test_app_with_model();
+
+        assert!(
+            model_panel_height(&mut app) > 0.0,
+            "an attached model must get a section"
+        );
+    }
+
+    #[test]
+    fn mirroring_into_a_snapshot_without_a_model_does_nothing() {
+        // The Life demo has no model, so its snapshot has nowhere to put the
+        // value. The mirror must shrug rather than panic.
+        let mut app = test_app_with_life();
+
+        app.mirror_param_into_initial_state("wind_speed", ParamValue::Float(7.5));
+
+        assert_eq!(snapshot_param(&app, "wind_speed"), None);
+    }
 }

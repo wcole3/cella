@@ -70,7 +70,7 @@ matches, that is a hint the thing deserves its own module.
 | `gui/types.rs` | Cell-type helpers: which states a scenario declares, what order to list them in, what a click cycles to next. |
 | `gui/export.rs` | Writing GIFs and JSON snapshots, plus the file dialogs that start them. |
 | `gui/render.rs` | The colour palette and the single function that maps a cell type to a colour, shared by the viewport and the GIF exporter so the two cannot disagree. |
-| `gui/panels/` | One file per region of the window — `toolbar`, `scenario`, `rule_editor`, `colors`, `statistics`. |
+| `gui/panels/` | One file per region of the window — `toolbar`, `scenario`, `rule_editor`, `colors`, `statistics`, `model`. |
 | `gui/panels/widgets.rs` | Controls used by more than one panel, such as the cell-type picker. Reach for this before hand-rolling a widget a second time. |
 | `gui/panels/rule_edit_model.rs` | The rule editor's working copy of a rule, held as text so half-typed values are legal until "Apply to grid" converts them. |
 
