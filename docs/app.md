@@ -92,10 +92,21 @@ matches, that is a hint the thing deserves its own module.
     - Change neighborhood shapes (Moore, VonNeumann, Langton, StraightLine, Knight), ranges, and thresholds.
     - Add new subrules to create complex multi-state automata.
 
-#### Statistics Panel (Right Side)
+#### Statistics Panel (Left Side)
 - **Population Counts**: Live counters for each cell type.
 - **Peak Counts**: Tracks the maximum population reached for each type.
 - **History Charts**: View live line graphs of population changes over time.
+
+While you step or play normally, the history chart gains one point per step. A
+"Run to +N" run is different: it packs as many steps as it can into each drawn
+frame, and the chart gains one point per *frame* instead. Nothing useful is
+lost — the chart keeps a rolling window of the most recent samples
+(`StatsState::window_len`, 300 by default), so a run of thousands of steps would
+have thrown away all but the last few hundred points anyway, and recording them
+only to discard them slowed the run down. The population and peak counters above
+the chart are not affected at all: `ui_statistics` reads `counts_current` and
+`peak_counts` straight off the grid, so they are exact after every step no matter
+how the steps were paced.
 
 ---
 

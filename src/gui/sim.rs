@@ -11,6 +11,12 @@
 //! throughput is set by the engine rather than by the frame rate. The clock
 //! lives in [`CellaApp::tick_play`]; the stepping itself lives in the
 //! time-free [`CellaApp::run_to_batch`], which is what the tests drive.
+//!
+//! The two paths also sample the statistics chart differently, and on purpose.
+//! A paced step is a step the user watches, so [`CellaApp::step_once`] records
+//! one sample per step. A burst runs steps nobody sees, so it steps through
+//! [`CellaApp::advance_grid`] and [`CellaApp::tick_play`] takes a single sample
+//! once the frame's stepping is done.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -34,13 +40,49 @@ pub(in crate::gui) const RUN_TO_MAX_STEPS_PER_FRAME: u32 = 1_000_000;
 pub(in crate::gui) const RUN_TO_CHUNK: u32 = 32;
 
 impl CellaApp {
-    /// Advance the automaton one step and maintain the 1D history buffer.
+    /// Advance the automaton one step and record a statistics sample.
+    ///
+    /// This is the step the user asked for: the Step button and the paced
+    /// `playing` tick, both of which produce one visible frame per step and so
+    /// should produce one point on the chart per step. A burst does not use
+    /// this — see [`CellaApp::step_once_untracked`].
     pub(in crate::gui) fn step_once(&mut self) {
-        // Snapshot the timer before stepping so we can measure elapsed time
+        self.step_once_untracked();
+        self.stats_record_step();
+    }
+    /// Everything [`CellaApp::step_once`] does except appending the statistics
+    /// sample: the play timer's segment boundary, then the step itself.
+    ///
+    /// A burst runs steps nobody ever sees, and the chart's rolling window
+    /// ([`crate::gui::state::StatsState::window_len`]) would discard almost all
+    /// of them the moment they were recorded, so it samples once per frame in
+    /// [`CellaApp::tick_play`] instead. Bursts also split this method's two
+    /// halves apart: [`CellaApp::refresh_play_timer`] runs once per batch and
+    /// [`CellaApp::advance_grid`] once per step, which keeps the clock reads
+    /// out of the inner loop.
+    pub(in crate::gui) fn step_once_untracked(&mut self) {
+        self.refresh_play_timer();
+        self.advance_grid();
+    }
+    /// Close the current play-timer segment and open a new one, so `elapsed`
+    /// only ever counts time actually spent playing.
+    ///
+    /// Does nothing while the stopwatch is stopped. Costs two `Instant::now()`
+    /// reads when it is running, which is why a burst calls it at the batch
+    /// boundary rather than once per step: the sum telescopes, so fewer
+    /// readings give the same total.
+    pub(in crate::gui) fn refresh_play_timer(&mut self) {
         if let Some(start) = self.playback.play_start {
             self.playback.elapsed += start.elapsed();
             self.playback.play_start = Some(Instant::now());
         }
+    }
+    /// The step itself: maintain the 1D history buffer, advance the grid, and
+    /// count the step for the "Avg ms/step" readout.
+    ///
+    /// Reads no clock and touches no statistics, so a burst can call it in a
+    /// tight loop.
+    pub(in crate::gui) fn advance_grid(&mut self) {
         match self.scenario.dim {
             Some(Dim::D1) => {
                 if let Some(g) = &mut self.scenario.d1 {
@@ -74,8 +116,6 @@ impl CellaApp {
         if self.playback.play_start.is_some() {
             self.playback.timed_steps += 1;
         }
-        // record stats after a successful step
-        self.stats_record_step();
     }
     /// Current step number from the loaded grid, or 0 when none loaded.
     pub(in crate::gui) fn current_step(&self) -> u64 {
@@ -128,10 +168,13 @@ impl CellaApp {
     ///
     /// Reads no clock at all: [`CellaApp::tick_play`] owns the time budget and
     /// calls this in small chunks, which is what makes the loop unit-testable.
+    ///
+    /// Records no statistics either. These steps are not drawn, so the caller
+    /// takes a single sample once the frame's stepping is finished.
     pub(in crate::gui) fn run_to_batch(&mut self, target: u64, max_steps: u32) -> u32 {
         let mut done = 0;
         while done < max_steps && self.current_step() < target {
-            self.step_once();
+            self.advance_grid();
             done += 1;
         }
         done
@@ -147,11 +190,21 @@ impl CellaApp {
             let deadline = Instant::now() + RUN_TO_FRAME_BUDGET;
             let mut done = 0u32;
             while Instant::now() < deadline && done < RUN_TO_MAX_STEPS_PER_FRAME {
+                // The stopwatch is read once per batch instead of once per
+                // step; the batch is where the time actually goes, and
+                // `advance_grid` still counts every step it runs.
+                self.refresh_play_timer();
                 let n = self.run_to_batch(target, RUN_TO_CHUNK);
                 done += n;
                 if n < RUN_TO_CHUNK {
                     break; // reached the target
                 }
+            }
+            if done > 0 {
+                // One sample for the whole frame. A burst can run thousands of
+                // steps between two drawn frames, and the chart's rolling
+                // window would drop all but the last few of them anyway.
+                self.stats_record_step();
             }
             if run_to.is_some() && self.current_step() >= target {
                 // The run finished: hand `playing` back the way "Run to +N"
@@ -275,15 +328,16 @@ mod tests {
         Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
         ViewSettings,
     };
+    use std::collections::BTreeMap;
 
-    /// A real `CellaApp` running the built-in 2D Life demo.
+    /// A real `CellaApp` with no scenario loaded yet.
     ///
     /// The production constructor needs an `eframe::CreationContext`, which only
     /// exists once a window is open, so the struct is built field by field here
-    /// and then handed the same demo scenario `CellaApp::new` loads.
-    fn test_app_with_life() -> CellaApp {
+    /// and a demo is loaded on top of it exactly as `CellaApp::new` does.
+    fn test_app() -> CellaApp {
         let ctx = egui::Context::default();
-        let mut app = CellaApp {
+        CellaApp {
             scenario: Scenario::default(),
             playback: Playback::default(),
             view: ViewSettings::default(),
@@ -293,9 +347,39 @@ mod tests {
             editor: EditorState::default(),
             chrome: Chrome::new(&ctx),
             inputs: Inputs::default(),
-        };
+        }
+    }
+
+    /// A real `CellaApp` running the built-in 2D Life demo.
+    fn test_app_with_life() -> CellaApp {
+        let mut app = test_app();
         app.load_demo_life();
         app
+    }
+
+    /// A real `CellaApp` running the built-in 1D Rule 30 demo, whose space-time
+    /// history is the thing a burst has to keep filling row by row.
+    fn test_app_with_rule30() -> CellaApp {
+        let mut app = test_app();
+        app.load_demo_1d_rule30();
+        app
+    }
+
+    /// How many samples each statistics series currently holds, keyed by type.
+    ///
+    /// Compared as a whole map rather than a total, so a test also notices a
+    /// series appearing or disappearing.
+    fn series_lens(app: &CellaApp) -> BTreeMap<Spur, usize> {
+        app.stats
+            .history
+            .iter()
+            .map(|(k, samples)| (*k, samples.len()))
+            .collect()
+    }
+
+    /// The same map with every series one sample longer.
+    fn plus_one_sample(lens: &BTreeMap<Spur, usize>) -> BTreeMap<Spur, usize> {
+        lens.iter().map(|(k, n)| (*k, n + 1)).collect()
     }
 
     #[test]
@@ -380,6 +464,122 @@ mod tests {
         assert!(
             !app.playback.playing,
             "the user was paused before the first press, so playback must stop"
+        );
+    }
+
+    #[test]
+    fn step_once_still_records_one_sample_per_step() {
+        let mut app = test_app_with_life();
+        let before = series_lens(&app);
+
+        app.step_once();
+
+        assert_eq!(
+            series_lens(&app),
+            plus_one_sample(&before),
+            "the Step button and paced play must keep sampling every step"
+        );
+    }
+
+    #[test]
+    fn run_to_batch_records_no_statistics_samples() {
+        let mut app = test_app_with_life();
+        let before = series_lens(&app);
+        assert!(!before.is_empty(), "loading a demo seeds one sample per type");
+
+        let done = app.run_to_batch(app.current_step() + 10, 32);
+
+        assert_eq!(done, 10);
+        assert_eq!(
+            series_lens(&app),
+            before,
+            "a batch runs steps nobody sees, so it must not append samples"
+        );
+    }
+
+    #[test]
+    fn a_burst_frame_appends_exactly_one_sample_per_series() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.run_to_steps = 50;
+        app.start_run_to();
+        let before = series_lens(&app);
+
+        app.tick_play();
+
+        assert!(app.current_step() > start, "the frame should have stepped");
+        assert_eq!(
+            series_lens(&app),
+            plus_one_sample(&before),
+            "however many steps a burst frame runs, the chart gains one sample"
+        );
+    }
+
+    #[test]
+    fn a_burst_frame_that_runs_no_steps_appends_nothing() {
+        let mut app = test_app_with_life();
+        app.playback.run_to_steps = 0; // target is the step we are already on
+        app.start_run_to();
+        let before = series_lens(&app);
+
+        app.tick_play();
+
+        assert_eq!(
+            series_lens(&app),
+            before,
+            "no step ran, so there is nothing to sample"
+        );
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "an already-met target finishes on the first frame"
+        );
+    }
+
+    #[test]
+    fn a_burst_frame_counts_every_step_it_ran_as_a_timed_step() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.run_to_steps = 40;
+        app.start_run_to(); // also starts the stopwatch
+        assert_eq!(app.playback.timed_steps, 0);
+
+        app.tick_play();
+
+        let ran = app.current_step() - start;
+        assert!(ran > 0, "the frame should have stepped");
+        assert_eq!(
+            app.playback.timed_steps, ran,
+            "hoisting the clock reads out of the loop must not lose the count"
+        );
+    }
+
+    #[test]
+    fn a_batch_grows_the_1d_history_by_one_row_per_step() {
+        let mut app = test_app_with_rule30();
+        app.view.history_limit_1d = 1_000; // well above the batch
+        assert!(app.view.history_1d.is_empty(), "a fresh demo has no history");
+
+        let done = app.run_to_batch(app.current_step() + 20, 32);
+
+        assert_eq!(done, 20);
+        assert_eq!(
+            app.view.history_1d.len(),
+            20,
+            "for 1D the space-time rows are the output, so a burst keeps them"
+        );
+    }
+
+    #[test]
+    fn a_batch_keeps_the_1d_history_capped_at_its_limit() {
+        let mut app = test_app_with_rule30();
+        app.view.history_limit_1d = 8;
+
+        app.run_to_batch(app.current_step() + 50, 64);
+
+        assert_eq!(
+            app.view.history_1d.len(),
+            8,
+            "the window must still drop the oldest rows during a burst"
         );
     }
 }
