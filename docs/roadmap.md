@@ -14,7 +14,7 @@ section, which lists what lives in which `src/gui/` file.
 |---|---|---|
 | 1 | Reorganize the GUI so the rest is safe to change | *(done)* — commit `b092beb` |
 | 2 | GUI performance: measure, then fix three suspected defects | *(done)* — commits `e5c304d..8c1c1a7` |
-| 3 | Let external models describe their own parameters | *(open)* |
+| 3 | Let external models describe their own parameters | *(done)* — commits `6d7e9b3..ad3654d` |
 | 4 | Usability and fun | *(open)* |
 
 ## Background: why this order
@@ -380,7 +380,76 @@ before the change, say so and file 2.1 as a cleanup rather than a win.
 
 ---
 
-## 3. Phase 3 — external models that describe their own parameters *(open)*
+## 3. Phase 3 — external models that describe their own parameters *(done)*
+
+### What Phase 3 landed
+
+Commits `6d7e9b3..ad3654d`.
+
+- **§3.1 — vocabulary and trait defaults**, `cella_lib/src/external.rs`. The
+  `ParamValue`, `ParamKind`, and `ParamDesc` types described below, each
+  deriving `Clone, Debug, PartialEq, Serialize, Deserialize`, re-exported from
+  `cella_lib/src/lib.rs`. Three new `ExternalModel` trait methods — `params`,
+  `get_param`, `set_param` — all defaulted (empty list, `None`, and an
+  `Err(ModelError::InvalidParam(..))` naming the key, respectively), so a
+  model outside this repo that implements none of them keeps compiling.
+  `as_any_mut` is untouched.
+- **§3.2 — apply-with-rollback**, `Grid2D::set_model_param` in the same file.
+  Looks up the parameter's own `ParamDesc` and refuses an unknown or
+  `read_only` key; runs the private `check_value_against_kind` to check the
+  value against the descriptor's `ParamKind` bounds generically (a `Float` or
+  `Int` outside `[min, max]`, or a `Choice` not in `options`) before the model
+  is touched; calls `model.set_param`; and, only when the descriptor says
+  `reattach`, re-runs `model.attach` to rebuild derived state. On a rejected
+  `attach` it restores the value `get_param` reported before the write and
+  re-runs `attach` again, so a refused edit cannot leave the model in a state
+  `attach` would not accept.
+- **§3.3 — `WildfireModel` implements 13 keys**, `cella_lib/src/wildfire.rs`.
+  Wind group: `wind_speed`, `wind_dir_deg`, `c1`, `c2`. Fire group: `p0`,
+  `burn_duration`. Terrain group: `slope_a`, `cell_size`. Spotting group (only
+  when `params.spotting` is `Some`): `spotting.p_spot`,
+  `spotting.median_distance`, `spotting.sigma`, `spotting.angle_jitter_deg`.
+  `seed`, ungrouped and `read_only: true`. Of the 13, only `p0`, `slope_a`,
+  and `cell_size` set `reattach: true` — they feed the precomputed `p_base`
+  and slope buffers; everything else is read live per chunk or per cell, so
+  it needs no rebuild. §3.5's round-trip test (set a parameter, snapshot,
+  restore, assert `get_param` still reports the edit) lives alongside these
+  in `wildfire.rs`'s test module.
+- **§3.4 — the generic panel**, new file `src/gui/panels/model.rs`, wired
+  into `ui_left_panel` in `src/gui/app.rs`. `ui_model_params` draws nothing
+  when no model is attached, otherwise one control per `ParamDesc` under a
+  heading of `model.typetag_name()`. All of its decision logic lives in two
+  pure, unit-tested functions with no egui dependency: `group_params` (stable
+  ordering — ungrouped first, then each group in first-appearance order) and
+  `commit_on` (a `reattach: false` parameter commits on every widget change;
+  `reattach: true` waits for the drag or edit to end; `read_only` never
+  commits). `CellaApp::apply_model_param` calls `Grid2D::set_model_param` and,
+  on success, `mirror_param_into_initial_state`, which copies the accepted
+  key/value into the model cloned inside `scenario.initial_state` with a
+  plain `set_param` call — so `reset_to_initial` rewinds the cells but keeps
+  the parameter value someone just set with a slider, instead of snapping it
+  back to what the scenario loaded with. A failed write goes to the status
+  bar via `set_status`; nothing else, since `set_model_param` already rolled
+  the model back and the control redraws from `get_param` next frame. 14 new
+  tests cover this file and the mirroring behavior in `src/gui/sim.rs`'s test
+  module. Grepping `src/gui/panels/model.rs` for `wildfire`/`Wildfire` finds
+  nothing, confirming the file stays model-agnostic.
+- **Acceptance tests**: the out-of-tree `TestModel` and the in-crate
+  `ConstModel` in `cella_lib/tests/external_model.rs` each grew a `params()`
+  implementation covering one parameter per `ParamKind`, including a
+  deliberately-narrower `attach` threshold than the descriptor's range so the
+  rollback branch (value accepted by step 3, then rejected by `attach`) is
+  exercised and covered.
+- **Bit-identity result**: re-running `wildfire_validate` for all six
+  validation scenarios (`Bear_2020`, `Brattain_2020`, `Buck_2017`,
+  `Chimney_2016`, `Ferguson_2018`, `Pier_2017`) against the Task 1 baseline
+  produced six byte-identical JSON files (empty `diff`, matching MD5s).
+  Phase 3 moved no IoU, Sørensen, or arrival-time figure — see
+  [task-5-report.md](../.superpowers/sdd/roadmap/task-5-report.md) for the
+  per-scenario commands and checksums.
+- **Still owed**: the manual GL checks in §5 for §3.4 (the wildfire-demo
+  panel walkthrough and the "no model" negative case) have not been run —
+  this environment cannot launch the GUI (see §1's WSLg/Mesa blocker).
 
 ### The problem
 

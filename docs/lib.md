@@ -168,6 +168,28 @@ Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {
 
 `wildfire::WildfireModel` implements Alexandridis-style stochastic spread: per-cell base probability `p0 × veg_factor × density`, exponential wind (`c1`, `c2`) and slope (`slope_a`) modifiers with a `1/√2` diagonal correction, burn duration tracked through cell ages, and lognormal firebrand spotting delivered as `ModelEvent`s. Slope factors are precomputed per cell at attach; wind factors once per chunk; the per-cell loop is two multiplies per burning neighbor plus one hash draw. See `configs/2d_wildfire_demo.json` and the module docs for parameters (defaults follow Alexandridis et al. 2008).
 
+### Model parameters
+
+A model can describe its own tunable values so a generic UI can build controls for it without knowing anything about the model. Three types in `external.rs` carry the description:
+
+- **`ParamValue`** — the value itself, as read from or written to a control: `Float(f64)`, `Int(i64)`, `Bool(bool)`, or `Choice(String)`.
+- **`ParamKind`** — what kind of control the value wants, and its legal range: `Float { min, max, step }`, `Int { min, max }`, `Bool`, or `Choice { options }`.
+- **`ParamDesc`** — one row of self-description: `key` (the stable name used with `get_param`/`set_param`), `label`, an optional `group` (so a panel can put related controls under one heading), an optional `help` tooltip, an optional `unit` suffix (`"m/s"`, `"°"`), the `kind`, whether changing it needs `reattach` (see below), and whether it is `read_only`.
+
+Three `ExternalModel` trait methods carry these around, and **all three have default implementations** — `params() -> Vec<ParamDesc>` defaults to an empty list, `get_param(&self, key) -> Option<ParamValue>` defaults to `None`, and `set_param(&mut self, key, value) -> Result<(), ModelError>` defaults to rejecting every key. A model that implements none of them keeps compiling and simply shows no controls.
+
+`Grid2D::set_model_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError>` is the engine-side half: it does the generic work so a model author does not have to write range checks. It looks up `key` in `model.params()` (unknown key or `read_only` → `Err`), checks `value` against that descriptor's `ParamKind` bounds itself (bounds check), calls `model.set_param(key, value)` (set), and — only when the descriptor says `reattach: true` — calls `model.attach` again to rebuild any derived state (reattach). If that `attach` call fails, `set_model_param` writes the old value back with another `set_param` and calls `attach` once more so the model ends up exactly as it was before the edit (rollback), then returns the original error.
+
+A one-parameter model implementing all three methods:
+
+```rust
+fn params(&self) -> Vec<ParamDesc> { vec![ParamDesc { key: "speed".into(), label: "Speed".into(), group: None, help: None, unit: Some("m/s".into()), kind: ParamKind::Float { min: 0.0, max: 10.0, step: 0.1 }, reattach: false, read_only: false }] }
+fn get_param(&self, key: &str) -> Option<ParamValue> { (key == "speed").then(|| ParamValue::Float(self.speed)) }
+fn set_param(&mut self, key: &str, v: ParamValue) -> Result<(), ModelError> {
+    match (key, v) { ("speed", ParamValue::Float(v)) => { self.speed = v; Ok(()) }, _ => Err(ModelError::InvalidParam(format!("unknown '{key}'"))) }
+}
+```
+
 ---
 
 ## Fast Paths (bit-parallel stepping)

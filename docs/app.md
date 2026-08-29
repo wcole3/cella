@@ -97,6 +97,23 @@ matches, that is a hint the thing deserves its own module.
 - **Peak Counts**: Tracks the maximum population reached for each type.
 - **History Charts**: View live line graphs of population changes over time.
 
+#### Model Panel (Left Side)
+This panel only appears when the loaded config has a `model` (e.g.
+`configs/2d_wildfire_demo.json`) — a scenario with no model, like Game of
+Life, shows nothing here. Its controls are grouped under headings the model
+supplies (for the wildfire model: Wind, Fire, Terrain, and Spotting when
+spotting is turned on). Cheap parameters commit as soon as you move their
+slider, so the effect looks live; a handful of expensive ones wait until you
+release the slider or click away, so an internal rebuild only happens once
+per edit instead of once per frame. A read-only parameter, such as the seed,
+shows as a plain label instead of a control — there is nothing to drag.
+Entering a value outside a parameter's allowed range is refused: the error
+appears in the status bar and the control snaps back to its last accepted
+value. Pressing **Reset** rewinds the grid but keeps the values you set with
+the sliders — an accepted edit is mirrored into the same snapshot Reset
+restores from, so tuning a model and then resetting the cells does not also
+undo your tuning.
+
 While you step or play normally, the history chart gains one point per step. A
 "Run to +N" run is different: it packs as many steps as it can into each drawn
 frame, and the chart gains one point per *frame* instead. Nothing useful is
