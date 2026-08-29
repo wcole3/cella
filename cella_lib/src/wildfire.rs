@@ -33,7 +33,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::external::{ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent};
+use crate::external::{
+    ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
+};
 use crate::rules::{Neighborhood2D, neighborhood_offsets};
 use crate::types::CellType;
 
@@ -307,6 +309,242 @@ impl WildfireModel {
             cur
         }
     }
+
+    /// Every parameter this model offers a control panel, in display order:
+    /// Wind, Fire, Terrain, the Spotting group (present only when spotting is
+    /// enabled), then the read-only seed.
+    ///
+    /// `reattach` is true for exactly the three parameters that feed the
+    /// buffers [`Self::attach`] precomputes: `p0` builds `p_base`, and
+    /// `slope_a` and `cell_size` build the slope table. Everything else is
+    /// read live by [`Self::dir_factors`], [`Self::next_type`], or
+    /// [`Self::spot_target`], so a change takes effect on the next step with
+    /// no rebuild.
+    ///
+    /// Bounds are what the engine checks a new value against before this model
+    /// sees it, which is why [`Self::set_param`] does no range checking. They
+    /// are deliberately no wider than the runs in `validation/` explored.
+    fn param_descs(&self) -> Vec<ParamDesc> {
+        let mut out = vec![
+            param_desc(
+                "wind_speed",
+                "Wind speed",
+                "Wind",
+                "How hard the wind blows. Faster wind stretches the fire downwind.",
+                "m/s",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 30.0,
+                    step: 0.1,
+                },
+                false,
+            ),
+            param_desc(
+                "wind_dir_deg",
+                "Wind direction",
+                "Wind",
+                "Direction the wind blows toward: 0° is +x, 90° is +y.",
+                "°",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 360.0,
+                    step: 1.0,
+                },
+                false,
+            ),
+            param_desc(
+                "c1",
+                "Wind coefficient c1",
+                "Wind",
+                "How much raw wind speed raises the chance of ignition.",
+                "",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.005,
+                },
+                false,
+            ),
+            param_desc(
+                "c2",
+                "Wind coefficient c2",
+                "Wind",
+                "How sharply the chance drops off for spread away from the wind.",
+                "",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.005,
+                },
+                false,
+            ),
+            param_desc(
+                "p0",
+                "Base ignition probability",
+                "Fire",
+                "Chance a cell catches from one burning neighbor, with no wind on flat ground.",
+                "",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                },
+                true,
+            ),
+            param_desc(
+                "burn_duration",
+                "Burn duration",
+                "Fire",
+                "How many steps a cell stays burning before it is burned out.",
+                "steps",
+                ParamKind::Int { min: 1, max: 1000 },
+                false,
+            ),
+            param_desc(
+                "slope_a",
+                "Slope coefficient",
+                "Terrain",
+                "How much an uphill slope speeds the fire up, per degree of slope.",
+                "",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                },
+                true,
+            ),
+            param_desc(
+                "cell_size",
+                "Cell size",
+                "Terrain",
+                "Edge length of one cell on the ground; sets how steep the slopes are.",
+                "m",
+                ParamKind::Float {
+                    min: 0.1,
+                    max: 1000.0,
+                    step: 1.0,
+                },
+                true,
+            ),
+        ];
+        // With spotting switched off there is nothing behind these keys, so
+        // the whole group is left out and a panel adapts without knowing why.
+        if self.params.spotting.is_some() {
+            out.extend([
+                param_desc(
+                    "spotting.p_spot",
+                    "Spot probability",
+                    "Spotting",
+                    "Chance per step that a burning cell throws a firebrand.",
+                    "",
+                    ParamKind::Float {
+                        min: 0.0,
+                        max: 1.0,
+                        step: 0.01,
+                    },
+                    false,
+                ),
+                param_desc(
+                    "spotting.median_distance",
+                    "Median spot distance",
+                    "Spotting",
+                    "Typical landing distance of a firebrand, in cells.",
+                    "cells",
+                    ParamKind::Float {
+                        min: 0.5,
+                        max: 100.0,
+                        step: 0.5,
+                    },
+                    false,
+                ),
+                param_desc(
+                    "spotting.sigma",
+                    "Spot distance spread",
+                    "Spotting",
+                    "Spread of the landing distances. 0 lands every firebrand at the median.",
+                    "",
+                    ParamKind::Float {
+                        min: 0.0,
+                        max: 5.0,
+                        step: 0.05,
+                    },
+                    false,
+                ),
+                param_desc(
+                    "spotting.angle_jitter_deg",
+                    "Spot angle jitter",
+                    "Spotting",
+                    "How far either side of the wind a firebrand may drift.",
+                    "°",
+                    ParamKind::Float {
+                        min: 0.0,
+                        max: 180.0,
+                        step: 1.0,
+                    },
+                    false,
+                ),
+            ]);
+        }
+        // Shown so a run can be identified, never editable: changing the seed
+        // mid-run would silently break the reproducibility that every figure
+        // in `validation/` depends on.
+        out.push(ParamDesc {
+            read_only: true,
+            ..param_desc(
+                "seed",
+                "Seed",
+                "",
+                "Fixes every random draw in the run. Read-only: changing it \
+                 mid-run would break reproducibility.",
+                "",
+                ParamKind::Int {
+                    min: 0,
+                    max: i64::MAX,
+                },
+                false,
+            )
+        });
+        out
+    }
+}
+
+/// Build one [`ParamDesc`], turning empty strings into `None`, so the table in
+/// [`WildfireModel::param_descs`] stays one readable row per parameter.
+///
+/// `read_only` is not an argument because only the seed is read-only; that one
+/// row overrides the field.
+fn param_desc(
+    key: &str,
+    label: &str,
+    group: &str,
+    help: &str,
+    unit: &str,
+    kind: ParamKind,
+    reattach: bool,
+) -> ParamDesc {
+    let text = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    ParamDesc {
+        key: key.to_string(),
+        label: label.to_string(),
+        group: text(group),
+        help: text(help),
+        unit: text(unit),
+        kind,
+        reattach,
+        read_only: false,
+    }
+}
+
+/// The spotting block for a `spotting.*` write, or an error naming `key` when
+/// this model has spotting switched off. Keeps each spotting arm of
+/// [`WildfireModel::set_param`] to one line.
+fn spotting_mut<'a>(
+    params: &'a mut WildfireParams,
+    key: &str,
+) -> Result<&'a mut SpottingParams, ModelError> {
+    params.spotting.as_mut().ok_or_else(|| {
+        ModelError::InvalidParam(format!("'{key}': spotting is disabled for this model"))
+    })
 }
 
 #[typetag::serde(name = "wildfire")]
@@ -621,6 +859,87 @@ impl ExternalModel for WildfireModel {
         out.push(d.burning);
         out.push(d.burned);
         out
+    }
+
+    fn params(&self) -> Vec<ParamDesc> {
+        self.param_descs()
+    }
+
+    /// Current value of `key`.
+    ///
+    /// Every key [`Self::params`] lists answers with `Some`, which is what
+    /// makes `Grid2D::set_model_param`'s rollback able to put the old value
+    /// back. `None` means the key is not one of this model's parameters —
+    /// including `spotting.*` when spotting is switched off, in which case
+    /// `params` does not list it either.
+    fn get_param(&self, key: &str) -> Option<ParamValue> {
+        let p = &self.params;
+        let spot = p.spotting.as_ref();
+        Some(match key {
+            "wind_speed" => ParamValue::Float(p.wind_speed),
+            "wind_dir_deg" => ParamValue::Float(p.wind_dir_deg),
+            "c1" => ParamValue::Float(p.c1),
+            "c2" => ParamValue::Float(p.c2),
+            "p0" => ParamValue::Float(p.p0),
+            "burn_duration" => ParamValue::Int(i64::from(p.burn_duration)),
+            "slope_a" => ParamValue::Float(p.slope_a),
+            "cell_size" => ParamValue::Float(p.cell_size),
+            "spotting.p_spot" => ParamValue::Float(spot?.p_spot),
+            "spotting.median_distance" => ParamValue::Float(spot?.median_distance),
+            "spotting.sigma" => ParamValue::Float(spot?.sigma),
+            "spotting.angle_jitter_deg" => ParamValue::Float(spot?.angle_jitter_deg),
+            // A seed above i64::MAX cannot be carried by ParamValue::Int. The
+            // seed is read-only, so clamping only affects the label a panel
+            // shows, never the run.
+            "seed" => ParamValue::Int(i64::try_from(p.seed).unwrap_or(i64::MAX)),
+            _ => return None,
+        })
+    }
+
+    /// Write `key`.
+    ///
+    /// This is a plain field write per key: the engine has already checked the
+    /// value against the parameter's [`ParamKind`] bounds, and for a
+    /// `reattach` parameter [`Self::attach`] re-checks it afterwards, so there
+    /// is no range checking to repeat here. What is left is what the engine
+    /// cannot know: a key this model does not have, a value of a shape the
+    /// field cannot hold, and `spotting.*` on a model with no spotting block.
+    /// Each of those comes back as [`ModelError::InvalidParam`] naming the key.
+    fn set_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
+        let p = &mut self.params;
+        match (key, &value) {
+            ("wind_speed", ParamValue::Float(v)) => p.wind_speed = *v,
+            ("wind_dir_deg", ParamValue::Float(v)) => p.wind_dir_deg = *v,
+            ("c1", ParamValue::Float(v)) => p.c1 = *v,
+            ("c2", ParamValue::Float(v)) => p.c2 = *v,
+            ("p0", ParamValue::Float(v)) => p.p0 = *v,
+            ("burn_duration", ParamValue::Int(v)) => {
+                p.burn_duration = u32::try_from(*v).map_err(|_| {
+                    ModelError::InvalidParam(format!("'{key}': {v} is not a step count"))
+                })?;
+            }
+            ("slope_a", ParamValue::Float(v)) => p.slope_a = *v,
+            ("cell_size", ParamValue::Float(v)) => p.cell_size = *v,
+            ("spotting.p_spot", ParamValue::Float(v)) => spotting_mut(p, key)?.p_spot = *v,
+            ("spotting.median_distance", ParamValue::Float(v)) => {
+                spotting_mut(p, key)?.median_distance = *v;
+            }
+            ("spotting.sigma", ParamValue::Float(v)) => spotting_mut(p, key)?.sigma = *v,
+            ("spotting.angle_jitter_deg", ParamValue::Float(v)) => {
+                spotting_mut(p, key)?.angle_jitter_deg = *v;
+            }
+            ("seed", _) => {
+                return Err(ModelError::InvalidParam(
+                    "'seed' is read-only: changing it mid-run would break reproducibility".into(),
+                ));
+            }
+            _ => {
+                return Err(ModelError::InvalidParam(format!(
+                    "cannot set parameter '{key}' from {value:?}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn boxed_clone(&self) -> Box<dyn ExternalModel> {
@@ -1233,5 +1552,321 @@ mod tests {
         m.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next);
         assert_eq!(next[4], CellType::new("Ash"));
         assert_eq!(next[1], CellType::new("Fire"));
+    }
+
+    // ---- Parameter self-description (roadmap 3.3) and save/load (3.5) ----
+
+    /// Spotting settings used by the parameter tests; any legal values will do.
+    fn spotting() -> SpottingParams {
+        SpottingParams {
+            p_spot: 0.01,
+            median_distance: 5.0,
+            sigma: 0.5,
+            angle_jitter_deg: 15.0,
+        }
+    }
+
+    /// A 4x4 forest grid with a wildfire model attached, ready for edits
+    /// through `Grid2D::set_model_param`.
+    fn param_grid(spot: Option<SpottingParams>) -> crate::Grid2D {
+        use crate::{Grid2D, Rule2D};
+        let mut p = base_params();
+        p.spotting = spot;
+        let mut g = Grid2D::new(4, 4, 0, forest_grid(4, 4), Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(WildfireModel::new(p, WildfireEnv::default())))
+            .expect("attach");
+        g
+    }
+
+    /// The wildfire model attached to `g`, so a test can read derived state.
+    fn model_of(g: &mut crate::Grid2D) -> &mut WildfireModel {
+        g.model_mut()
+            .expect("a model is attached")
+            .as_any_mut()
+            .downcast_mut::<WildfireModel>()
+            .expect("the model is a WildfireModel")
+    }
+
+    #[test]
+    fn params_lists_every_key_in_a_stable_order_with_groups_and_units() {
+        // Without spotting the whole Spotting group is absent: nine keys.
+        let m = WildfireModel::new(base_params(), WildfireEnv::default());
+        let keys: Vec<String> = m.params().into_iter().map(|d| d.key).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "wind_speed",
+                "wind_dir_deg",
+                "c1",
+                "c2",
+                "p0",
+                "burn_duration",
+                "slope_a",
+                "cell_size",
+                "seed",
+            ]
+        );
+
+        // With spotting on, the four spotting keys sit between Terrain and seed.
+        let mut p = base_params();
+        p.spotting = Some(spotting());
+        let m = WildfireModel::new(p, WildfireEnv::default());
+        let descs = m.params();
+        let table: Vec<(&str, Option<&str>, Option<&str>)> = descs
+            .iter()
+            .map(|d| (d.key.as_str(), d.group.as_deref(), d.unit.as_deref()))
+            .collect();
+        assert_eq!(
+            table,
+            vec![
+                ("wind_speed", Some("Wind"), Some("m/s")),
+                ("wind_dir_deg", Some("Wind"), Some("°")),
+                ("c1", Some("Wind"), None),
+                ("c2", Some("Wind"), None),
+                ("p0", Some("Fire"), None),
+                ("burn_duration", Some("Fire"), Some("steps")),
+                ("slope_a", Some("Terrain"), None),
+                ("cell_size", Some("Terrain"), Some("m")),
+                ("spotting.p_spot", Some("Spotting"), None),
+                ("spotting.median_distance", Some("Spotting"), Some("cells")),
+                ("spotting.sigma", Some("Spotting"), None),
+                ("spotting.angle_jitter_deg", Some("Spotting"), Some("°")),
+                ("seed", None, None),
+            ]
+        );
+        assert_eq!(descs.len(), 13);
+
+        // Only the three parameters that feed attach's precomputed buffers
+        // ask for a rebuild, and only the seed is read-only.
+        let reattach: Vec<&str> = descs
+            .iter()
+            .filter(|d| d.reattach)
+            .map(|d| d.key.as_str())
+            .collect();
+        assert_eq!(reattach, vec!["p0", "slope_a", "cell_size"]);
+        let read_only: Vec<&str> = descs
+            .iter()
+            .filter(|d| d.read_only)
+            .map(|d| d.key.as_str())
+            .collect();
+        assert_eq!(read_only, vec!["seed"]);
+        assert!(
+            descs.iter().all(|d| d.help.is_some()),
+            "every control has a tooltip"
+        );
+    }
+
+    #[test]
+    fn get_param_answers_every_key_params_lists() {
+        // The engine's rollback only restores a value get_param handed out, so
+        // every advertised key must have one.
+        for spot in [None, Some(spotting())] {
+            let mut p = base_params();
+            p.spotting = spot;
+            let m = WildfireModel::new(p, WildfireEnv::default());
+            for d in m.params() {
+                assert!(
+                    m.get_param(&d.key).is_some(),
+                    "params() lists '{}' but get_param has no value for it",
+                    d.key
+                );
+            }
+        }
+        // Keys the model does not list have no value.
+        let m = WildfireModel::new(base_params(), WildfireEnv::default());
+        assert!(m.get_param("spotting.p_spot").is_none(), "spotting is off");
+        assert!(m.get_param("spotting.median_distance").is_none());
+        assert!(m.get_param("spotting.sigma").is_none());
+        assert!(m.get_param("spotting.angle_jitter_deg").is_none());
+        assert!(m.get_param("nope").is_none());
+    }
+
+    #[test]
+    fn every_editable_parameter_round_trips_through_set_and_get() {
+        let probes: Vec<(&str, ParamValue)> = vec![
+            ("wind_speed", ParamValue::Float(12.5)),
+            ("wind_dir_deg", ParamValue::Float(210.0)),
+            ("c1", ParamValue::Float(0.06)),
+            ("c2", ParamValue::Float(0.2)),
+            ("p0", ParamValue::Float(0.42)),
+            ("burn_duration", ParamValue::Int(7)),
+            ("slope_a", ParamValue::Float(0.1)),
+            ("cell_size", ParamValue::Float(10.0)),
+            ("spotting.p_spot", ParamValue::Float(0.02)),
+            ("spotting.median_distance", ParamValue::Float(8.0)),
+            ("spotting.sigma", ParamValue::Float(0.7)),
+            ("spotting.angle_jitter_deg", ParamValue::Float(30.0)),
+        ];
+        let mut p = base_params();
+        p.spotting = Some(spotting());
+        let mut m = WildfireModel::new(p, WildfireEnv::default());
+        for (key, value) in &probes {
+            m.set_param(key, value.clone())
+                .unwrap_or_else(|e| panic!("set '{key}': {e}"));
+            assert_eq!(
+                m.get_param(key),
+                Some(value.clone()),
+                "'{key}' did not read back what was written"
+            );
+        }
+        // The probe list above is exactly the editable half of params().
+        let editable: Vec<String> = m
+            .params()
+            .into_iter()
+            .filter(|d| !d.read_only)
+            .map(|d| d.key)
+            .collect();
+        let probed: Vec<String> = probes.iter().map(|(k, _)| (*k).to_string()).collect();
+        assert_eq!(probed, editable, "a parameter was added without a probe");
+    }
+
+    #[test]
+    fn descriptor_bounds_are_values_the_engine_and_attach_both_accept() {
+        // Step 3 of Grid2D::set_model_param checks the value against the
+        // descriptor, then attach checks it again for reattach parameters. A
+        // bound one of them refuses would be a control a user cannot move to
+        // its own end stop.
+        let mut g = param_grid(Some(spotting()));
+        let descs = g.model_mut().unwrap().params();
+        for d in descs {
+            if d.read_only {
+                continue;
+            }
+            let mut ends: Vec<ParamValue> = Vec::new();
+            if let ParamKind::Float { min, max, .. } = &d.kind {
+                ends.push(ParamValue::Float(*min));
+                ends.push(ParamValue::Float(*max));
+            }
+            if let ParamKind::Int { min, max } = &d.kind {
+                ends.push(ParamValue::Int(*min));
+                ends.push(ParamValue::Int(*max));
+            }
+            assert_eq!(ends.len(), 2, "'{}' has no numeric bounds", d.key);
+            for end in ends {
+                g.set_model_param(&d.key, end.clone())
+                    .unwrap_or_else(|e| panic!("'{}' rejected its own bound {end:?}: {e}", d.key));
+            }
+        }
+        // The one read-only control is refused by the engine, not by a bound.
+        let err = g.set_model_param("seed", ParamValue::Int(1)).unwrap_err();
+        assert!(err.to_string().contains("read-only"), "says why: {err}");
+    }
+
+    #[test]
+    fn changing_p0_rebuilds_the_derived_p_base() {
+        // p0 is reattach: true, so the engine re-runs attach and p_base (which
+        // is p0 * veg_factor * density, all 1.0 here) must follow.
+        let mut g = param_grid(None);
+        let before = model_of(&mut g).derived.p_base[0];
+        assert!((before - 0.58).abs() < 1e-6, "base_params p0: {before}");
+        g.set_model_param("p0", ParamValue::Float(0.2)).unwrap();
+        let after = model_of(&mut g).derived.p_base[0];
+        assert!((after - 0.2).abs() < 1e-6, "attach rebuilt p_base: {after}");
+    }
+
+    #[test]
+    fn a_p0_outside_the_descriptor_range_never_reaches_the_model() {
+        // p0's descriptor range is exactly attach's own check, so no value can
+        // pass the engine's bounds check and still be refused by attach: the
+        // rollback path is unreachable for this parameter. What is testable is
+        // that the bounds check alone keeps the model untouched.
+        let mut g = param_grid(None);
+        let err = g.set_model_param("p0", ParamValue::Float(1.5)).unwrap_err();
+        assert!(matches!(err, ModelError::InvalidParam(_)));
+        assert!(err.to_string().contains("p0"), "names the key: {err}");
+        let m = model_of(&mut g);
+        assert_eq!(
+            m.get_param("p0"),
+            Some(ParamValue::Float(0.58)),
+            "the model kept its value"
+        );
+        assert!(
+            (m.derived.p_base[0] - 0.58).abs() < 1e-6,
+            "derived state is untouched"
+        );
+    }
+
+    #[test]
+    fn wind_speed_takes_effect_without_a_reattach() {
+        let mut g = param_grid(None);
+        let before = model_of(&mut g).dir_factors();
+        // A marker attach would overwrite: if it survives, attach never ran.
+        model_of(&mut g).derived.p_base[0] = 42.0;
+        g.set_model_param("wind_speed", ParamValue::Float(8.0))
+            .unwrap();
+        let m = model_of(&mut g);
+        assert_eq!(m.derived.p_base[0], 42.0, "wind_speed is reattach: false");
+        let after = m.dir_factors();
+        assert_ne!(before, after, "dir_factors reads wind_speed live");
+        let j_down = m
+            .derived
+            .offsets
+            .iter()
+            .position(|&o| o == (-1, 0))
+            .unwrap();
+        assert!(
+            after[j_down] > before[j_down],
+            "wind toward +x raises the factor for spread from the west: {before:?} -> {after:?}"
+        );
+    }
+
+    #[test]
+    fn set_param_refuses_unknown_keys_wrong_kinds_read_only_and_disabled_spotting() {
+        let mut m = WildfireModel::new(base_params(), WildfireEnv::default());
+        for (key, value) in [
+            ("nope", ParamValue::Float(1.0)),
+            ("burn_duration", ParamValue::Float(3.0)),
+            ("burn_duration", ParamValue::Int(-1)),
+            ("wind_speed", ParamValue::Bool(true)),
+            ("spotting.p_spot", ParamValue::Float(0.1)),
+            ("spotting.median_distance", ParamValue::Float(5.0)),
+            ("spotting.sigma", ParamValue::Float(0.5)),
+            ("spotting.angle_jitter_deg", ParamValue::Float(5.0)),
+            ("seed", ParamValue::Int(9)),
+        ] {
+            let err = m.set_param(key, value.clone()).unwrap_err();
+            assert!(
+                err.to_string().contains(key),
+                "the error must name '{key}': {err}"
+            );
+        }
+        assert_eq!(m.params, base_params(), "no refused write changed anything");
+    }
+
+    #[test]
+    fn seed_is_reported_read_only_and_clamped_when_it_does_not_fit() {
+        let m = WildfireModel::new(base_params(), WildfireEnv::default());
+        assert_eq!(m.get_param("seed"), Some(ParamValue::Int(7)));
+        let mut p = base_params();
+        p.seed = u64::MAX;
+        let m = WildfireModel::new(p, WildfireEnv::default());
+        assert_eq!(
+            m.get_param("seed"),
+            Some(ParamValue::Int(i64::MAX)),
+            "a seed too wide for i64 is clamped for display only"
+        );
+    }
+
+    #[test]
+    fn an_edited_parameter_survives_a_snapshot_round_trip() {
+        // Roadmap 3.5: parameters live in the model's own serde fields and the
+        // model rides along in GridState, so an edit is saved with no extra
+        // serialization work.
+        use crate::state::GridState;
+        let mut g = param_grid(None);
+        g.set_model_param("wind_dir_deg", ParamValue::Float(45.0))
+            .unwrap();
+        let json = GridState::from_grid2d(&g).to_json();
+        let state = GridState::from_json(&json).expect("snapshot parses");
+        let mut back = crate::Grid2D::from_state(&state).expect("snapshot restores");
+        assert_eq!(
+            back.model_mut().unwrap().get_param("wind_dir_deg"),
+            Some(ParamValue::Float(45.0)),
+            "the edited value came back"
+        );
+        assert!(
+            model_of(&mut back).derived.p_base[0] > 0.0,
+            "restoring re-ran attach, so derived state is live again"
+        );
     }
 }
