@@ -118,6 +118,44 @@ does work headless and was smoke-tested.
 
 ## 2. Phase 2 — GUI performance *(done)*
 
+### What Phase 2 landed
+
+Commits `e5c304d..e6ea3ce`, plus the review fixes that followed them.
+
+- **§2.1 — the painter compares types, not colours.** `RowPainter::emit_row`
+  in `src/gui/painter.rs` decides where a paint run ends by comparing
+  `CellType` (one `u32`) and only resolves a `Color32` when the type actually
+  changes — still extending the run when two different types happen to share
+  a colour, so the rectangle counts the older tests assert on are unchanged.
+- **§2.2 — "Run to +N" is budgeted by time, not by a fixed step count.**
+  `tick_play` in `src/gui/sim.rs` keeps stepping until `RUN_TO_FRAME_BUDGET`
+  (8 ms) is spent, in `RUN_TO_CHUNK`-sized (32-step) chunks through the
+  clock-free `run_to_batch`, so the clock is read once per chunk rather than
+  once per step. `start_run_to` remembers the play state the run interrupted;
+  `cancel_run_to` gives it back, and is called by `toggle_play` (the
+  Play/Pause button), by `reset_to_initial`, and by `stats_clear_and_init`, so
+  Pause, Reset, and loading any scenario all stop a run in progress. The
+  `Pacing` enum in `src/gui/state.rs` is in place for a future "Max speed"
+  playback setting; nothing in the UI selects it yet.
+- **§2.3 — a burst samples the chart once per frame.** `advance_grid` is the
+  inner step — 1D history push, `Grid1D::step` / `Grid2D::step`,
+  `timed_steps` — with no clock read and no statistics sample, and it is what
+  `run_to_batch` loops. `step_once` (the Step button and the paced tick) is
+  `refresh_play_timer` + `advance_grid` + `stats_record_step`, one sample per
+  step. `tick_play`'s burst branch calls `stats_record_step` once, after its
+  whole chunk loop.
+- **Not taken:** the optional `pub fn cells(&self) -> &[CellType]` accessor on
+  `Grid2D` floated at the end of §2.1. It crosses into `cella_lib`, which this
+  phase otherwise stays out of, and the §2.4 numbers did not ask for it.
+- **Numbers:** logged as E10 in [`performance.md`](performance.md). The
+  painter number is measured (`paint_bench`: ~3.1 → ~1.18 ms per synthetic
+  frame). The "Run to +100000" wall-clock number is **still to be taken by
+  hand on a machine with working GL** — the GUI cannot be launched in this
+  environment.
+
+The §2.1–§2.4 text below is the plan as it stood *before* implementation, kept
+for its reasoning; where it and the code disagree, the code is what shipped.
+
 Three suspected defects. **None has been measured yet** — they are reasoned
 from the code, so do §2.4 first and let the numbers decide what is worth
 landing. 2.1 and 2.2 are independent; 2.3 builds on the `run_to_batch` helper
@@ -266,16 +304,21 @@ on a 50×30 grid. Do not read the clock per step inside `run_to_batch`.
 series, per step — and the rolling window (`StatsState::window_len`, default
 300) throws nearly all of it away immediately.
 
-**The fix.** Split into two methods:
+**The fix.** Split into two step paths:
 
 - `step_once` — records statistics. Used by the Step button and the paced
   `playing` tick.
-- `step_once_untracked` — does not.
+- an untracked step — the same work without the statistics sample.
 
-Then `run_to_batch` (from 2.2) uses `step_once_untracked`, and `tick_play`
-calls `stats_record_step` **once per frame**, after its chunk loop.
+Then `run_to_batch` (from 2.2) uses the untracked step, and `tick_play` calls
+`stats_record_step` **once per frame**, after its chunk loop.
 
-**What `step_once_untracked` must keep.** `step_once` does three things
+*What shipped:* the untracked step is `advance_grid`, which reads no clock
+either, and `run_to_batch` loops it directly; `step_once` is
+`refresh_play_timer` + `advance_grid` + `stats_record_step`. No third method
+was needed.
+
+**What the untracked step must keep.** `step_once` does three things
 besides the step itself, and only one of them is the statistics call:
 
 1. It bumps `playback.timed_steps` and refreshes `playback.play_start`. Those

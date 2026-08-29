@@ -1046,9 +1046,9 @@ suspicion, then got measured after the fact:
 - **§2.3** — the per-step work is now split so a burst can skip the parts
   it doesn't need: `advance_grid` is the step itself (1D history push,
   `Grid1D::step` / `Grid2D::step`, `timed_steps`) with no clock read and no
-  statistics sample; `step_once_untracked` adds the play-timer refresh on
-  top of that; and `step_once` (the Step button, paced play) adds
-  `stats_record_step` on top of `step_once_untracked`, one sample per step.
+  statistics sample; and `step_once` (the Step button, paced play) is that
+  step with the play-timer refresh before it and `stats_record_step` after
+  it, one sample per step.
   `run_to_batch` loops `advance_grid` directly, and `tick_play`'s burst
   branch calls `stats_record_step` once after its whole chunk loop
   finishes — so a burst now samples statistics once per frame instead of
@@ -1080,16 +1080,16 @@ change expected or seen, since §2.2 and §2.3 don't touch the paint path.
 +100000" from the toolbar on `configs/2d_large_moore_256.json`, taken by
 hand with a stopwatch. Before: predicted ~1000 steps/s, from the old
 `RUN_TO_STEPS_PER_FRAME` constant (100 steps per frame, now removed) at the
-old fixed `refresh_ms` default of 100, i.e. ~100 s / ~1.7 min for the full
-run — a prediction, never measured by hand, since the GUI could not be
-launched before or after the change in this environment. After:
-time-budgeted, to be measured by hand on a GL machine.
+`refresh_ms` default of 100, i.e. ~100 s / ~1.7 min for the full run — a
+prediction, never measured by hand, since the GUI could not be launched
+before or after the change in this environment. After: time-budgeted, to
+be measured by hand on a GL machine.
 
 Statistics sampling (§2.3) has no standalone stopwatch number of its own —
 it changes how many chart samples a burst appends, not how fast the burst
 runs — so it is covered by the Run-to number above and by the `cella`
-binary's existing unit tests on `advance_grid` / `step_once_untracked` /
-`run_to_batch` (see `src/gui/sim.rs`), which assert sample counts directly.
+binary's existing unit tests on `step_once` / `run_to_batch` / `tick_play`
+(see `src/gui/sim.rs`), which assert sample counts directly.
 
 ### Net effect (four kept rounds)
 
