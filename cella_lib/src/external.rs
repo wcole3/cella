@@ -23,6 +23,7 @@
 //! rather than from shared mutable RNG state.
 
 use crate::types::CellType;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 
 /// Read-only view of a grid handed to [`ExternalModel::attach`].
@@ -86,6 +87,61 @@ pub enum ModelError {
     NameCollision(String),
 }
 
+/// A model parameter's value, as exchanged with an application UI.
+///
+/// This is the "wire" value a control panel reads from
+/// [`ExternalModel::get_param`] and writes back through
+/// [`ExternalModel::set_param`]. Which variant is expected for a given
+/// parameter is described by that parameter's [`ParamKind`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ParamValue {
+    Float(f64),
+    Int(i64),
+    Bool(bool),
+    Choice(String),
+}
+
+/// What kind of control a parameter wants, and its valid range.
+///
+/// A UI uses this to decide what widget to draw (a slider, a spinner, a
+/// checkbox, a dropdown) and how to constrain user input, without knowing
+/// anything about the concrete model the parameter belongs to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ParamKind {
+    /// Continuous value; bounds are inclusive.
+    Float { min: f64, max: f64, step: f64 },
+    /// Discrete value; bounds are inclusive.
+    Int { min: i64, max: i64 },
+    Bool,
+    /// One of a fixed set of names.
+    Choice { options: Vec<String> },
+}
+
+/// Self-description of one tunable parameter.
+///
+/// A model returns a list of these from [`ExternalModel::params`] so a
+/// generic panel can build one control per parameter without any
+/// model-specific code.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParamDesc {
+    /// Stable machine key, used with `get_param` / `set_param`.
+    pub key: String,
+    /// Short human label for the control.
+    pub label: String,
+    /// Optional group heading, so a panel can section related controls.
+    pub group: Option<String>,
+    /// Optional tooltip text.
+    pub help: Option<String>,
+    /// Optional unit suffix for display, e.g. "m/s", "°".
+    pub unit: Option<String>,
+    pub kind: ParamKind,
+    /// Whether changing this invalidates derived state, and so requires the
+    /// engine to re-run `attach`. See `Grid2D::set_model_param`.
+    pub reattach: bool,
+    /// Shown but not editable. `set_model_param` rejects writes to it.
+    pub read_only: bool,
+}
+
 /// A pluggable transition model for [`crate::Grid2D`].
 ///
 /// See the [module docs](self) for the engine/model split and the determinism
@@ -129,6 +185,31 @@ pub trait ExternalModel: Send + Sync {
     /// painting palette). Default: none.
     fn declared_types(&self) -> Vec<CellType> {
         Vec::new()
+    }
+
+    /// Parameters this model exposes for interactive tuning. Default: none.
+    ///
+    /// A generic panel calls this once to learn what controls to draw, then
+    /// reads and writes values through [`Self::get_param`] and
+    /// [`Self::set_param`] using each [`ParamDesc::key`].
+    fn params(&self) -> Vec<ParamDesc> {
+        Vec::new()
+    }
+
+    /// Current value of `key`, or `None` if this model has no such
+    /// parameter. Default: `None` for every key.
+    fn get_param(&self, _key: &str) -> Option<ParamValue> {
+        None
+    }
+
+    /// Write `key`. Implementations need only check what `attach` does not;
+    /// the engine re-runs `attach` and rolls back on failure.
+    ///
+    /// Default: every key is rejected with [`ModelError::InvalidParam`],
+    /// which is correct for a model that declares no parameters via
+    /// [`Self::params`].
+    fn set_param(&mut self, key: &str, _value: ParamValue) -> Result<(), ModelError> {
+        Err(ModelError::InvalidParam(format!("unknown parameter '{key}'")))
     }
 
     /// Clone into a box; enables `Clone` for grids holding a model.
@@ -477,6 +558,66 @@ mod tests {
         assert!(m.declared_types().is_empty());
         m.on_paint(0, CellType::new("A")); // no-op default
         assert!(m.as_any_mut().downcast_mut::<ConstModel>().is_some());
+        // A model with no overrides declares no parameters, ...
+        assert!(m.params().is_empty());
+        // ... reports no value for any key, ...
+        assert!(m.get_param("anything").is_none());
+        // ... and rejects every write, naming the offending key.
+        let err = m
+            .set_param("wind_speed", ParamValue::Float(1.0))
+            .unwrap_err();
+        assert!(matches!(err, ModelError::InvalidParam(_)));
+        assert!(
+            err.to_string().contains("wind_speed"),
+            "message names the key: {err}"
+        );
+    }
+
+    #[test]
+    fn param_vocabulary_round_trips_through_json() {
+        let desc = ParamDesc {
+            key: "wind_speed".into(),
+            label: "Wind speed".into(),
+            group: Some("Weather".into()),
+            help: Some("Sustained wind speed".into()),
+            unit: Some("m/s".into()),
+            kind: ParamKind::Float {
+                min: 0.0,
+                max: 40.0,
+                step: 0.5,
+            },
+            reattach: true,
+            read_only: false,
+        };
+        let json = serde_json::to_string(&desc).unwrap();
+        let back: ParamDesc = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, desc);
+
+        let choice = ParamKind::Choice {
+            options: vec!["Light".into(), "Heavy".into()],
+        };
+        let back: ParamKind =
+            serde_json::from_str(&serde_json::to_string(&choice).unwrap()).unwrap();
+        assert_eq!(back, choice);
+        let int_kind = ParamKind::Int { min: 0, max: 10 };
+        let back: ParamKind =
+            serde_json::from_str(&serde_json::to_string(&int_kind).unwrap()).unwrap();
+        assert_eq!(back, int_kind);
+        let bool_kind = ParamKind::Bool;
+        let back: ParamKind =
+            serde_json::from_str(&serde_json::to_string(&bool_kind).unwrap()).unwrap();
+        assert_eq!(back, bool_kind);
+
+        for value in [
+            ParamValue::Float(1.5),
+            ParamValue::Int(3),
+            ParamValue::Bool(true),
+            ParamValue::Choice("Heavy".into()),
+        ] {
+            let back: ParamValue =
+                serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
+            assert_eq!(back, value);
+        }
     }
 
     #[test]

@@ -28,7 +28,9 @@ pub mod threads;
 pub mod types;
 pub mod wildfire;
 
-pub use external::{ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent};
+pub use external::{
+    ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
+};
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
 pub use rules::{
