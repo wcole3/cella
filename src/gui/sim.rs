@@ -85,6 +85,30 @@ impl CellaApp {
             None => 0,
         }
     }
+    /// Start a "Run to +N", or extend one that is already running: aim
+    /// `run_to_steps` past the current step and burst until we get there.
+    ///
+    /// `playing_before_run_to` is only saved when no run is pending. Pressing
+    /// the button a second time to extend a run must keep the value from the
+    /// first press, because that is the state the user was actually in — after
+    /// the first press `playing` is a value this button forced on itself, and
+    /// saving it would leave a run started from a pause animating forever.
+    pub(in crate::gui) fn start_run_to(&mut self) {
+        let target = self
+            .current_step()
+            .saturating_add(self.playback.run_to_steps);
+        if self.playback.run_to_target.is_none() {
+            // Remember how playback was set up so the finished run can
+            // restore it instead of always stopping.
+            self.playback.playing_before_run_to = self.playback.playing;
+        }
+        self.playback.run_to_target = Some(target);
+        self.playback.playing = true; // ensure stepping
+        if self.playback.play_start.is_none() {
+            self.playback.play_start = Some(Instant::now());
+        }
+        self.set_status(format!("Running to {}", target));
+    }
     /// The step number this frame should burst towards, or `None` when
     /// playback is paced (or stopped) and so runs at most one step per frame.
     ///
@@ -317,5 +341,45 @@ mod tests {
 
         assert_eq!(app.current_step(), start + u64::from(done));
         assert_eq!(done, 7);
+    }
+
+    #[test]
+    fn a_second_run_to_press_keeps_the_playback_state_from_the_first() {
+        let mut app = test_app_with_life();
+        let start = app.current_step();
+        app.playback.run_to_steps = 3;
+        assert!(!app.playback.playing, "the app starts paused");
+
+        // First press: aims 3 steps ahead and forces `playing` on.
+        app.start_run_to();
+        // Second press while that run is still pending, to extend it. The
+        // `playing` it sees is the one the first press forced, not the user's.
+        app.playback.run_to_steps = 5;
+        app.start_run_to();
+
+        assert_eq!(
+            app.playback.run_to_target,
+            Some(start + 5),
+            "the second press should extend the run"
+        );
+        assert!(
+            !app.playback.playing_before_run_to,
+            "the saved state must still be the pause the user was in"
+        );
+
+        // Let the run finish.
+        for _ in 0..10 {
+            app.tick_play();
+            if app.playback.run_to_target.is_none() {
+                break;
+            }
+        }
+
+        assert_eq!(app.playback.run_to_target, None, "the run should have finished");
+        assert_eq!(app.current_step(), start + 5);
+        assert!(
+            !app.playback.playing,
+            "the user was paused before the first press, so playback must stop"
+        );
     }
 }
