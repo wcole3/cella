@@ -1,4 +1,4 @@
-//! EXPERIMENT variant of wildfire_validate (uncommitted, investigation only).
+//! EXPERIMENT variant of wildfire_validate (investigation only).
 //! Adds two env-var hooks the committed harness does not have:
 //!
 //! - `EXP_P0_SCALE=path.json` — JSON array of per-wind-window multipliers
