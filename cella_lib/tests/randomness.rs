@@ -28,13 +28,13 @@ fn two_d_randomness_one_never_applies() {
     let a = CellType::from("A");
     let b = CellType::from("B");
     let sub = Rule2DSubrule::new(
-        a.clone(),
-        b.clone(),
+        a,
+        b,
         1,
         CountOp::Gt,
         1,
         Neighborhood2D::Moore,
-        b.clone(),
+        b,
         Some(1.0),
         None,
     );
@@ -44,11 +44,48 @@ fn two_d_randomness_one_never_applies() {
     let w = 3usize;
     let h = 3usize;
     let hist = 2usize;
-    let mut init = vec![a.clone(); w * h];
+    let mut init = vec![a; w * h];
     // Place a B neighbor at (1,0) relative to center (1,1)
-    init[0 * w + 1] = b.clone();
+    init[1] = b;
     let mut g = Grid2D::new(w, h, hist, init, rule);
     g.step();
     // Since rule didn't apply due to randomness=1.0, center becomes Inactive per engine base rule
-    assert_eq!(g.cell_type(1 * w + 1), CellType::inactive());
+    assert_eq!(g.cell_type( 1), CellType::inactive());
+    assert_eq!(g.cell_type(0), CellType::inactive());
+}
+
+#[test]
+fn two_d_randomness_zero_always_applies() {
+    // Center A has one B neighbor, threshold 1 satisfied, but randomness=1.0 prevents application.
+    let a = CellType::from("A");
+    let b = CellType::from("B");
+    let sub = Rule2DSubrule::new(
+        a,
+        b,
+        1,
+        CountOp::Gt,
+        1,
+        Neighborhood2D::Moore,
+        b,
+        Some(0.0),
+        None,
+    );
+    let rule = Rule2D {
+        subrules: vec![sub],
+    };
+    let w = 3usize;
+    let h = 3usize;
+    let hist = 2usize;
+    let mut init = vec![a; w * h];
+    // Place a B neighbor at (1,0) relative to center (1,1)
+    init[1] = b;
+    let mut g = Grid2D::new(w, h, hist, init, rule);
+    g.step();
+    // Rule should apply to original b neighbors
+    assert_eq!(g.cell_type( 1), CellType::inactive());
+    assert_eq!(g.cell_type(0), b);
+    assert_eq!(g.cell_type(2), b);
+    assert_eq!(g.cell_type(w), b);
+    assert_eq!(g.cell_type(w + 1), b);
+    assert_eq!(g.cell_type(w + 2), b);
 }
