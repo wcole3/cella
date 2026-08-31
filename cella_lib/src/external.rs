@@ -109,12 +109,21 @@ pub enum ParamValue {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParamKind {
     /// Continuous value; bounds are inclusive.
-    Float { min: f64, max: f64, step: f64 },
+    Float {
+        min: f64,
+        max: f64,
+        step: f64,
+    },
     /// Discrete value; bounds are inclusive.
-    Int { min: i64, max: i64 },
+    Int {
+        min: i64,
+        max: i64,
+    },
     Bool,
     /// One of a fixed set of names.
-    Choice { options: Vec<String> },
+    Choice {
+        options: Vec<String>,
+    },
 }
 
 /// Self-description of one tunable parameter.
@@ -222,7 +231,9 @@ pub trait ExternalModel: Send + Sync {
     /// which is correct for a model that declares no parameters via
     /// [`Self::params`].
     fn set_param(&mut self, key: &str, _value: ParamValue) -> Result<(), ModelError> {
-        Err(ModelError::InvalidParam(format!("unknown parameter '{key}'")))
+        Err(ModelError::InvalidParam(format!(
+            "unknown parameter '{key}'"
+        )))
     }
 
     /// Clone into a box; enables `Clone` for grids holding a model.

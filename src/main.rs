@@ -213,6 +213,9 @@ mod tests {
     #[test]
     fn parse_gui_config_is_none_when_absent_or_dangling() {
         assert_eq!(parse_gui_config(&args(&["cella", "--gui"])), None);
-        assert_eq!(parse_gui_config(&args(&["cella", "--gui", "--config"])), None);
+        assert_eq!(
+            parse_gui_config(&args(&["cella", "--gui", "--config"])),
+            None
+        );
     }
 }

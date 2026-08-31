@@ -50,7 +50,7 @@ fn two_d_randomness_one_never_applies() {
     let mut g = Grid2D::new(w, h, hist, init, rule);
     g.step();
     // Since rule didn't apply due to randomness=1.0, center becomes Inactive per engine base rule
-    assert_eq!(g.cell_type( 1), CellType::inactive());
+    assert_eq!(g.cell_type(1), CellType::inactive());
     assert_eq!(g.cell_type(0), CellType::inactive());
 }
 
@@ -82,7 +82,7 @@ fn two_d_randomness_zero_always_applies() {
     let mut g = Grid2D::new(w, h, hist, init, rule);
     g.step();
     // Rule should apply to original b neighbors
-    assert_eq!(g.cell_type( 1), CellType::inactive());
+    assert_eq!(g.cell_type(1), CellType::inactive());
     assert_eq!(g.cell_type(0), b);
     assert_eq!(g.cell_type(2), b);
     assert_eq!(g.cell_type(w), b);

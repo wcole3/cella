@@ -400,8 +400,14 @@ mod tests {
         app.report_no_file_chosen("config");
         let msg = status(&app);
         assert!(msg.starts_with("No config chosen"), "got {msg:?}");
-        assert!(msg.contains("--config"), "should point at the workaround, got {msg:?}");
-        assert!(msg.contains("docs/app.md"), "should point at the docs, got {msg:?}");
+        assert!(
+            msg.contains("--config"),
+            "should point at the workaround, got {msg:?}"
+        );
+        assert!(
+            msg.contains("docs/app.md"),
+            "should point at the docs, got {msg:?}"
+        );
     }
 
     #[test]
@@ -416,9 +422,16 @@ mod tests {
     fn apply_startup_config_keeps_the_life_demo_under_a_bad_path_and_says_why() {
         let mut app = test_app();
         app.apply_startup_config(Some(Path::new("configs/does_not_exist.json")));
-        assert!(matches!(app.scenario.dim, Some(Dim::D2)), "Life demo should be on screen");
+        assert!(
+            matches!(app.scenario.dim, Some(Dim::D2)),
+            "Life demo should be on screen"
+        );
         assert_eq!((app.inputs.grid_width, app.inputs.grid_height), (50, 30));
-        assert!(status(&app).starts_with("Failed to load config"), "got {:?}", status(&app));
+        assert!(
+            status(&app).starts_with("Failed to load config"),
+            "got {:?}",
+            status(&app)
+        );
     }
 
     #[test]
@@ -434,7 +447,13 @@ mod tests {
         let colours: Vec<_> = types.iter().map(|t| app.color_of(t)).collect();
         for i in 0..colours.len() {
             for j in (i + 1)..colours.len() {
-                assert_ne!(colours[i], colours[j], "{} and {} share a colour", types[i].as_str(), types[j].as_str());
+                assert_ne!(
+                    colours[i],
+                    colours[j],
+                    "{} and {} share a colour",
+                    types[i].as_str(),
+                    types[j].as_str()
+                );
             }
         }
     }
@@ -454,11 +473,22 @@ mod tests {
         let mut app = test_app();
         app.load_config_from_path(&path);
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(app.scenario.dim, Some(Dim::D2)), "got {:?}", status(&app));
+        assert!(
+            matches!(app.scenario.dim, Some(Dim::D2)),
+            "got {:?}",
+            status(&app)
+        );
         let forest = app.color_of(&CellType::from("Forest"));
         let burning = app.color_of(&CellType::from("Burning"));
-        assert_eq!(forest, egui::Color32::from_rgb(0x2e, 0x8b, 0x57), "config colour wins");
-        assert_ne!(forest, burning, "the other type still gets a distinct automatic colour");
+        assert_eq!(
+            forest,
+            egui::Color32::from_rgb(0x2e, 0x8b, 0x57),
+            "config colour wins"
+        );
+        assert_ne!(
+            forest, burning,
+            "the other type still gets a distinct automatic colour"
+        );
     }
 
     #[test]

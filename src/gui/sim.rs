@@ -446,7 +446,10 @@ pub(in crate::gui) mod tests {
 
         let done = app.run_to_batch(start + 5, 32);
 
-        assert_eq!(done, 5, "should stop at the target, not run the whole batch");
+        assert_eq!(
+            done, 5,
+            "should stop at the target, not run the whole batch"
+        );
         assert_eq!(app.current_step(), start + 5);
     }
 
@@ -516,7 +519,10 @@ pub(in crate::gui) mod tests {
             }
         }
 
-        assert_eq!(app.playback.run_to_target, None, "the run should have finished");
+        assert_eq!(
+            app.playback.run_to_target, None,
+            "the run should have finished"
+        );
         assert_eq!(app.current_step(), start + 5);
         assert!(
             !app.playback.playing,
@@ -542,7 +548,10 @@ pub(in crate::gui) mod tests {
     fn run_to_batch_records_no_statistics_samples() {
         let mut app = test_app_with_life();
         let before = series_lens(&app);
-        assert!(!before.is_empty(), "loading a demo seeds one sample per type");
+        assert!(
+            !before.is_empty(),
+            "loading a demo seeds one sample per type"
+        );
 
         let done = app.run_to_batch(app.current_step() + 10, 32);
 
@@ -614,7 +623,10 @@ pub(in crate::gui) mod tests {
     fn a_batch_grows_the_1d_history_by_one_row_per_step() {
         let mut app = test_app_with_rule30();
         app.view.history_limit_1d = 1_000; // well above the batch
-        assert!(app.view.history_1d.is_empty(), "a fresh demo has no history");
+        assert!(
+            app.view.history_1d.is_empty(),
+            "a fresh demo has no history"
+        );
 
         let done = app.run_to_batch(app.current_step() + 20, 32);
 

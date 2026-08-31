@@ -95,8 +95,14 @@ mod tests {
 
     #[test]
     fn parse_hex_color_reads_rrggbb_with_or_without_hash() {
-        assert_eq!(parse_hex_color("#2e8b57"), Some(Color32::from_rgb(0x2e, 0x8b, 0x57)));
-        assert_eq!(parse_hex_color("FF4500"), Some(Color32::from_rgb(0xff, 0x45, 0x00)));
+        assert_eq!(
+            parse_hex_color("#2e8b57"),
+            Some(Color32::from_rgb(0x2e, 0x8b, 0x57))
+        );
+        assert_eq!(
+            parse_hex_color("FF4500"),
+            Some(Color32::from_rgb(0xff, 0x45, 0x00))
+        );
     }
 
     #[test]
@@ -122,6 +128,10 @@ mod tests {
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let slots = distinct_palette_slots(&refs, 8);
         assert_eq!(slots[..8], [0, 1, 2, 3, 4, 5, 6, 7]);
-        assert_eq!(slots[8], palette_index_for("T8", 8), "9th falls back to the hash");
+        assert_eq!(
+            slots[8],
+            palette_index_for("T8", 8),
+            "9th falls back to the hash"
+        );
     }
 }

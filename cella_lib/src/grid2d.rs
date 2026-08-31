@@ -112,12 +112,9 @@ impl<'de> Deserialize<'de> for Grid2D {
             .iter()
             .map(|cs| cs.age_in_state)
             .collect();
-        let history_data =
-            soa_history(&intermediate.cell_states, intermediate.history_limit);
-        let history_heads =
-            soa_heads(&intermediate.cell_states, intermediate.history_limit);
-        let history_counts =
-            soa_counts(&intermediate.cell_states, intermediate.history_limit);
+        let history_data = soa_history(&intermediate.cell_states, intermediate.history_limit);
+        let history_heads = soa_heads(&intermediate.cell_states, intermediate.history_limit);
+        let history_counts = soa_counts(&intermediate.cell_states, intermediate.history_limit);
         let dominant_type: CellType = intermediate
             .counts_current
             .iter()

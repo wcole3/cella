@@ -310,7 +310,11 @@ mod tests {
                 row.extend(std::iter::repeat_n(CellType::from(tag), len));
             }
         }
-        assert_eq!(row.len(), 2000, "synthetic row layout must total 2000 cells");
+        assert_eq!(
+            row.len(),
+            2000,
+            "synthetic row layout must total 2000 cells"
+        );
         (row, expected_rects)
     }
 

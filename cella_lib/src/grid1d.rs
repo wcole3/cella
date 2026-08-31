@@ -4,6 +4,7 @@ use crate::chunking::{OutChunk, split_chunks};
 use crate::rules::{
     PackedWolfram, Rule1D, Rule1DPlan, Rule1DSubrule, Sub1DPlan, TypeCounter, apply_counts,
 };
+use crate::state::{soa_counts, soa_heads, soa_history};
 use crate::threads::{chunks_for_work, pool};
 use crate::types::{CellState, CellType};
 use lasso2::Spur;
@@ -12,7 +13,6 @@ use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::io::Error;
-use crate::state::{soa_counts, soa_heads, soa_history};
 
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -132,7 +132,6 @@ impl std::fmt::Debug for Grid1D {
 }
 
 impl Grid1D {
-
     /// Transition cell `idx` to `new_type` in SoA format.
     #[inline]
     fn transition_cell(&mut self, idx: usize, new_type: CellType) {
