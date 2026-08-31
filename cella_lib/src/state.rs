@@ -100,9 +100,9 @@ impl Grid1D {
                 let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
                 let next_cells: Vec<CellType> = vec![CellType::inactive(); *width];
                 let ages: Vec<u32> = cell_states.iter().map(|c| c.age_in_state).collect();
-                let history_data = Self::soa_history(cell_states, *history_limit);
-                let history_heads = Self::soa_heads(cell_states, *history_limit);
-                let history_counts = Self::soa_counts(cell_states, *history_limit);
+                let history_data = soa_history(cell_states, *history_limit);
+                let history_heads = soa_heads(cell_states, *history_limit);
+                let history_counts = soa_counts(cell_states, *history_limit);
                 let dominant_type: CellType = new_counts
                     .iter()
                     .max_by_key(|entry| entry.1)
@@ -149,9 +149,9 @@ impl Grid2D {
                 let next_cells: Vec<CellType> = vec![CellType::inactive(); cell_states.len()];
                 let cells: Vec<CellType> = cell_states.iter().map(|c| c.current).collect();
                 let ages: Vec<u32> = cell_states.iter().map(|c| c.age_in_state).collect();
-                let history_data = Grid1D::soa_history(cell_states, *history_limit);
-                let history_heads = Grid1D::soa_heads(cell_states, *history_limit);
-                let history_counts = Grid1D::soa_counts(cell_states, *history_limit);
+                let history_data = soa_history(cell_states, *history_limit);
+                let history_heads = soa_heads(cell_states, *history_limit);
+                let history_counts = soa_counts(cell_states, *history_limit);
                 let dominant_type: CellType = counts_current
                     .iter()
                     .max_by_key(|entry| entry.1)
@@ -230,6 +230,36 @@ fn convert_map_spur_to_string(
         new_peak_counts.insert(interner().resolve(k).to_string(), *v);
     }
     (new_counts, new_peak_counts)
+}
+
+/// Convert deserialized CellState vectors to SoA history arrays.
+pub(crate) fn soa_history(states: &[CellState], limit: usize) -> Vec<CellType> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut data = vec![CellType::inactive(); states.len() * limit];
+    for (i, cs) in states.iter().enumerate() {
+        let base = i * limit;
+        for (j, ct) in cs.history.iter().enumerate() {
+            data[base + j] = *ct;
+        }
+    }
+    data
+}
+pub(crate) fn soa_heads(states: &[CellState], limit: usize) -> Vec<u8> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    states
+        .iter()
+        .map(|cs| (cs.history.len() % limit) as u8)
+        .collect()
+}
+pub(crate) fn soa_counts(states: &[CellState], limit: usize) -> Vec<u8> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    states.iter().map(|cs| cs.history.len() as u8).collect()
 }
 
 #[cfg(test)]

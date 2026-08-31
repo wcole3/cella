@@ -56,6 +56,9 @@ pub struct Grid2D {
     #[serde(skip)]
     pub(crate) history_data: Vec<CellType>,
     /// Write head for each cell's circular history buffer.
+    /// TODO need to check if there is still a need to maintain this; every cell's history gets
+    /// updates when the buffers swap, so presumably we could maintain a single head
+    /// and update when the buffers swap. That would save the array memory
     #[serde(skip)]
     pub(crate) history_heads: Vec<u8>,
     /// Entry count for each cell's circular history buffer.
@@ -103,24 +106,24 @@ impl<'de> Deserialize<'de> for Grid2D {
             .map(|cs| cs.current)
             .collect();
         let next_cells: Vec<CellType> =
-            vec![intermediate.inactive.clone(); intermediate.width * intermediate.height];
+            vec![intermediate.inactive; intermediate.width * intermediate.height];
         let ages: Vec<u32> = intermediate
             .cell_states
             .iter()
             .map(|cs| cs.age_in_state)
             .collect();
         let history_data =
-            Grid1D::soa_history(&intermediate.cell_states, intermediate.history_limit);
+            soa_history(&intermediate.cell_states, intermediate.history_limit);
         let history_heads =
-            Grid1D::soa_heads(&intermediate.cell_states, intermediate.history_limit);
+            soa_heads(&intermediate.cell_states, intermediate.history_limit);
         let history_counts =
-            Grid1D::soa_counts(&intermediate.cell_states, intermediate.history_limit);
+            soa_counts(&intermediate.cell_states, intermediate.history_limit);
         let dominant_type: CellType = intermediate
             .counts_current
             .iter()
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
-            .unwrap_or_else(|| intermediate.inactive.clone());
+            .unwrap_or_else(|| intermediate.inactive);
         let mut grid = Grid2D {
             width: intermediate.width,
             height: intermediate.height,
@@ -146,7 +149,7 @@ impl<'de> Deserialize<'de> for Grid2D {
     }
 }
 
-use crate::grid1d::Grid1D;
+use crate::state::{soa_counts, soa_heads, soa_history};
 
 impl std::fmt::Debug for Grid2D {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

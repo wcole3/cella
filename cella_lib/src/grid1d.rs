@@ -12,6 +12,7 @@ use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::io::Error;
+use crate::state::{soa_counts, soa_heads, soa_history};
 
 /// 1D grid containing cells and a 1D rule.
 ///
@@ -87,9 +88,9 @@ impl<'de> Deserialize<'de> for Grid1D {
         let cells: Vec<CellType> = im.cell_states.iter().map(|cs| cs.current).collect();
         let next_cells: Vec<CellType> = vec![im.inactive; im.width];
         let ages: Vec<u32> = im.cell_states.iter().map(|cs| cs.age_in_state).collect();
-        let history_data = Self::soa_history(&im.cell_states, im.history_limit);
-        let history_heads = Self::soa_heads(&im.cell_states, im.history_limit);
-        let history_counts = Self::soa_counts(&im.cell_states, im.history_limit);
+        let history_data = soa_history(&im.cell_states, im.history_limit);
+        let history_heads = soa_heads(&im.cell_states, im.history_limit);
+        let history_counts = soa_counts(&im.cell_states, im.history_limit);
         let dominant_type: CellType = im
             .counts_current
             .iter()
@@ -131,35 +132,6 @@ impl std::fmt::Debug for Grid1D {
 }
 
 impl Grid1D {
-    /// Convert deserialized CellState vectors to SoA history arrays.
-    pub(crate) fn soa_history(states: &[CellState], limit: usize) -> Vec<CellType> {
-        if limit == 0 {
-            return Vec::new();
-        }
-        let mut data = vec![CellType::inactive(); states.len() * limit];
-        for (i, cs) in states.iter().enumerate() {
-            let base = i * limit;
-            for (j, ct) in cs.history.iter().enumerate() {
-                data[base + j] = *ct;
-            }
-        }
-        data
-    }
-    pub(crate) fn soa_heads(states: &[CellState], limit: usize) -> Vec<u8> {
-        if limit == 0 {
-            return Vec::new();
-        }
-        states
-            .iter()
-            .map(|cs| (cs.history.len() % limit) as u8)
-            .collect()
-    }
-    pub(crate) fn soa_counts(states: &[CellState], limit: usize) -> Vec<u8> {
-        if limit == 0 {
-            return Vec::new();
-        }
-        states.iter().map(|cs| cs.history.len() as u8).collect()
-    }
 
     /// Transition cell `idx` to `new_type` in SoA format.
     #[inline]
