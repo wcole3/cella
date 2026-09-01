@@ -116,7 +116,18 @@ impl CellaApp {
         if !response.hovered() {
             return;
         }
-        let dy = ui.input(|i| i.smooth_scroll_delta.y);
+        let dy = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| {
+                    if let egui::Event::MouseWheel { delta, .. } = e {
+                        Some(delta.y)
+                    } else {
+                        None
+                    }
+                })
+                .sum::<f32>()
+        });
         if dy > 0.0 {
             self.view.scale = (self.view.scale + 1).min(MAX_SCALE);
         } else if dy < 0.0 {
