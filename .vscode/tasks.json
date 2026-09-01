@@ -1,0 +1,113 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run cella",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["run", "--package", "cella", "--bin", "cella", "--profile", "dev"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "Run cella GUI",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["run", "--package", "cella", "--bin", "cella", "--", "--gui", "--size", "1024x768"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "WINIT_UNIX_BACKEND": "x11", "WAYLAND_DISPLAY": "" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "Test ALL",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "test", "--package", "cella_lib", "--", "--include-ignored"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "test", "isDefault": true }
+    },
+    {
+      "label": "Test ALL CreateSnapshots",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "test", "--package", "cella_lib", "--", "--include-ignored", "--nocapture"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "CELLA_UPDATE_SNAPSHOTS": "1" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test ALL SingleRun",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "test", "--package", "cella_lib", "--", "--include-ignored", "--nocapture"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "CELLA_BENCH_RUNS": "1" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test ALL SingleThr",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "bench", "--package", "cella_lib", "--", "--include-ignored", "--test-threads=1", "--nocapture"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test ALL SingleThr Single Run",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--package", "cella_lib", "--", "--include-ignored", "--test-threads=1", "--nocapture"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "CELLA_BENCH_RUNS": "1", "CELLA_EXPORT_CONFIGS": "1" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test ALL UpdateASCII",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "test", "--package", "cella_lib", "--", "--include-ignored"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "CELLA_ASCII": "1" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test ALL UpdateBenchmarks",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--profile", "bench", "--package", "cella_lib", "--", "--include-ignored", "--test-threads=1", "--nocapture"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "CELLA_UPDATE_BENCH": "1" }
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "Test Quick",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--package", "cella_lib"],
+      "options": { "cwd": "${workspaceFolder}/cella_lib" },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    }
+  ]
+}

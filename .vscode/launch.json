@@ -1,0 +1,113 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Run cella",
+      "cargo": {
+        "args": ["build", "--package", "cella", "--bin", "cella", "--profile", "dev"],
+        "filter": { "name": "cella", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Run cella GUI",
+      "cargo": {
+        "args": ["build", "--package", "cella", "--bin", "cella"],
+        "filter": { "name": "cella", "kind": "bin" }
+      },
+      "args": ["--gui", "--size", "1024x768"],
+      "cwd": "${workspaceFolder}",
+      "env": { "WINIT_UNIX_BACKEND": "x11", "WAYLAND_DISPLAY": "" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "test", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL CreateSnapshots",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "test", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CELLA_UPDATE_SNAPSHOTS": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL SingleRun",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "test", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CELLA_BENCH_RUNS": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL SingleThr",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "bench", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored", "--test-threads=1", "--nocapture"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL SingleThr Single Run",
+      "cargo": {
+        "args": ["test", "--no-run", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored", "--test-threads=1", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CELLA_BENCH_RUNS": "1", "CELLA_EXPORT_CONFIGS": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL UpdateASCII",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "test", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CELLA_ASCII": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test ALL UpdateBenchmarks",
+      "cargo": {
+        "args": ["test", "--no-run", "--profile", "bench", "--package", "cella_lib"]
+      },
+      "args": ["--include-ignored", "--test-threads=1", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CELLA_UPDATE_BENCH": "1" }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug: Test Quick",
+      "cargo": {
+        "args": ["test", "--no-run", "--package", "cella_lib"]
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/cella_lib"
+    }
+  ]
+}
