@@ -1138,7 +1138,7 @@ fn wildfire_grid_256(spotting: bool) -> Grid2D {
             },
         ],
         wind_speed: 8.0,
-        wind_dir_deg: 45.0,
+        wind_from_deg: 315.0, // blows toward 45° on the grid, as the snapshot was taken
         c1: 0.045,
         c2: 0.131,
         slope_a: 0.078,

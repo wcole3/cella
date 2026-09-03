@@ -335,7 +335,7 @@ fn attach_model_error_propagates_and_leaves_grid_modelless() {
                 veg_factor: 1.0,
             }],
             wind_speed: 0.0,
-            wind_dir_deg: 0.0,
+            wind_from_deg: 270.0,
             c1: 0.045,
             c2: 0.131,
             slope_a: 0.078,
@@ -370,7 +370,7 @@ fn wildfire_params(seed: u64) -> WildfireParams {
             },
         ],
         wind_speed: 6.0,
-        wind_dir_deg: 30.0,
+        wind_from_deg: 300.0, // blows toward 30° on the grid
         c1: 0.045,
         c2: 0.131,
         slope_a: 0.078,
@@ -543,7 +543,7 @@ fn wildfire_spotting_lands_through_step() {
     init[4 * 9 + 1] = b;
     let mut params = wildfire_params(11);
     params.p0 = 0.0; // isolate spotting
-    params.wind_dir_deg = 0.0;
+    params.wind_from_deg = 270.0; // west wind: firebrands fly east
     params.burn_duration = 10;
     params.fuels = vec![FuelClass {
         name: "Forest".into(),
@@ -619,7 +619,7 @@ fn model_mut_downcast_adjusts_wind_between_steps() {
         .downcast_mut::<WildfireModel>()
         .unwrap();
     m.params.wind_speed = 99.0;
-    m.params.wind_dir_deg = 180.0;
+    m.params.wind_from_deg = 90.0;
     g.step();
     let m = g
         .model_mut()

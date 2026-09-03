@@ -812,7 +812,7 @@ pub(in crate::gui) mod tests {
                 veg_factor: 1.0,
             }],
             wind_speed: 1.0,
-            wind_dir_deg: 0.0,
+            wind_from_deg: 270.0,
             c1: 0.045,
             c2: 0.131,
             slope_a: 0.078,

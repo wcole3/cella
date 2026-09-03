@@ -166,7 +166,7 @@ Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {
 
 ### The wildfire model
 
-`wildfire::WildfireModel` implements Alexandridis-style stochastic spread: per-cell base probability `p0 × veg_factor × density`, exponential wind (`c1`, `c2`) and slope (`slope_a`) modifiers with a `1/√2` diagonal correction, burn duration tracked through cell ages, and lognormal firebrand spotting delivered as `ModelEvent`s. Slope factors are precomputed per cell at attach; wind factors once per chunk; the per-cell loop is two multiplies per burning neighbor plus one hash draw. See `configs/2d_wildfire_demo.json` and the module docs for parameters (defaults follow Alexandridis et al. 2008).
+`wildfire::WildfireModel` implements Alexandridis-style stochastic spread: per-cell base probability `p0 × veg_factor × density`, exponential wind (`c1`, `c2`; direction as the meteorological bearing the wind comes *from*, `wind_from_deg`, 0° = north, clockwise, grid north-up — check any external weather feed against `validation/TEST_PLAN.md` §2.1 before comparing results) and slope (`slope_a`) modifiers with a `1/√2` diagonal correction, burn duration tracked through cell ages, and lognormal firebrand spotting delivered as `ModelEvent`s. Slope factors are precomputed per cell at attach; wind factors once per chunk; the per-cell loop is two multiplies per burning neighbor plus one hash draw. See `configs/2d_wildfire_demo.json` and the module docs for parameters (defaults follow Alexandridis et al. 2008).
 
 ### Model parameters
 

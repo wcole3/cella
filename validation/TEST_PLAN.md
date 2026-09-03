@@ -41,6 +41,61 @@ own `spatial_accuracy_m`.
 | T3 | GOFER (28 CA fires) | hourly, ±1 km edges | arrival-time / growth-rate scoring; plume + terrain stress |
 | T4 | Camp Fire 2018 (NIST points) | sub-hourly | spotting endgame |
 
+### 2.1 Weather inputs: inspect before you compare (added v1.1)
+
+Every comparison — against an observed fire *or* against another fire
+model's published score — is only as good as the weather feed behind it.
+Round 2 of [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) found that our wind
+maths was right and our wind *input* was the problem: ERA5 daily domain
+means at 0.1–3 m/s leave the wind kernel inert, and on Chimney 2016 they
+point the opposite way to the gusts that actually drove the fire. A
+convention slip would have looked exactly the same in the score table.
+So, **before any weather-driven result is quoted**, the person running the
+comparison walks this list and records the answers in
+`scenario.json → provenance.weather` (see [FORMATS.md](FORMATS.md)):
+
+1. **Direction convention.** Is the direction the bearing the wind comes
+   *from* (weather-report, 0° = north, clockwise — what cella's
+   `wind_from_deg` expects) or the direction it blows *toward*? Where is
+   0°: north or east? Clockwise or counter-clockwise? Other simulators
+   differ (PyTorchFire: toward, 0° = east, counter-clockwise; Prometheus,
+   FARSITE, WindNinja: from, 0° = north, clockwise). Write down the
+   conversion used.
+2. **Grid orientation.** cella assumes row 0 is the northern edge. Prove
+   it for each new source with an independent layer — we check the
+   LANDFIRE aspect layer against the elevation gradient (cosine ≈ +0.96
+   when rows run north→south, ≈ 0 when flipped). Never assume it from
+   the file's bounds.
+3. **Units and height.** m/s, km/h, knots or mph? 10 m wind (ERA5), 20 ft
+   / 6.1 m open wind (FARSITE, US fire weather) or mid-flame wind? A 20 ft
+   → mid-flame adjustment is a factor of 2–4; a knots → m/s slip is ×2.
+4. **Time averaging.** Hourly values, daily means, or instantaneous
+   snapshots? A daily *vector* mean of u/v cancels a wind that swings
+   during the day and hides gusts entirely (Chimney: mean 1 m/s from the
+   south-west; reported easterly gusts on the run days). Prefer hourly;
+   if only daily means exist, say so in `simplifications` and expect the
+   wind kernel to be nearly inert.
+5. **Space averaging.** ERA5 cells are ~31 km; our domains are 10–30 km,
+   so one domain mean is all the data offers. Canyon channelling and
+   sea-breeze fronts are invisible at that scale. Record the source
+   resolution next to the grid resolution.
+6. **Vector mean vs speed mean.** `hypot(mean u, mean v)` is smaller than
+   `mean(hypot(u, v))` whenever direction varies across the field. State
+   which one the converter took.
+7. **Other drivers the comparison model had.** Temperature, humidity,
+   precipitation, fuel-moisture codes (FFMC/DMC/DC in Canadian streams),
+   suppression records. A model that consumed them is not comparable to
+   one fed wind alone; list what each side saw.
+8. **Two cheap sanity experiments, run once per new source**, both in
+   `scripts/experiments/`: `exp_wind_rotation.py` (a rotated schedule must
+   *not* beat the unrotated one — if 90°/180°/270° wins, the convention or
+   the orientation is wrong) and the growth-direction alignment in the E12
+   shape diagnostic (mean |observed growth direction − wind| should sit
+   well below the 90° of "no relationship" on wind-driven fires).
+
+A weather-driven score quoted without these answers on file is a
+pre-registration violation, same as reshuffling the holdout.
+
 **Holdout rule:** calibration may use at most 4 of the 6 T0 fires. The
 remaining 2 T0 fires and every higher tier are *test-only*: no parameter may
 be chosen, directly or indirectly, by looking at their scores. The T0 split
@@ -164,9 +219,20 @@ in `validation/results/analysis/`.
 5. Negative results are kept: rejected calibrations, failed hypotheses, and
    worse-than-null configurations stay in the results directory and the
    analysis notes.
+6. Weather inputs are inspected before they are compared (§2.1). The
+   `provenance.weather` block in `scenario.json` is filled in for every
+   source, and any result quoted against another model or an observation
+   names the wind convention, units, height, and averaging on both sides.
 
 ## 9. Plan changelog
 
+- v1.1 (2026-09-01): added §2.1 "Weather inputs: inspect before you
+  compare" and process rule 6, after Round 2 showed the wind maths was
+  correct but the ERA5 daily-mean wind input was too weak to act and, on
+  Chimney 2016, pointed the wrong way on the run days. Also records the
+  switch of `wind_dir_deg` (toward, 0° = +x, our own convention) to
+  `wind_from_deg` (meteorological from-bearing) and scenario format v2;
+  the conversion is exact and every reported score is unchanged.
 - v1 (2026-08-14): initial plan. T0 split fixed (calibrate: Bear, Brattain,
   Buck, Chimney; holdout: Ferguson, Pier). Metrics, nulls, search space
   pre-registered. Starting-point record: uncalibrated model loses to the

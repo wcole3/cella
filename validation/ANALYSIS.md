@@ -211,6 +211,57 @@ wind-driven fire in the set. When a fire's shape is dictated by strong
 wind, knowing the wind direction beats knowing nothing — evidence the
 model's wind physics contributes something even before tuning.
 
+## 5a. What the September 2026 audit added
+
+Two more things we now know, in plain words. Details and numbers are in
+[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) Round 2.
+
+**The wind arrow points the right way — but the wind we feed in is tiny
+and sometimes wrong.** Someone testing the app expected "wind 0°" to mean
+a north wind (weather-report style: the direction the wind comes *from*).
+The model instead uses the direction the wind blows *toward*, with 0°
+pointing right (east) on the grid. That second convention turned out to
+be one we had made up, so we dropped it. The model now speaks
+weather-report everywhere: you give it where the wind comes *from*
+(0° north, 90° east), the same number a forecast or a weather station
+prints, and it turns that into grid directions internally. Old files
+that still use the made-up angle are refused with a clear error rather
+than quietly read wrong. We checked the whole chain — the code, the file
+converter, and whether the maps are stored north-up — and all three agree.
+
+The real problem is upstream. The weather data we feed in (ERA5, one
+average wind per day over the whole map) reports 0.1–3 m/s, a gentle
+breeze that barely nudges the model: rotating that wind by 90°, 180°, or
+switching it off changes the scores by less than the dice noise. And on
+Chimney 2016 the newspapers describe hard easterly gusts driving the
+fire west on the days it ran, while the daily average says a light wind
+from the south-west. When we artificially strengthened the wind and
+turned it to match the news, Chimney's score jumped from 0.30 to 0.57 —
+the best any run has scored, and well above the Circle. So the wind
+physics can work; it is being starved of a usable wind input. Even a
+"cheating" run that borrows the real fire's growth direction each day
+only helps one fire, because of the next point.
+
+**The model has a speed limit, and real fires break it most days that
+matter.** Fire can only jump one cell (30 m) per tick, and we run 50
+ticks per day, so nothing can move faster than 1.5 km/day. Measured from
+the satellite maps, real fronts advanced 2–7 km on their big days, and on
+Chimney, Brattain, and Ferguson 80–98% of all burned land arrived on days
+that broke the limit. A fire capped at walking pace cannot form a long,
+wind-stretched shape: Brattain's real burn is 2.7× longer than wide, the
+model's is a near-perfect disc.
+
+We then tried the obvious fix — more ticks per day, up to 400 — and it
+did **nothing** (every fire moved by less than 0.03). The reason is
+worth understanding: in this model, the speed of the fire and the total
+amount it burns are the same knob. Turn it up and the fire is faster
+*every* day, so it also burns far too much. Real fires have a few
+racing days and many stalled days. The model needs something that
+changes day to day — weather — not a finer clock. The one such input we
+have (a daily temperature proxy) is already worth +0.06 on Buck 2017
+and never hurts; stronger day-to-day drivers (hourly wind, humidity)
+are the next thing to build.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means
@@ -232,6 +283,15 @@ model's wind physics contributes something even before tuning.
 5. **Note the truth's own error.** Satellite burn maps have limited
    resolution (375 m for this dataset — carried in every report). No
    score should be read as more precise than the data behind it.
+6. **Check the weather feed before believing a wind result — ours or
+   anyone else's.** Wind can be written four ways (where it comes from
+   or goes to; 0° at north or east; clockwise or not), in four units, at
+   three heights, averaged over an hour or a day. Any one of those
+   mismatches makes a correct model look wrong, and a wrong one look
+   right. Every scenario now carries a `provenance.weather` note saying
+   how its wind was measured and converted; a comparison with another
+   model's published score needs the same note for *their* inputs. If
+   that note is missing, the comparison is not yet a comparison.
 
 ## 7. The rules that keep us honest
 

@@ -25,7 +25,7 @@ DATA = ROOT / "data"
 OUT = DATA / "scenarios"
 
 STEPS_PER_DAY = 50  # follows the papers published on this dataset
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # v2: wind "from_deg" (meteorological) replaced v1 "dir_deg"
 
 # FBFM40 fuel model code -> (cella fuel class name, veg_factor).
 # Grouped by the standard Scott & Burgan families; factors are a first-guess
@@ -52,16 +52,17 @@ def git_hash() -> str:
         return "unknown"
 
 
-def wind_to_speed_dir(u: float, v: float) -> tuple[float, float]:
-    """ERA5 u (eastward) / v (northward) -> (speed m/s, direction degrees).
+def wind_to_speed_from(u: float, v: float) -> tuple[float, float]:
+    """ERA5 u (eastward) / v (northward) -> (speed m/s, from-bearing degrees).
 
-    cella's convention: direction the wind blows TOWARD, 0 deg = +x (east),
-    90 deg = +y which is *down* the grid. Row 0 of the raster is the northern
-    edge, so northward v means -y in grid coordinates: dir = atan2(-v, u).
+    cella uses the weather-report convention: the compass bearing the wind
+    blows FROM, 0 deg = north, clockwise (raster row 0 is the northern edge,
+    which the model assumes). The wind blows toward (u, v), so it comes from
+    (-u, -v): bearing = atan2(-u, -v) measured from north.
     """
     speed = math.hypot(u, v)
-    direction = math.degrees(math.atan2(-v, u)) % 360.0
-    return speed, direction
+    from_deg = math.degrees(math.atan2(-u, -v)) % 360.0
+    return speed, from_deg
 
 
 def convert_fire(f: h5py.File, name: str) -> None:
@@ -91,8 +92,8 @@ def convert_fire(f: h5py.File, name: str) -> None:
     for d, hrs in zip(dates, hours):
         u = float(np.nanmean(g["u_component_of_wind_10m"][d][()]))
         v = float(np.nanmean(g["v_component_of_wind_10m"][d][()]))
-        speed, direction = wind_to_speed_dir(u, v)
-        wind.append({"hours": hrs, "speed_ms": round(speed, 3), "dir_deg": round(direction, 2)})
+        speed, from_deg = wind_to_speed_from(u, v)
+        wind.append({"hours": hrs, "speed_ms": round(speed, 3), "from_deg": round(from_deg, 2)})
 
     scenario = {
         "format_version": FORMAT_VERSION,
@@ -117,6 +118,20 @@ def convert_fire(f: h5py.File, name: str) -> None:
                 "canopy cover / LAI layers unused (density left uniform)",
                 "arrival quantized to daily observation times",
             ],
+            # TEST_PLAN.md §2.1: a weather feed is only comparable once its
+            # convention, units, height and averaging are written down.
+            "weather": {
+                "source": "ERA5 reanalysis as packaged in the six-fire HDF5",
+                "variables": "u/v 10 m wind (m/s), 2 m temperature (K), total precipitation (m)",
+                "wind_height_m": 10.0,
+                "native_resolution": "~31 km grid, one value per day",
+                "averaging": "domain mean of u and v per day, then hypot -> speed "
+                             "(vector mean; a swinging wind averages toward calm)",
+                "source_direction_convention": "u eastward / v northward components",
+                "conversion": "from_deg = degrees(atan2(-u, -v)) mod 360, clockwise from north",
+                "grid_orientation_check": "LANDFIRE aspect vs elevation gradient, cos +0.96 "
+                                          "for row 0 = north on all six fires (2026-09-01)",
+            },
         },
         "wind": wind,
         "steps_per_hour": STEPS_PER_DAY / 24.0,
@@ -135,7 +150,7 @@ def convert_fire(f: h5py.File, name: str) -> None:
                 "p0": 0.58,
                 "fuels": [{"name": cls, "veg_factor": vf} for _, cls, vf in FBFM40_GROUPS],
                 "wind_speed": wind[0]["speed_ms"],
-                "wind_dir_deg": wind[0]["dir_deg"],
+                "wind_from_deg": wind[0]["from_deg"],
                 "c1": 0.045,
                 "c2": 0.131,
                 "slope_a": 0.078,

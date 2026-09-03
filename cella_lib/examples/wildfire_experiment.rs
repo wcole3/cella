@@ -6,6 +6,8 @@
 //!   schedule minus 1 (one scale per stepped window).
 //! - `EXP_WIND_SCALE=3.0` — multiplies every wind speed (gust-factor
 //!   experiments; ERA5 daily means flatten gusts).
+//! - `EXP_WIND_ROT_DEG=90` — adds a constant to every wind direction
+//!   (convention diagnostic: a non-zero rotation must not score better).
 //! - `EXP_SEED_BASE=100` — offsets every ensemble seed (per-seed field dumps
 //!   for ensemble-probability experiments).
 //!
@@ -63,7 +65,8 @@ struct GridMeta {
 struct WindEntry {
     hours: f64,
     speed_ms: f64,
-    dir_deg: f64,
+    /// Bearing the wind comes from, degrees clockwise from north.
+    from_deg: f64,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +192,13 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1.0);
+    // Added to every wind direction (degrees). Rotating the whole schedule
+    // is the cheapest test of the direction convention: if a rotation scores
+    // better than 0, the convention (or the converter) is wrong.
+    let wind_rot: f64 = std::env::var("EXP_WIND_ROT_DEG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
 
     let base_p0;
     {
@@ -226,7 +236,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 let wm = fresh.as_any_mut().downcast_mut::<WildfireModel>().unwrap();
                 wm.params.seed = seed;
                 wm.params.wind_speed = cur.speed_ms * wind_scale;
-                wm.params.wind_dir_deg = cur.dir_deg;
+                wm.params.wind_from_deg = (cur.from_deg + wind_rot).rem_euclid(360.0);
                 wm.params.p0 = base_p0 * s[wi];
             }
             grid.attach_model(fresh).expect("re-attach");
@@ -238,7 +248,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 .downcast_mut::<WildfireModel>()
                 .unwrap();
             m.params.wind_speed = cur.speed_ms * wind_scale;
-            m.params.wind_dir_deg = cur.dir_deg;
+            m.params.wind_from_deg = (cur.from_deg + wind_rot).rem_euclid(360.0);
         }
         // Integer step counts drift from real time; track cumulatively so the
         // total stays aligned with the schedule.
@@ -334,8 +344,8 @@ fn main() {
     let sc: Scenario = load(&dir.join("scenario.json"));
     let truth: Truth = load(&dir.join("truth.json"));
     let cfg: CellaConfig = load(&dir.join("config.json"));
-    assert_eq!(sc.format_version, 1, "unknown scenario format");
-    assert_eq!(truth.format_version, 1, "unknown truth format");
+    assert_eq!(sc.format_version, 2, "unknown scenario format (v2 = wind from_deg)");
+    assert_eq!(truth.format_version, 2, "unknown truth format");
     let total = sc.grid.width * sc.grid.height;
     assert_eq!(truth.arrival_hours.len(), total, "truth grid mismatch");
 

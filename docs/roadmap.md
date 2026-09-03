@@ -405,7 +405,7 @@ Commits `6d7e9b3..ad3654d`.
   re-runs `attach` again, so a refused edit cannot leave the model in a state
   `attach` would not accept.
 - **§3.3 — `WildfireModel` implements 13 keys**, `cella_lib/src/wildfire.rs`.
-  Wind group: `wind_speed`, `wind_dir_deg`, `c1`, `c2`. Fire group: `p0`,
+  Wind group: `wind_speed`, `wind_from_deg`, `c1`, `c2`. Fire group: `p0`,
   `burn_duration`. Terrain group: `slope_a`, `cell_size`. Spotting group (only
   when `params.spotting` is `Some`): `spotting.p_spot`,
   `spotting.median_distance`, `spotting.sigma`, `spotting.angle_jitter_deg`.
@@ -599,7 +599,7 @@ and `attach` — and they must agree. Make the agreement a test rather than a
 promise: for every descriptor `params()` returns, set the parameter to `min`
 and then to `max` and assert `attach` still succeeds. If someone later
 tightens `attach` without tightening the descriptor, that test fails. Note
-that `wind_speed`, `wind_dir_deg`, `c1`, and `c2` are checked by nobody today
+that `wind_speed`, `wind_from_deg`, `c1`, and `c2` are checked by nobody today
 (`attach` never looks at them); step 3 gives them bounds for free.
 
 **Why `reattach` is per-parameter and not always true.** `attach` rebuilds a
@@ -607,7 +607,7 @@ slope buffer of `8 × width × height` floats. On a 256×256 grid that is over h
 a million values. Running it on every frame of a slider drag would stutter
 badly.
 
-Most parameters do not need it. `wind_speed` and `wind_dir_deg` are read live,
+Most parameters do not need it. `wind_speed` and `wind_from_deg` are read live,
 per chunk, by `WildfireModel::dir_factors`, which recomputes the eight
 per-direction wind factors from scratch each time. `burn_duration` is read
 live per cell in `next_type`, and every `spotting.*` value is read live per
@@ -627,7 +627,7 @@ or any numerical path, so no validation figure can move.
 | `key` | Label | Kind | Group | `reattach` |
 |---|---|---|---|---|
 | `wind_speed` | Wind speed | `Float { 0.0, 30.0, 0.1 }`, unit `m/s` | Wind | no |
-| `wind_dir_deg` | Wind direction | `Float { 0.0, 360.0, 1.0 }`, unit `°` | Wind | no |
+| `wind_from_deg` | Wind from (compass) | `Float { 0.0, 360.0, 1.0 }`, unit `°` | Wind | no |
 | `c1` | Wind coefficient c1 | `Float` | Wind | no |
 | `c2` | Wind coefficient c2 | `Float` | Wind | no |
 | `p0` | Base ignition probability | `Float { 0.0, 1.0, 0.01 }` | Fire | yes |
@@ -638,6 +638,18 @@ or any numerical path, so no validation figure can move.
 | `spotting.median_distance` | Median spot distance | `Float`, unit `cells` | Spotting | no |
 | `spotting.sigma` | Spot distance spread | `Float { 0.0, 5.0, 0.05 }` | Spotting | no |
 | `spotting.angle_jitter_deg` | Spot angle jitter | `Float { 0.0, 180.0, 1.0 }`, unit `°` | Spotting | no |
+
+`wind_from_deg` replaced `wind_dir_deg` on 2026-09-01 after a tester read
+0° as a north wind. The old field was the grid angle the wind blew *toward*
+(0° = +x, 90° = +y) — a convention we had invented; Alexandridis only
+defines a relative angle, and every weather source and operational
+simulator (ERA5, FARSITE, Prometheus/Cell2Fire, WindNinja) uses the
+meteorological bearing the wind comes *from*, 0° = north, clockwise. That
+is now what the field, the config files, the scenario format (v2) and the
+panel all hold. The kernel converts once per chunk
+(`wind_toward_grid_deg`: `toward = from + 90°`, north at row 0). Old files
+with `wind_dir_deg` are rejected (`deny_unknown_fields`), never
+reinterpreted; convert with `from = toward − 90°`.
 | `seed` | Seed | `Int`, `read_only: true` | — | n/a |
 
 Every `Float` needs a real `min` and `max`, or step 3 of `set_model_param` has

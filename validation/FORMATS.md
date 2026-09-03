@@ -44,6 +44,16 @@ simplification the conversion made (e.g. "wind = domain-mean of ERA5 u/v").
 The goal of validation is the *best answer*, not a good-looking one — a
 result nobody can trace to its inputs is not an answer.
 
+**Weather provenance is mandatory too.** Every weather-driven comparison
+depends on how the wind was measured, averaged and oriented, and a wrong
+convention looks exactly like a bad model in a score table
+([TEST_PLAN.md §2.1](TEST_PLAN.md)). So `provenance.weather` records, for
+each source: the variables and their height (10 m, 20 ft, mid-flame),
+units, native time and space resolution, how the converter averaged them,
+the direction convention of the source and the conversion applied, and
+how the grid's north-up orientation was verified. A scenario without it
+is not ready to be scored against anything.
+
 **Time is hours since `t0`, as f64.** Daily sources use multiples of 24;
 sub-daily sources need no schema change. `t0` is an ISO-8601 UTC timestamp in
 `scenario.json`.
@@ -57,7 +67,7 @@ schema change.
 
 ```jsonc
 {
-  "format_version": 1,
+  "format_version": 2,
   "id": "Bear_2020",
   "grid": { "width": 748, "height": 619, "cell_size_m": 30.0,
             "crs": "EPSG:3310", "origin": [-99441.97, 205010.71] },
@@ -72,10 +82,25 @@ schema change.
     "simplifications": [
       "wind = domain-mean ERA5 u/v per day (per-cell field discarded)",
       "FBFM40 codes grouped into 6 named classes with first-guess veg_factors"
-    ]
+    ],
+    // Required (TEST_PLAN §2.1): what the weather feed is and how it was
+    // bent into the schedule below. Free text per key, but every key present.
+    "weather": {
+      "source": "ERA5 reanalysis via the six-fire pack",
+      "variables": "u/v 10 m wind (m/s), 2 m temperature, total precipitation",
+      "wind_height_m": 10.0,
+      "native_resolution": "~31 km grid, daily values",
+      "averaging": "domain mean of u and v per day, then hypot -> speed (vector mean, not speed mean)",
+      "source_direction_convention": "u eastward / v northward components",
+      "conversion": "from_deg = atan2(-u, -v) from north, clockwise",
+      "grid_orientation_check": "LANDFIRE aspect vs elevation gradient: cos +0.96 for row 0 = north on all six fires"
+    }
   },
   // Wind schedule the harness applies between observation windows:
-  "wind": [ { "hours": 0.0, "speed_ms": 2.3, "dir_deg": 141.2 }, ... ],
+  // from_deg = compass bearing the wind blows FROM, 0 = north, clockwise
+  // (the weather-report convention; v1 files used "dir_deg" = grid angle
+  // the wind blew toward, 0 = +x, and are rejected by v2 readers).
+  "wind": [ { "hours": 0.0, "speed_ms": 2.3, "from_deg": 51.2 }, ... ],
   "steps_per_hour": 2.0833   // simulation ticks per hour of real time
 }
 ```
@@ -96,7 +121,7 @@ here is part of the parameter set under evaluation.
 
 ```jsonc
 {
-  "format_version": 1,
+  "format_version": 2,
   "time_unit": "hours_since_t0",
   // One observation per time the source actually observed (not interpolated):
   "observed_at": [0.0, 24.0, 48.0, ...],
@@ -135,3 +160,12 @@ arrival metric reports it alongside.
 | Isochrone polygons (PT-FireSprd, GOFER, NIROPS, FIRIS) | `scripts/rasterize_isochrones.py` | planned — one shared tool; needs input-layer assembly per region before full scenarios exist |
 | Dogrib `.asc` (Cell2Fire instance) | planned | inputs are drop-in; observed-perimeter truth still to be sourced (Prometheus sample data) |
 | Camp Fire NIST points | planned | needs point → arrival-surface interpolation; scenario will carry large `spatial_accuracy_m` variation |
+
+## Changelog
+
+- **v2 (2026-09-01):** wind entries carry `from_deg` — the compass bearing
+  the wind blows *from*, 0° = north, clockwise (weather-report convention),
+  matching `WildfireParams::wind_from_deg`. v1 used `dir_deg`, the grid
+  angle the wind blew *toward* (0° = +x, 90° = +y). Convert with
+  `from = (dir − 90) mod 360`. Readers reject v1 files rather than guess.
+- **v1 (2026-08-14):** initial layout.

@@ -11,7 +11,7 @@ const W: usize = 48;
 const H: usize = 48;
 const SEEDS: u64 = 30;
 
-fn params(seed: u64, wind_speed: f64, wind_dir_deg: f64) -> WildfireParams {
+fn params(seed: u64, wind_speed: f64, wind_from_deg: f64) -> WildfireParams {
     WildfireParams {
         seed,
         p0: 0.35,
@@ -20,7 +20,7 @@ fn params(seed: u64, wind_speed: f64, wind_dir_deg: f64) -> WildfireParams {
             veg_factor: 1.0,
         }],
         wind_speed,
-        wind_dir_deg,
+        wind_from_deg,
         c1: 0.045,
         c2: 0.131,
         slope_a: 0.078,
@@ -36,12 +36,12 @@ fn params(seed: u64, wind_speed: f64, wind_dir_deg: f64) -> WildfireParams {
 }
 
 /// Uniform forest with a centre ignition.
-fn run(seed: u64, wind_speed: f64, wind_dir_deg: f64, steps: usize) -> Grid2D {
+fn run(seed: u64, wind_speed: f64, wind_from_deg: f64, steps: usize) -> Grid2D {
     let mut init = vec![CellType::new("Forest"); W * H];
     init[(H / 2) * W + W / 2] = CellType::new("Burning");
     let mut g = Grid2D::new(W, H, 0, init, Rule2D { subrules: vec![] });
     g.attach_model(Box::new(WildfireModel::new(
-        params(seed, wind_speed, wind_dir_deg),
+        params(seed, wind_speed, wind_from_deg),
         WildfireEnv::default(),
     )))
     .unwrap();
@@ -125,7 +125,7 @@ fn ensemble_centroid_is_displaced_downwind() {
     let mut wind_dx = 0.0;
     let mut calm_dx = 0.0;
     for seed in 0..SEEDS {
-        wind_dx += fire_centroid(&run(seed, 10.0, 0.0, steps)).0 - ignition_x;
+        wind_dx += fire_centroid(&run(seed, 10.0, 270.0, steps)).0 - ignition_x;
         calm_dx += fire_centroid(&run(seed, 0.0, 0.0, steps)).0 - ignition_x;
     }
     wind_dx /= SEEDS as f64;

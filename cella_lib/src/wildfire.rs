@@ -14,7 +14,10 @@
 //!
 //! where `p_base = p0 * veg_factor(class) * density[cell]`,
 //! `dir_factor[j] = exp(c1·V) · exp(V·c2·(cos θ_j − 1)) / dist_j` is the
-//! Alexandridis wind factor with a `1/√2` diagonal-distance correction, and
+//! Alexandridis wind factor with a `1/√2` diagonal-distance correction
+//! (θ_j is the angle between the spread direction and the wind; the wind
+//! itself is given the weather-report way, as the compass bearing it blows
+//! *from*, see [`WildfireParams::wind_from_deg`]), and
 //! `slope[cell, j] = exp(a · θ_s)` with `θ_s` the slope angle in degrees from
 //! the neighbor up to the cell (Alexandridis et al. 2008: p_h = 0.58,
 //! c1 = 0.045, c2 = 0.131, a = 0.078).
@@ -115,7 +118,11 @@ fn default_burn_duration() -> u32 {
 }
 
 /// Tunable wildfire parameters. Serde defaults follow Alexandridis et al.
+///
+/// Unknown fields are an error so that a renamed parameter (e.g. the old
+/// `wind_dir_deg`) fails loudly instead of quietly falling back to a default.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct WildfireParams {
     /// Seed for the counter-based RNG; fixes the whole run.
     pub seed: u64,
@@ -127,9 +134,21 @@ pub struct WildfireParams {
     /// Wind speed in m/s.
     #[serde(default)]
     pub wind_speed: f64,
-    /// Direction the wind blows *toward*, degrees; 0° = +x, 90° = +y.
+    /// Compass bearing the wind blows *from*, in degrees clockwise from
+    /// north: 0° = north wind, 90° = east wind, 270° = west wind. This is the
+    /// weather-report (meteorological) convention that forecasts, ERA5, fire
+    /// weather streams, and the other simulators (FARSITE, Prometheus,
+    /// Cell2Fire, WindNinja) all use, so numbers can be copied in as-is.
+    ///
+    /// The grid is assumed north-up: row 0 is the northern edge, so a north
+    /// wind pushes the fire down the grid (+y) and a west wind pushes it
+    /// toward +x. [`wind_toward_grid_deg`] does that conversion for the
+    /// spread kernel. Files written before 2026-09-01 used `wind_dir_deg`
+    /// (the grid angle the wind blew *toward*, 0° = +x); they are rejected
+    /// on load rather than silently reinterpreted — convert with
+    /// `from = toward − 90°`.
     #[serde(default)]
-    pub wind_dir_deg: f64,
+    pub wind_from_deg: f64,
     #[serde(default = "default_c1")]
     pub c1: f64,
     #[serde(default = "default_c2")]
@@ -190,6 +209,16 @@ pub struct WildfireModel {
     derived: WildfireDerived,
 }
 
+/// The grid angle the wind blows *toward* (0° = +x, 90° = +y, i.e. down a
+/// north-up grid) for a weather-report `from` bearing (0° = north,
+/// clockwise). The wind blows toward `from + 180°` on the compass, and a
+/// compass bearing is the grid angle plus 90° (north = −y), so the two
+/// differ by a quarter turn: a north wind (from 0°) blows toward 90°, a
+/// west wind (from 270°) toward 0°.
+pub fn wind_toward_grid_deg(from_deg: f64) -> f64 {
+    (from_deg + 90.0).rem_euclid(360.0)
+}
+
 impl WildfireModel {
     pub fn new(params: WildfireParams, env: WildfireEnv) -> Self {
         Self {
@@ -220,7 +249,7 @@ impl WildfireModel {
     /// the diagonal distance correction. Cheap enough to rebuild per chunk.
     fn dir_factors(&self) -> [f32; 8] {
         let v = self.params.wind_speed;
-        let theta_w = self.params.wind_dir_deg.to_radians();
+        let theta_w = wind_toward_grid_deg(self.params.wind_from_deg).to_radians();
         let (wy, wx) = theta_w.sin_cos();
         let mut f = [0.0f32; 8];
         for (j, &(dx, dy)) in self.derived.offsets.iter().enumerate() {
@@ -250,7 +279,7 @@ impl WildfireModel {
         let dist = spot.median_distance * (spot.sigma * z).exp();
         let jitter = (2.0 * f64::from(cell_rand(seed, ctx.step, iu, STREAM_ANGLE)) - 1.0)
             * spot.angle_jitter_deg;
-        let angle = (self.params.wind_dir_deg + jitter).to_radians();
+        let angle = (wind_toward_grid_deg(self.params.wind_from_deg) + jitter).to_radians();
         let (ay, ax) = angle.sin_cos();
         let tx = x as f64 + dist * ax;
         let ty = y as f64 + dist * ay;
@@ -340,10 +369,10 @@ impl WildfireModel {
                 false,
             ),
             param_desc(
-                "wind_dir_deg",
-                "Wind direction",
+                "wind_from_deg",
+                "Wind from (compass)",
                 "Wind",
-                "Direction the wind blows toward: 0° is +x, 90° is +y.",
+                "Where the wind comes FROM, as a weather report gives it: 0° north, 90° east, 180° south, 270° west. North is the top of the grid, so a north wind pushes the fire down the screen.",
                 "°",
                 ParamKind::Float {
                     min: 0.0,
@@ -877,7 +906,7 @@ impl ExternalModel for WildfireModel {
         let spot = p.spotting.as_ref();
         Some(match key {
             "wind_speed" => ParamValue::Float(p.wind_speed),
-            "wind_dir_deg" => ParamValue::Float(p.wind_dir_deg),
+            "wind_from_deg" => ParamValue::Float(p.wind_from_deg),
             "c1" => ParamValue::Float(p.c1),
             "c2" => ParamValue::Float(p.c2),
             "p0" => ParamValue::Float(p.p0),
@@ -909,7 +938,7 @@ impl ExternalModel for WildfireModel {
         let p = &mut self.params;
         match (key, &value) {
             ("wind_speed", ParamValue::Float(v)) => p.wind_speed = *v,
-            ("wind_dir_deg", ParamValue::Float(v)) => p.wind_dir_deg = *v,
+            ("wind_from_deg", ParamValue::Float(v)) => p.wind_from_deg = *v,
             ("c1", ParamValue::Float(v)) => p.c1 = *v,
             ("c2", ParamValue::Float(v)) => p.c2 = *v,
             ("p0", ParamValue::Float(v)) => p.p0 = *v,
@@ -964,7 +993,7 @@ mod tests {
                 veg_factor: 1.0,
             }],
             wind_speed: 0.0,
-            wind_dir_deg: 0.0,
+            wind_from_deg: 270.0, // west wind: blows toward +x
             c1: 0.045,
             c2: 0.131,
             slope_a: 0.078,
@@ -1167,7 +1196,7 @@ mod tests {
         let cells = forest_grid(3, 3);
         let mut p = base_params();
         p.wind_speed = 8.0;
-        p.wind_dir_deg = 0.0; // blowing toward +x
+        p.wind_from_deg = 270.0; // west wind, blowing toward +x
         let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
         let dir = m.dir_factors();
         let offs = m.derived.offsets;
@@ -1465,7 +1494,7 @@ mod tests {
         let mut p = base_params();
         p.p0 = 0.0;
         p.burn_duration = u32::MAX; // keep it burning
-        p.wind_dir_deg = 0.0;
+        p.wind_from_deg = 270.0; // west wind: firebrands fly toward +x
         p.spotting = Some(SpottingParams {
             p_spot: 1.0,
             median_distance: 3.0,
@@ -1596,7 +1625,7 @@ mod tests {
             keys,
             vec![
                 "wind_speed",
-                "wind_dir_deg",
+                "wind_from_deg",
                 "c1",
                 "c2",
                 "p0",
@@ -1620,7 +1649,7 @@ mod tests {
             table,
             vec![
                 ("wind_speed", Some("Wind"), Some("m/s")),
-                ("wind_dir_deg", Some("Wind"), Some("°")),
+                ("wind_from_deg", Some("Wind"), Some("°")),
                 ("c1", Some("Wind"), None),
                 ("c2", Some("Wind"), None),
                 ("p0", Some("Fire"), None),
@@ -1657,6 +1686,53 @@ mod tests {
     }
 
     #[test]
+    fn wind_from_bearing_maps_to_the_grid_angle_a_quarter_turn_on() {
+        // Weather-report bearing (from, 0° = north, clockwise) -> grid angle
+        // the wind blows toward (0° = +x, 90° = +y) on a north-up grid.
+        assert_eq!(wind_toward_grid_deg(0.0), 90.0, "north wind blows down the grid");
+        assert_eq!(wind_toward_grid_deg(90.0), 180.0, "east wind blows toward -x");
+        assert_eq!(wind_toward_grid_deg(180.0), 270.0, "south wind blows up the grid");
+        assert_eq!(wind_toward_grid_deg(270.0), 0.0, "west wind blows toward +x");
+        assert_eq!(wind_toward_grid_deg(360.0), 90.0, "360 is north again");
+        assert_eq!(wind_toward_grid_deg(-90.0), 0.0, "negative bearings wrap");
+        // The stored field IS the bearing: no hidden second representation.
+        let mut m = WildfireModel::new(base_params(), WildfireEnv::default());
+        m.set_param("wind_from_deg", ParamValue::Float(45.0)).unwrap();
+        assert_eq!(m.params.wind_from_deg, 45.0);
+        assert_eq!(m.get_param("wind_from_deg"), Some(ParamValue::Float(45.0)));
+        assert!(m.get_param("wind_dir_deg").is_none(), "the old grid-angle key is gone");
+        assert!(m.set_param("wind_dir_deg", ParamValue::Float(1.0)).is_err());
+    }
+
+    #[test]
+    fn an_old_config_with_wind_dir_deg_is_rejected_not_reinterpreted() {
+        // A pre-2026-09 file carries the grid angle under the old name. With
+        // serde's default of ignoring unknown fields it would load as a calm
+        // 0° (north) wind with no warning — a silent 90° error. It must fail.
+        let json = r#"{"seed":1,"fuels":[],"wind_speed":5.0,"wind_dir_deg":0.0}"#;
+        let err = serde_json::from_str::<WildfireParams>(json).unwrap_err().to_string();
+        assert!(err.contains("wind_dir_deg"), "error names the stale field: {err}");
+    }
+
+    #[test]
+    fn a_north_wind_set_from_the_panel_pushes_fire_south_on_the_grid() {
+        // End to end through the engine's checked path: a strong wind "from
+        // 0°" must make the neighbor NORTH of a cell (offset (0, -1)) the one
+        // whose fire spreads best, i.e. spread toward +y.
+        let mut g = param_grid(None);
+        g.set_model_param("wind_speed", ParamValue::Float(8.0)).unwrap();
+        g.set_model_param("wind_from_deg", ParamValue::Float(0.0)).unwrap();
+        let m = model_of(&mut g);
+        let dir = m.dir_factors();
+        let offs = m.derived.offsets;
+        let j_north = offs.iter().position(|&o| o == (0, -1)).unwrap();
+        let j_south = offs.iter().position(|&o| o == (0, 1)).unwrap();
+        let j_east = offs.iter().position(|&o| o == (1, 0)).unwrap();
+        assert!(dir[j_north] > dir[j_east], "north neighbor is upwind: {dir:?}");
+        assert!(dir[j_east] > dir[j_south], "south neighbor is downwind: {dir:?}");
+    }
+
+    #[test]
     fn get_param_answers_every_key_params_lists() {
         // The engine's rollback only restores a value get_param handed out, so
         // every advertised key must have one.
@@ -1685,7 +1761,7 @@ mod tests {
     fn every_editable_parameter_round_trips_through_set_and_get() {
         let probes: Vec<(&str, ParamValue)> = vec![
             ("wind_speed", ParamValue::Float(12.5)),
-            ("wind_dir_deg", ParamValue::Float(210.0)),
+            ("wind_from_deg", ParamValue::Float(210.0)),
             ("c1", ParamValue::Float(0.06)),
             ("c2", ParamValue::Float(0.2)),
             ("p0", ParamValue::Float(0.42)),
@@ -1863,13 +1939,13 @@ mod tests {
         // serialization work.
         use crate::state::GridState;
         let mut g = param_grid(None);
-        g.set_model_param("wind_dir_deg", ParamValue::Float(45.0))
+        g.set_model_param("wind_from_deg", ParamValue::Float(45.0))
             .unwrap();
         let json = GridState::from_grid2d(&g).to_json();
         let state = GridState::from_json(&json).expect("snapshot parses");
         let mut back = crate::Grid2D::from_state(&state).expect("snapshot restores");
         assert_eq!(
-            back.model_mut().unwrap().get_param("wind_dir_deg"),
+            back.model_mut().unwrap().get_param("wind_from_deg"),
             Some(ParamValue::Float(45.0)),
             "the edited value came back"
         );

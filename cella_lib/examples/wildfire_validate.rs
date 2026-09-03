@@ -56,7 +56,8 @@ struct GridMeta {
 struct WindEntry {
     hours: f64,
     speed_ms: f64,
-    dir_deg: f64,
+    /// Bearing the wind comes from, degrees clockwise from north.
+    from_deg: f64,
 }
 
 #[derive(Deserialize)]
@@ -202,7 +203,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 .downcast_mut::<WildfireModel>()
                 .unwrap();
             m.params.wind_speed = cur.speed_ms;
-            m.params.wind_dir_deg = cur.dir_deg;
+            m.params.wind_from_deg = cur.from_deg;
         }
         // Integer step counts drift from real time; track cumulatively so the
         // total stays aligned with the schedule.
@@ -298,8 +299,8 @@ fn main() {
     let sc: Scenario = load(&dir.join("scenario.json"));
     let truth: Truth = load(&dir.join("truth.json"));
     let cfg: CellaConfig = load(&dir.join("config.json"));
-    assert_eq!(sc.format_version, 1, "unknown scenario format");
-    assert_eq!(truth.format_version, 1, "unknown truth format");
+    assert_eq!(sc.format_version, 2, "unknown scenario format (v2 = wind from_deg)");
+    assert_eq!(truth.format_version, 2, "unknown truth format");
     let total = sc.grid.width * sc.grid.height;
     assert_eq!(truth.arrival_hours.len(), total, "truth grid mismatch");
 

@@ -60,6 +60,16 @@ scenario format — see [FORMATS.md](FORMATS.md)** for the full spec:
   spatial accuracy. Masks, area curves, and arrival metrics all derive
   from this one field.
 
+**Before comparing anything, inspect the weather feed.** A wind given in
+the wrong convention, the wrong units, or averaged flat looks *exactly*
+like a bad model in the score table — Round 2 spent a day proving our
+wind maths right and our ERA5 daily-mean input wrong. Every new source
+goes through the checklist in [TEST_PLAN.md §2.1](TEST_PLAN.md) and gets
+its answers written into `scenario.json → provenance.weather`
+([FORMATS.md](FORMATS.md)). The same applies when quoting another fire
+model's score: name the wind convention, units, height, and averaging on
+both sides, or the comparison is not one.
+
 ### 3. Run the harness
 
 ```bash
@@ -125,6 +135,21 @@ Known simplifications to revisit as scores improve: uniform domain-mean wind
 beyond wind, no suppression (late-fire days flatten in reality partly because
 of containment — visible in the Bear table where observed growth stalls),
 density layer unused (canopy cover is available in the HDF5).
+
+## Status update (2026-09-01): wind audit and the speed cap
+
+Round 2 in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) audited the wind path
+after a tester expected weather-report ("from", 0° = north) directions.
+That "toward, 0° = +x" angle was our own invention, so the model now
+takes the weather-report "from" bearing (`wind_from_deg`, 0° = north,
+clockwise) everywhere; scenario format is v2 (`from_deg`). Code, converter, and raster orientation
+(checked against the LANDFIRE aspect layer) all agree, so the validation
+runs were never mis-winded. What the audit did find: ERA5 daily
+domain-mean winds (0.1–3 m/s) leave the wind kernel inert, and on Chimney
+2016 they point the wrong way on the run days; and the one-cell-per-tick
+front cap (1.5 km/day at 50 ticks/day) is broken by 80–98 % of observed
+burned area on the fast fires. Plain-language version in
+[ANALYSIS.md §5a](ANALYSIS.md).
 
 ## The challenge ladder (downloaded and waiting)
 
