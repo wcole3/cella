@@ -41,6 +41,41 @@ corrects both the front position and the parameters, and all note the
 degeneracy/collapse problem — hence the immigrants operator (standard GA
 practice) tested in E25b.
 
+## Results (32 members, one untuned prior, all six fires, forecasts)
+
+| Fire | open consensus (E24) | assimilating + immigrants (E25) | best tuned single run | Circle |
+|---|---|---|---|---|
+| Bear | 0.399 | **0.473** | 0.480 (E20 per-fire) | 0.541 |
+| Brattain | 0.330 | **0.400** | 0.408 | 0.450 |
+| Buck | 0.481 | **0.616** | 0.581 | 0.670 |
+| Chimney | 0.382 | **0.426** | 0.474 | 0.372 |
+| Ferguson (holdout) | 0.131 | **0.345** | 0.158 (transfer) | 0.373 |
+| Pier (holdout) | 0.478 | **0.533** | 0.512 (transfer) | 0.559 |
+
+## Round 4 conclusions → what to do next
+
+1. **The ensemble is the product.** A 32-member burn-probability map from
+   one broad prior, with no per-fire tuning, ties the hand-tuned single
+   runs of Round 1 and is far better calibrated (E24). Every deterministic
+   score earlier in this log is a lower bound.
+2. **Learning as it burns is the headline mode.** Resample on yesterday's
+   perimeter, mutate, keep simulating: +0.05 to +0.21 forecast IoU over
+   the same ensemble without learning, on every fire including the
+   holdout; Ferguson finally moves (0.13 → 0.34); Bear beats the Circle on
+   days 2–4 (E25). Recommended operators β 10, σ 0.2, 20 % immigrants.
+3. **The offline optimum was compensation.** With the state corrected
+   daily the population settles on τ 5–20 d and wind × ≈ 1, not E20's
+   τ 3 d / wind off. Use E20 as a diagnostic only.
+4. **Still open:** the late-fire stall (Bear days 8+, the E21 mechanism),
+   which no parameter learning fixes because the model has no way to
+   stop *in place*; the fast-fire rate problem (Chimney, E19) which
+   assimilation narrows but a kernel that stretches must close; and
+   replication (E25d) plus a perimeter-distance likelihood and reliability
+   diagrams for the probability maps.
+5. Engine: `Grid2D: Clone` made the filter possible in an example; a
+   library-level ensemble type (shared static layers, per-member state
+   only) would cut memory ~10× and is the natural home for this.
+
 **Tooling added:** `wildfire_smc.rs` (modes, env knobs `SMC_BETA`,
 `SMC_SIGMA`, `SMC_IMMIGRANTS`, `SMC_ASSIM_EVERY`, `SMC_PRIOR`,
 `SMC_WIND_ROT_DEG`), runners `exp_smc.py`, `exp_smc_imm.py`,

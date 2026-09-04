@@ -320,6 +320,31 @@ burned more (the wind in this model widens the fire rather than
 stretching it). And the smarter fire-line crew still either strangled
 the fire or was ignored. Three doors closed, which is what a log is for.
 
+## 5c. September 4: many runs at once, and a fire that learns as it burns
+
+Two changes in how we *use* the model, not in the model itself.
+
+**Ask thirty-two runs, not one.** Draw thirty-two parameter sets from a
+wide range — no tuning to any fire — run them all, and colour each cell
+by the share of runs in which it burned. Where more than half the runs
+agree, call it "burned". That map alone ties the hand-tuned single runs
+of Round 1 on four of six fires and is much better *calibrated*: when it
+says 30 % it is right about 30 % of the time, where a single map can only
+say yes or no.
+
+**Then let the runs learn from yesterday.** Each day, compare every run
+with the perimeter actually observed, keep the ones that match, give
+their settings a small random nudge, add a few fresh ones so the crowd
+never becomes a clone, and let them keep burning from where they are.
+Tomorrow's map is scored *before* tomorrow's observation is used, so this
+is a real forecast, the way a fire camp would use last night's perimeter.
+Result: forecasts improve by 0.05–0.21 on every fire, including the two
+we never tuned on; Ferguson, which nothing else had touched, goes from
+0.13 to 0.34; and on Bear the learning crowd beats the Circle on days
+two to four. The gap to the Circle is now 0.03–0.07 on five fires, from
+0.13–0.32 at the start. What remains is the late-fire stall (the model
+still cannot stop *in place*) and the fast-fire speed problem.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means

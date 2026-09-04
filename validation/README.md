@@ -191,6 +191,18 @@ decay is an early-growth decline, not suppression; a wind-driven tick
 clock is invisible at daily truth and harmful un-normalised; the improved
 line agent still has no middle ground.
 
+## Status update (2026-09-04): ensembles
+
+Round 4 ([experiments/round-4.md](experiments/round-4.md)): the model is
+now run as an ensemble. `cella_lib/examples/wildfire_smc` draws 32
+members from one untuned prior and outputs a burn-probability map (E24);
+in `assim` mode it resamples members on each observed mask, mutates their
+parameters and keeps simulating — a particle filter with GA operators
+whose scores are one-window-ahead forecasts (E25). Forecast IoU 0.35–0.62
+on all six fires, holdout included, within 0.03–0.07 of the Circle and
+above it on Chimney; Ferguson 0.13 → 0.34. Recommended: β 10, σ 0.2,
+20 % immigrants.
+
 ## The challenge ladder (downloaded and waiting)
 
 Deeper research found harder validation targets; the directly fetchable ones

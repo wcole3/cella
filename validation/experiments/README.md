@@ -46,4 +46,7 @@ Start with the table; open a file only when you need its numbers.
 | E21 | [observed percent-contained (ICS-209) replaces the decay](25-e21-observed-containment-replaces-decay.md) | REJECTED as p0 schedule; data KEPT; decay relabelled | Bear, Brattain, Buck, Chimney | real containment 0–13 % by day 4 → area ×3–8 vs decay ×0.7–1.0 | Round 3 |
 | E22 | [rate-of-spread-driven clock (normalised / un-normalised)](27-e22-rate-of-spread-driven-clock.md) | REJECTED at daily truth | Bear, Brattain, Buck, Chimney | normalised ±0.02; extra ticks −0.08…−0.18 | Round 3 |
 | E23 | [ramped, breachable, anchor-and-flank line agent](26-e23-ramped-breachable-line-agent.md) | REJECTED (parked) | Bear, Brattain, Buck, Chimney | perfect line strangles, veg 0.1 line ignored; Bear ×0.9 area but IoU 0.27 < 0.31 | Round 3 |
+| — | **Round 4 — 2026-09-04: ensembles** — Monte Carlo maps and a fire that learns as it burns | | | | [round-4.md](round-4.md) |
+| E24 | [Monte Carlo burn probability from one untuned prior](28-e24-monte-carlo-burn-probability.md) | KEPT (default product) | all six | consensus ties/beats tuned single runs; Brier 40–60 % below Circle on 3 fires | Round 4 |
+| E25 | [particle filter with GA operators (learns as it burns)](29-e25-generational-ensemble-particle-filter.md) | KEPT (headline mode) | all six incl. holdout | forecast IoU +0.05…+0.21 over open; Ferguson 0.13→0.34; Bear beats Circle days 2–4 | Round 4 |
 
