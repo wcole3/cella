@@ -45,7 +45,7 @@ own `spatial_accuracy_m`.
 
 Every comparison — against an observed fire *or* against another fire
 model's published score — is only as good as the weather feed behind it.
-Round 2 of [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) found that our wind
+Round 2 of [experiments/](experiments/README.md) found that our wind
 maths was right and our wind *input* was the problem: ERA5 daily domain
 means at 0.1–3 m/s leave the wind kernel inert, and on Chimney 2016 they
 point the opposite way to the gusts that actually drove the fire. A
@@ -226,6 +226,34 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.4 (2026-09-04, before E24/E25 runs): ensemble metrics declared for
+  the Monte Carlo and assimilating-ensemble experiments. A probability map
+  (fraction of members burned per cell) is scored by (a) **Brier score**
+  against the observed mask, next to the Brier of the deterministic nulls
+  (persistence, radial — each 0/1); (b) **consensus IoU** (cells with
+  probability ≥ 0.5); (c) best-threshold IoU over 0.1..0.9 (reported, but
+  it peeks at the truth to pick the threshold — diagnostic only); (d) mean
+  member IoU. In assimilation mode every score at t_k is a
+  **one-window-ahead forecast**: members are resampled on the observation
+  at t_{k−1} and scored on t_k before seeing it. One broad prior for all
+  fires (p0 ∈ [0.08, 0.6] log-uniform, dur ∈ [5, 20], τ ∈ [2, 100] d
+  log-uniform, wind × ∈ [0, 1.5]); nothing is chosen per fire, so the
+  holdout pair is scored alongside the calibration four.
+- v1.3 (2026-09-02, before E20 runs): search space for the per-fire
+  evolutionary calibration (E20) declared: p0 ∈ [0.03, 0.6],
+  burn_duration ∈ [2, 20], containment τ ∈ [2, 200] days (200 ≈ off),
+  station-wind multiplier ∈ [0, 4], moisture of extinction M_x ∈ [10, 200] %
+  (200 ≈ off), grass:timber veg ratio ∈ [0.3, 4]. Objective: mean IoU over
+  the series, 1 seed during search, 3-seed verification of the winner.
+  Purpose is *learning which parameters transfer* between fires, not a
+  per-fire score; per-fire optima are reported only next to the
+  transferred (median) recipe on the holdout.
+- v1.2 (2026-09-02): first holdout report (E16c). The containment decay
+  `p0 × exp(−t/τ)` is recorded as a *calibrated suppression proxy* (τ and
+  the p0 multiplier chosen on the calibration fires); its holdout result
+  (Pier +0.14, Ferguson flat) is the number to quote. Observed station
+  weather (`station_hourly.json`) is an optional input with its own
+  `provenance.weather`; committed scenarios keep ERA5.
 - v1.1 (2026-09-01): added §2.1 "Weather inputs: inspect before you
   compare" and process rule 6, after Round 2 showed the wind maths was
   correct but the ERA5 daily-mean wind input was too weak to act and, on

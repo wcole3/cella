@@ -214,7 +214,7 @@ model's wind physics contributes something even before tuning.
 ## 5a. What the September 2026 audit added
 
 Two more things we now know, in plain words. Details and numbers are in
-[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) Round 2.
+[experiments/](experiments/README.md) Round 2.
 
 **The wind arrow points the right way — but the wind we feed in is tiny
 and sometimes wrong.** Someone testing the app expected "wind 0°" to mean
@@ -261,6 +261,64 @@ changes day to day — weather — not a finer clock. The one such input we
 have (a daily temperature proxy) is already worth +0.06 on Buck 2017
 and never hurts; stronger day-to-day drivers (hourly wind, humidity)
 are the next thing to build.
+
+## 5b. What the September 2 experiments added
+
+**Real weather is now an input — but the nearest weather station is not
+on the fire.** We can pull hourly wind, temperature and humidity from
+the closest airport (NOAA's public archive, no account needed). Used as
+a drop-in for the wind, it scored the same or a little worse: the
+airports are 40–70 km away in valleys, and the fire is on a ridge.
+Getting the wind right needs a fire-weather station or a wind model that
+knows the terrain.
+
+**Making the fire slow down at night does not stop it.** We tried the
+textbook trick — damp the spread when the air is humid, as operational
+simulators do. The fire either fizzled or, once we turned it back up,
+burned everything again. The reason is simple: a pause is not a stop.
+Whatever the fire can reach on a dry afternoon, it reaches eventually.
+
+**Making the fire slowly lose strength does stop it — and it is the
+biggest improvement yet.** Multiply the spread chance by a factor that
+shrinks day after day (a stand-in for firefighters gaining ground) and
+the model finally burns about the right *amount*: overlap scores jump
+by 0.07–0.14 on three of the four tuning fires and, more importantly, on
+Pier, a fire we never tuned on. Two honest caveats. It is a fitted knob,
+not physics — it says when the fire stops, not where — so the Circle
+still wins on five of six fires, by half the old margin. And it can only
+fix a fire that burns too much; on Ferguson, which the model already
+under-burns, it does nothing. The next step is to replace the knob with
+real containment records from the incident reports.
+
+**Later the same day, four more things.** Keeping the day/night humidity
+physics *and* the slow weakening together costs nothing and slightly
+improves the final map, so both stay. Measuring the model's own speed
+showed that wind barely changes it (5–10 %, where a real fire speeds up
+two to three times), so "one tick" is not yet a fixed length of time on
+windy days — a clock driven by spread rate is the fix to build. Letting
+a simulated crew paint fire line along the fire's own edge during the run
+works mechanically but, done naively, either does nothing or strangles
+the fire on day two; it needs ramping resources and line that can fail.
+And an evolutionary search run separately on each tuning fire agreed on
+the same three settings (a 3-day weakening, a long burn duration, the
+airport wind turned down); the median of those settings lifted the
+never-tuned Pier fire from 0.32 to 0.51. The fast Chimney fire wants the
+opposite — no weakening, short burn — and Ferguson, which the model
+cannot keep up with, is unmoved by any of it.
+
+**And the three follow-ups, all negative but instructive.** We fetched
+the real daily "percent contained" numbers the fire crews reported
+(NIFC's ICS-209 archive, now stored with every fire) and used them
+instead of our invented slow-down. They did far worse: crews report
+0–13 % containment in the first four days, so the real record does
+nothing while the model runs away, whereas our knob had already halved
+the spread by day four. Lesson: the knob is not "firefighters"; it is
+something that slows these fires in their first days that the model does
+not know about. A clock that runs faster in windy hours changed nothing
+the daily satellite maps can see, and running it faster overall just
+burned more (the wind in this model widens the fire rather than
+stretching it). And the smarter fire-line crew still either strangled
+the fire or was ignored. Three doors closed, which is what a log is for.
 
 ## 6. Reading any future results table — a checklist
 

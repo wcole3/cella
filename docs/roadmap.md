@@ -892,7 +892,7 @@ Available scenarios: `Bear_2020`, `Brattain_2020`, `Buck_2017`, `Chimney_2016`,
 **Phases 1 and 2 cannot move library snapshots** — they only touch the binary,
 so running them is cheap confirmation rather than the real risk. **Phase 3 does
 touch `cella_lib`**: re-run the validation harness over those scenarios and
-confirm the metrics in [`../validation/EXPERIMENT_LOG.md`](../validation/EXPERIMENT_LOG.md)
+confirm the metrics in [`../validation/experiments/README.md`](../validation/experiments/README.md)
 reproduce exactly. Phase 3 is additive and must not move a single IoU or
 Sørensen figure.
 

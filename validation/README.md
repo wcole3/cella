@@ -10,7 +10,7 @@ plain-language guide to what the scores mean, what the model's current
 shortcomings are, and how to read a results table without fooling yourself.
 The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md),
 and every improvement experiment (kept and rejected) is recorded in
-[EXPERIMENT_LOG.md](EXPERIMENT_LOG.md).
+[experiments/](experiments/README.md).
 
 ## The pipeline, start to finish
 
@@ -69,6 +69,25 @@ its answers written into `scenario.json → provenance.weather`
 ([FORMATS.md](FORMATS.md)). The same applies when quoting another fire
 model's score: name the wind convention, units, height, and averaging on
 both sides, or the comparison is not one.
+
+### 2b. (Optional) Pull real hourly station weather
+
+```bash
+validation/.venv/bin/python validation/scripts/wind_station.py            # all six fires
+validation/.venv/bin/python validation/scripts/wind_station.py Bear_2020  # one fire
+```
+
+Downloads the nearest NOAA Integrated Surface Database (ISD) station-year
+CSV — hourly wind, temperature, dew point, no API key — and writes
+`station_hourly.json` beside the scenario: `from_deg` (weather-report
+bearing, as ISD already reports it), `speed_ms` (10 m), `temp_c`,
+`rh_pct`, one row per hour since `t0`, plus the station's distance,
+coverage and a full `provenance.weather` block. The experiment runners
+(`scripts/experiments/exp_station.py`) splice it into a scenario copy as
+an hourly wind schedule and an hourly fuel-moisture p0 schedule; the
+committed scenarios keep ERA5 so reported numbers stay reproducible.
+Nearest stations are valley airports 34–72 km from these fires — read the
+`caveat` field before trusting a wind result (TEST_PLAN §2.1).
 
 ### 3. Run the harness
 
@@ -138,7 +157,7 @@ density layer unused (canopy cover is available in the HDF5).
 
 ## Status update (2026-09-01): wind audit and the speed cap
 
-Round 2 in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md) audited the wind path
+Round 2 in [experiments/](experiments/README.md) audited the wind path
 after a tester expected weather-report ("from", 0° = north) directions.
 That "toward, 0° = +x" angle was our own invention, so the model now
 takes the weather-report "from" bearing (`wind_from_deg`, 0° = north,
@@ -150,6 +169,27 @@ domain-mean winds (0.1–3 m/s) leave the wind kernel inert, and on Chimney
 front cap (1.5 km/day at 50 ticks/day) is broken by 80–98 % of observed
 burned area on the fast fires. Plain-language version in
 [ANALYSIS.md §5a](ANALYSIS.md).
+
+## Status update (2026-09-02): observed weather, and a way to stop
+
+Round 3 ([experiments/round-3.md](experiments/round-3.md)): hourly NOAA
+ISD station weather can be loaded (`scripts/wind_station.py`) but the
+nearest airports are 40–70 km off the fire and score no better than ERA5;
+hourly fuel-moisture damping slows the fire without capping it; a monotone
+containment decay (p0 × e^(−t/5 d), p0 ×2) is the largest gain in the log
+and holds on the Pier holdout (0.32 → 0.46) — a suppression proxy, not
+physics, and useless on fires the model under-burns (Ferguson). Engine:
+`WildfireModel::set_p0` makes hourly p0 schedules cheap. Later that day:
+moisture × decay kept together (E17); the model's own rate of spread
+measured — wind moves it 5–10 %, so ticks/day should follow the weather
+(E19); a dynamic fire-line agent hook `EXP_LINE_RATE` (E18, needs better
+tactics); an evolutionary per-fire search whose median recipe (p0 0.45,
+dur 15, τ 3.4 d, wind ×0.29) lifts the Pier holdout to 0.51 (E20).
+Follow-ups E21–E23 were negative: ICS-209 percent-contained (now in every
+scenario as `containment.json`) rises too slowly to cap the burn, so the
+decay is an early-growth decline, not suppression; a wind-driven tick
+clock is invisible at daily truth and harmful un-normalised; the improved
+line agent still has no middle ground.
 
 ## The challenge ladder (downloaded and waiting)
 

@@ -1,0 +1,54 @@
+# E23 — the fire-line agent with ramping resources, breachable line and anchor-and-flank tactics · REJECTED (still no middle ground)
+
+_Round: Round 3 — 2026-09-02: real weather in, explosion out_
+
+**Why.** E18's agent was all-or-nothing. Three fixes from how incidents
+actually work were added to the harness hook (`EXP_LINE_RAMP_DAYS`,
+`EXP_LINE_TYPE`, `EXP_LINE_TACTIC=upwind`): resources ramp as
+1 − e^(−t/3 d); the line is a low-flammability fuel class `Line`
+(veg_factor 0.1) instead of Inactive, so wind and slope can breach it;
+and the edge is built from the up-wind side of the fire centre first, the
+head last. One change at a time at 1000 cells/day, then all three at
+300 / 1000 / 3000 cells/day with p0 ×1 and ×2. ERA5 daily wind, E1
+(p0, dur), 3 seeds. `exp_fireline2.py`.
+
+| variant | Bear | Brattain | Buck | Chimney |
+|---|---|---|---|---|
+| ctrl | 0.311 (×3.4) | 0.336 (×3.7) | 0.403 (×0.6) | 0.441 (×2.1) |
+| 1000/day, ramp only | 0.258 (×0.2) | 0.184 (×0.2) | 0.413 (×0.4) | 0.366 (×0.7) |
+| 1000/day, breachable only | 0.243 (×0.8) | 0.321 (×3.4) | 0.413 (×0.4) | 0.437 (×2.0) |
+| 1000/day, upwind only | 0.187 (×0.1) | 0.056 (×0.0) | 0.374 (×0.3) | 0.210 (×0.1) |
+| 300/day, all three | 0.262 (×2.8) | 0.338 (×3.6) | **0.434** (×0.4) | 0.444 (×2.1) |
+| 1000/day, all three | 0.273 (×0.9) | 0.338 (×3.6) | 0.426 (×0.4) | 0.443 (×2.0) |
+| 3000/day, all three | 0.269 (×0.9) | 0.323 (×3.1) | 0.419 (×0.4) | 0.445 (×1.7) |
+| all three, p0 ×2 (any rate) | 0.24–0.26 (×4.5–7) | 0.31 (×4.3) | 0.20–0.24 (×5) | 0.41 (×3.5) |
+| Circle | 0.541 | 0.450 | 0.670 | 0.372 |
+
+**Findings.**
+
+- **A perfect line strangles, a breachable line is ignored.** Inactive
+  line (ramp-only, upwind-only) closes the ring and kills the fire exactly
+  as in E18. Line at veg_factor 0.1 is crossed as if it were not there on
+  Brattain and Chimney (area ×3.4–3.6, same as control). Bear is the one
+  fire where the combination lands at the right area (×0.9) — and its IoU
+  is *worse* than control (0.27 vs 0.31): the line stopped the fire in the
+  wrong places.
+- **Doubling p0 to compensate blows through every line.** Area ×4–7.
+- **Ranking by up-wind-ness is not "anchor and flank".** With a 1 m/s ERA5
+  wind the "up-wind side" is nearly arbitrary, so the agent still paints a
+  near-complete ring. Real crews also stop building where the line will
+  not hold; this agent has no notion of fire intensity.
+- There is a fuel-factor sweet spot between 0.1 (ignored) and 0 (perfect)
+  that was not scanned; but the Bear result says even a line that holds
+  in the right *amount* holds in the wrong *places*, so tuning that factor
+  would fix area, not shape.
+
+**Verdict.** Rejected. Three iterations (E18, E23) of a rule-based line
+agent have not produced a curve between "fence" and "nothing". The
+mechanism (repaint cells between steps) is sound and remains the right
+place for *observed* containment lines when we have them (perimeter
+polygons per day from incident GIS); a rule-based agent needs a real
+intensity model to decide where line holds, which this CA does not have.
+Parked. E21 takes the containment *fraction* from the incident reports
+instead, which sidesteps the "where" question at the price of being
+spatially blind.
