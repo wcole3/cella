@@ -16,3 +16,4 @@ validation/.venv/
 # superpowers SDD scratch workspace
 .superpowers/
 .mcp.json
+__pycache__/
