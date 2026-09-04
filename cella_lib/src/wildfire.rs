@@ -197,6 +197,12 @@ struct WildfireDerived {
     inactive: CellType,
     /// Resolved fuel classes as `(type, p0 * veg_factor)`.
     fuels: Vec<(CellType, f32)>,
+    /// `veg_factor` per entry of `fuels`, kept so [`WildfireModel::set_p0`]
+    /// can rebuild the bases with exactly attach's arithmetic.
+    veg: Vec<f64>,
+    /// Index into `fuels` per cell (`u16::MAX` = not fuel), so `set_p0` can
+    /// rebuild `p_base` without seeing the grid again.
+    fuel_slot: Vec<u16>,
 }
 
 /// The wildfire model. See the [module docs](self).
@@ -243,6 +249,52 @@ impl WildfireModel {
             Some((_, base)) => base * density,
             None => 0.0,
         }
+    }
+
+    /// Position of type `t` in `derived.fuels`, or `u16::MAX` for non-fuel.
+    fn fuel_slot_for(&self, t: CellType) -> u16 {
+        self.derived
+            .fuels
+            .iter()
+            .position(|(ft, _)| *ft == t)
+            .map_or(u16::MAX, |i| i as u16)
+    }
+
+    /// Change `p0` on an attached model without re-attaching.
+    ///
+    /// `p0` is baked into every cell's precomputed base probability at
+    /// attach, so a plain `params.p0` write is silently ignored (Round 1
+    /// engine finding). The panel path re-attaches, which also rebuilds the
+    /// `8 × cells` slope table — fine for a slider, far too slow for a
+    /// weather schedule that changes `p0` every hour. This rebuilds only the
+    /// per-fuel bases and `p_base`, with attach's exact arithmetic, so the
+    /// result is bit-identical to a fresh attach at `p0`.
+    ///
+    /// Errors if the model is not attached or `p0` is outside `[0, 1]` (the
+    /// same bound attach enforces); a refused write changes nothing.
+    pub fn set_p0(&mut self, p0: f64) -> Result<(), ModelError> {
+        if self.derived.fuel_slot.is_empty() {
+            return Err(ModelError::InvalidParam(
+                "set_p0 needs an attached model".into(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&p0) {
+            return Err(ModelError::InvalidParam(format!("p0 {p0} is not in [0, 1]")));
+        }
+        self.params.p0 = p0;
+        for (i, veg) in self.derived.veg.iter().enumerate() {
+            self.derived.fuels[i].1 = (p0 * veg) as f32;
+        }
+        for idx in 0..self.derived.p_base.len() {
+            let slot = self.derived.fuel_slot[idx];
+            self.derived.p_base[idx] = if slot == u16::MAX {
+                0.0
+            } else {
+                let density = self.env.density.get(idx).copied().unwrap_or(1.0);
+                self.derived.fuels[slot as usize].1 * density
+            };
+        }
+        Ok(())
     }
 
     /// The eight per-direction wind factors for the current wind, including
@@ -659,6 +711,7 @@ impl ExternalModel for WildfireModel {
             )));
         }
         let mut fuels: Vec<(CellType, f32)> = Vec::with_capacity(p.fuels.len());
+        let mut veg: Vec<f64> = Vec::with_capacity(p.fuels.len());
         for f in &p.fuels {
             let t = CellType::new(&f.name);
             if let Some((_, r)) = reserved.iter().find(|(rt, _)| *rt == t) {
@@ -674,6 +727,7 @@ impl ExternalModel for WildfireModel {
                 )));
             }
             fuels.push((t, (p.p0 * f.veg_factor) as f32));
+            veg.push(f.veg_factor);
         }
 
         let offs = neighborhood_offsets(Neighborhood2D::Moore, 1);
@@ -694,13 +748,18 @@ impl ExternalModel for WildfireModel {
             burned,
             inactive: view.inactive,
             fuels,
+            veg,
+            fuel_slot: Vec::new(),
         };
 
         let mut p_base = vec![0.0f32; n];
+        let mut fuel_slot = vec![u16::MAX; n];
         for (idx, &t) in view.cells.iter().enumerate() {
             p_base[idx] = self.p_base_for(t, idx);
+            fuel_slot[idx] = self.fuel_slot_for(t);
         }
         self.derived.p_base = p_base;
+        self.derived.fuel_slot = fuel_slot;
 
         // Slope table: exp(a * slope_angle_deg) from neighbor j up to the cell.
         // Flat terrain (empty elevation layer) gives all-1.0.
@@ -879,6 +938,7 @@ impl ExternalModel for WildfireModel {
     fn on_paint(&mut self, idx: usize, new_type: CellType) {
         if idx < self.derived.p_base.len() {
             self.derived.p_base[idx] = self.p_base_for(new_type, idx);
+            self.derived.fuel_slot[idx] = self.fuel_slot_for(new_type);
         }
     }
 
@@ -1545,6 +1605,44 @@ mod tests {
         );
         assert!(!m.event_applies(CellType::new("BurnedOut"), &ev));
         assert!(!m.event_applies(CellType::inactive(), &ev));
+    }
+
+    #[test]
+    fn set_p0_rescales_p_base_exactly_like_a_fresh_attach() {
+        // A weather schedule changes p0 every window. Re-attaching rebuilds
+        // the whole slope table for that; set_p0 must give the same p_base
+        // bit for bit, in O(cells), and keep on_paint consistent afterwards.
+        let forest = CellType::new("Forest");
+        let grass = CellType::new("Grass");
+        let cells = vec![
+            forest, grass, CellType::inactive(), CellType::new("Burning"),
+            grass, forest, forest, CellType::new("Rock"), grass,
+        ];
+        let mut p = base_params();
+        p.p0 = 0.3;
+        p.fuels.push(FuelClass { name: "Grass".into(), veg_factor: 1.7 });
+        let env = WildfireEnv {
+            density: vec![1.0, 0.5, 1.0, 1.0, 2.0, 0.25, 1.0, 1.0, 0.8],
+            elevation: vec![],
+        };
+        let mut m = attach_on(WildfireModel::new(p.clone(), env.clone()), 3, 3, &cells);
+        m.set_p0(0.12).unwrap();
+        assert_eq!(m.params.p0, 0.12);
+        let mut fresh_p = p.clone();
+        fresh_p.p0 = 0.12;
+        let fresh = attach_on(WildfireModel::new(fresh_p, env.clone()), 3, 3, &cells);
+        assert_eq!(m.derived.p_base, fresh.derived.p_base, "same bits as a fresh attach");
+        assert_eq!(m.derived.fuels, fresh.derived.fuels);
+        assert_eq!(m.derived.p_base[2], 0.0, "inactive stays non-fuel");
+        // Painting after set_p0 uses the new p0, not the attach-time one.
+        m.on_paint(2, grass);
+        assert_eq!(m.derived.p_base[2], fresh.derived.p_base[1] * 2.0, "grass at density 1.0");
+        // Before attach there is nothing to rescale.
+        let mut bare = WildfireModel::new(p, env);
+        assert!(bare.set_p0(0.5).is_err());
+        // Out-of-range p0 is refused just like attach refuses it.
+        assert!(m.set_p0(1.5).is_err());
+        assert_eq!(m.params.p0, 0.12, "a refused write changes nothing");
     }
 
     #[test]
