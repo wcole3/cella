@@ -70,11 +70,13 @@ practice) tested in E25b.
    which no parameter learning fixes because the model has no way to
    stop *in place*; the fast-fire rate problem (Chimney, E19) which
    assimilation narrows but a kernel that stretches must close; and
-   replication (E25d) plus a perimeter-distance likelihood and reliability
+   a perimeter-distance likelihood and reliability
    diagrams for the probability maps.
 5. Engine: `Grid2D: Clone` made the filter possible in an example; a
    library-level ensemble type (shared static layers, per-member state
    only) would cut memory ~10× and is the natural home for this.
+
+Replicates (E25d, three seeds): Bear 0.468±0.005, Brattain 0.404±0.003, Buck 0.605±0.009, Chimney 0.429±0.004, Ferguson 0.349±0.008, Pier 0.535±0.004 — spread ≤ 0.02.
 
 **Tooling added:** `wildfire_smc.rs` (modes, env knobs `SMC_BETA`,
 `SMC_SIGMA`, `SMC_IMMIGRANTS`, `SMC_ASSIM_EVERY`, `SMC_PRIOR`,

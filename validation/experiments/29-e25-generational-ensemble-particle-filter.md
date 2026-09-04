@@ -84,8 +84,20 @@ and area ratio from ×0.2 to ×1.0.
    over-burn; the parameters move toward physically plausible values. The
    offline optimum was compensating for the model's initial-days error.
 
-**Caveats.** Single prior draw and member seeds (replicates in E25d);
-consensus threshold 0.5 fixed a priori; IoU-based weights are a choice
+**Replicates (E25d, `exp_smc_reps.py`).** Three independent prior draws and member seeds of the recommended configuration, mean consensus IoU:
+
+| Fire | seed 0 | seed 1 | seed 2 | mean ± sd |
+|---|---|---|---|---|
+| Bear | 0.473 | 0.461 | 0.471 | 0.468 ± 0.005 |
+| Brattain | 0.400 | 0.404 | 0.407 | 0.404 ± 0.003 |
+| Buck | 0.616 | 0.605 | 0.595 | 0.605 ± 0.009 |
+| Chimney | 0.426 | 0.434 | 0.427 | 0.429 ± 0.004 |
+| Ferguson | 0.345 | 0.342 | 0.360 | 0.349 ± 0.008 |
+| Pier | 0.533 | 0.541 | 0.531 | 0.535 ± 0.004 |
+
+Spread ≤ 0.02 on every fire: the result is not a lucky draw.
+
+**Caveats.** Consensus threshold 0.5 fixed a priori; IoU-based weights are a choice
 (a perimeter-distance likelihood may be better); resampling copies whole
 grids (memory ∝ members × cells — fine to 64 members on these grids).
 
