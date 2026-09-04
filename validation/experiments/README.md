@@ -14,6 +14,8 @@ Start with the table; open a file only when you need its numbers.
 
 **Tooling**: `cella_lib/examples/wildfire_experiment.rs` (hooks `EXP_P0_SCALE`, `EXP_WIND_SCALE`, `EXP_WIND_ROT_DEG`, `EXP_SEED_BASE`) and the runners in `../scripts/experiments/`. Results land in the gitignored `../results/experiments/`. **Build root trap:** runners must call `cella_lib/target/release/examples/...`, not the repo-root `target/`.
 
+Research notes: [why fires slow down, what wind a fire feels, what suppression does](research-decline-wind-suppression.md) (2026-09-04) — sources behind E26–E30.
+
 | # | Experiment | Verdict | Fires | Key number | Round |
 |---|---|---|---|---|---|
 | — | **Round 1 — 2026-08-15** — intro, verified results, conclusions | | | | [round-1.md](round-1.md) |

@@ -166,6 +166,18 @@ Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {
 
 ### The wildfire model
 
+**Ensembles and wind fields (September 2026).** `ensemble::WildfireEnsemble`
+runs many wildfire grids at once from a parameter prior, gives a per-cell
+burn probability, and can learn from an observed perimeter (resample,
+mutate, immigrants — a particle filter with GA operators); configure with an
+`"ensemble"` block and `CellaConfig::build_ensemble()`, full guide in
+[ensemble.md](ensemble.md). `wind_field::mass_consistent` /
+`MassConsistentBasis` downscale one wind over the elevation layer
+(WindNinja-style mass conservation: ridges speed up, valleys channel) into a
+per-cell field for `WildfireModel::set_wind_field`; `set_density` paints a
+per-cell multiplier (retardant, wet line) that can be restored. Members share
+the slope table (`Arc`), so an ensemble costs roughly cells × members × 8 B.
+
 `wildfire::WildfireModel` implements Alexandridis-style stochastic spread: per-cell base probability `p0 × veg_factor × density`, exponential wind (`c1`, `c2`; direction as the meteorological bearing the wind comes *from*, `wind_from_deg`, 0° = north, clockwise, grid north-up — check any external weather feed against `validation/TEST_PLAN.md` §2.1 before comparing results) and slope (`slope_a`) modifiers with a `1/√2` diagonal correction, burn duration tracked through cell ages, and lognormal firebrand spotting delivered as `ModelEvent`s. Slope factors are precomputed per cell at attach; wind factors once per chunk; the per-cell loop is two multiplies per burning neighbor plus one hash draw. See `configs/2d_wildfire_demo.json` and the module docs for parameters (defaults follow Alexandridis et al. 2008).
 
 ### Model parameters

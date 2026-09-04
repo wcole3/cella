@@ -226,6 +226,15 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.5 (2026-09-04, before E26–E28 runs): declared the terrain wind field
+  (mass-consistent downscaling, layer depth ∈ {150, 300, 600} m), painted
+  retardant (density multiplier ∈ {0.02, 0.05, 0.1}, recovery ∈ {24, 72, ∞} h)
+  and a containment-probability operator inside the ensemble (daily
+  stochastic termination by growth rate, parameters in the prior) as the
+  next mechanisms under test. Their sources are in
+  `experiments/research-decline-wind-suppression.md`. Same metrics; same
+  calibration/holdout split; ensemble runs report all six fires because no
+  parameter is chosen per fire.
 - v1.4 (2026-09-04, before E24/E25 runs): ensemble metrics declared for
   the Monte Carlo and assimilating-ensemble experiments. A probability map
   (fraction of members burned per cell) is scored by (a) **Brier score**

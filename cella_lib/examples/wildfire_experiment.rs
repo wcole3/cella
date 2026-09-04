@@ -21,6 +21,14 @@
 //!   config, e.g. veg_factor 0.1 = breachable line) instead of Inactive;
 //!   `EXP_LINE_TACTIC=upwind` ranks the edge by up-wind-ness (heel and
 //!   flanks first, never the head) instead of distance to the ignition.
+//! - `EXP_WIND_FIELD=300` — terrain wind (E26): every window the uniform
+//!   wind is downscaled with the mass-consistent solver
+//!   (`cella_lib::wind_field`, layer depth in metres) over the config's
+//!   elevation layer and set as a per-cell field.
+//! - `EXP_LINE_TYPE=density:0.2` — the line agent paints a density
+//!   multiplier (retardant / wet line, E27) instead of a cell type;
+//!   `EXP_LINE_RECOVER_H=48` restores treated cells to 1.0 after that many
+//!   hours (retardant dries, hose lines burn over).
 //! - `EXP_SEED_BASE=100` — offsets every ensemble seed (per-seed field dumps
 //!   for ensemble-probability experiments).
 //!
@@ -224,10 +232,42 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
-    let line_type: CellType = std::env::var("EXP_LINE_TYPE")
+    let line_type_env = std::env::var("EXP_LINE_TYPE").ok();
+    // `density:<f>` paints a multiplier; anything else is a cell type name.
+    let line_density: Option<f32> = line_type_env
+        .as_deref()
+        .and_then(|v| v.strip_prefix("density:"))
+        .and_then(|v| v.parse().ok());
+    let line_type: CellType = match (&line_type_env, line_density) {
+        (Some(n), None) => CellType::new(n),
+        _ => CellType::inactive(),
+    };
+    let line_recover_h: f64 = std::env::var("EXP_LINE_RECOVER_H")
         .ok()
-        .map(|n| CellType::new(&n))
-        .unwrap_or_else(CellType::inactive);
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(f64::INFINITY);
+    let mut treated: Vec<(usize, f64)> = Vec::new();
+    let wind_field_depth: Option<f64> = std::env::var("EXP_WIND_FIELD")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    let mut wind_basis: Option<cella_lib::wind_field::MassConsistentBasis> = None;
+    let elevation: Vec<f32> = grid
+        .model_mut()
+        .unwrap()
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .unwrap()
+        .env
+        .elevation
+        .clone();
+    let cell_size = grid
+        .model_mut()
+        .unwrap()
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .unwrap()
+        .params
+        .cell_size;
     let line_upwind = std::env::var("EXP_LINE_TACTIC").ok().as_deref() == Some("upwind");
     let tick_scale: Option<Vec<f64>> = std::env::var("EXP_TICK_SCALE").ok().map(|p| {
         serde_json::from_str(&std::fs::read_to_string(&p).expect("EXP_TICK_SCALE file"))
@@ -297,6 +337,38 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 // rebuild), which is what makes hourly schedules affordable.
                 m.set_p0((base_p0 * s[wi]).min(1.0)).expect("p0 in range");
             }
+            if let (Some(depth), false) = (wind_field_depth, elevation.is_empty()) {
+                // Terrain basis once per run (elevation is static); one
+                // multiply-add pass per window for the actual wind.
+                let basis = wind_basis.get_or_insert_with(|| {
+                    let opts = cella_lib::MassConsistentOptions {
+                        layer_depth_m: depth,
+                        ..Default::default()
+                    };
+                    cella_lib::wind_field::MassConsistentBasis::new(
+                        &elevation, width, height, cell_size, &opts,
+                    )
+                });
+                // Meteorological components: the wind blows toward from + 180.
+                let speed = cur.speed_ms * wind_scale;
+                let from = (cur.from_deg + wind_rot).rem_euclid(360.0).to_radians();
+                let (u0, v0) = (-speed * from.sin(), -speed * from.cos());
+                let f = basis.field(u0, v0);
+                m.set_wind_field(&f.u, &f.v).expect("field matches grid");
+            }
+            // Retardant dries: restore treated cells older than the recovery time.
+            if line_recover_h.is_finite() {
+                let now = cur.hours;
+                let mut keep = Vec::with_capacity(treated.len());
+                for &(i, t_paint) in &treated {
+                    if now - t_paint >= line_recover_h {
+                        let _ = m.set_density(i, 1.0);
+                    } else {
+                        keep.push((i, t_paint));
+                    }
+                }
+                treated = keep;
+            }
         }
         // Integer step counts drift from real time; track cumulatively so the
         // total stays aligned with the schedule.
@@ -361,7 +433,18 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
                 let k = n_paint.min(cands.len());
                 for &(_, i) in cands.iter().take(k) {
-                    grid.transition_state_and_buffer(i, &line_type);
+                    if let Some(dens) = line_density {
+                        let m = grid
+                            .model_mut()
+                            .unwrap()
+                            .as_any_mut()
+                            .downcast_mut::<WildfireModel>()
+                            .unwrap();
+                        let _ = m.set_density(i, dens);
+                        treated.push((i, now_hours));
+                    } else {
+                        grid.transition_state_and_buffer(i, &line_type);
+                    }
                 }
                 line_budget -= k as f64;
             }
