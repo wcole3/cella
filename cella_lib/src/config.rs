@@ -96,6 +96,11 @@ pub struct Config2D {
     /// colour. `"Inactive"` sets the background colour.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub colors: BTreeMap<String, String>,
+    /// Optional ensemble settings (members, prior, assimilation operators).
+    /// Only meaningful with a wildfire `model`; see [`crate::ensemble`] and
+    /// `docs/ensemble.md`. [`CellaConfig::build_ensemble`] uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ensemble: Option<crate::ensemble::EnsembleConfig>,
 }
 
 impl CellaConfig {
@@ -142,6 +147,21 @@ impl CellaConfig {
             }
             _ => None,
         }
+    }
+
+    /// Build the ensemble this config describes: the grid is built and
+    /// attached once, then cloned per member with parameters drawn from the
+    /// `ensemble.prior`. `None` when the config has no `ensemble` block or is
+    /// not a 2D config; `Some(Err)` when the block is invalid or the model is
+    /// not a wildfire model.
+    pub fn build_ensemble(
+        &self,
+    ) -> Option<Result<crate::ensemble::WildfireEnsemble, crate::external::ModelError>> {
+        let ens = match self {
+            CellaConfig::D2(c) => c.ensemble.as_ref()?,
+            CellaConfig::D1(_) => return None,
+        };
+        Some(crate::ensemble::WildfireEnsemble::from_config(self, ens))
     }
 
     /// Build a Grid2D from D2 config.
@@ -193,6 +213,7 @@ mod tests {
             initial: vec!["A".to_string(), "B".to_string(), "C".to_string()],
             rule: rule2,
             model: None,
+            ensemble: None,
         });
         assert!(cfg2.build_grid2d().is_none());
     }
@@ -220,6 +241,7 @@ mod tests {
             initial: vec![a, b],
             rule: Rule2D { subrules: vec![] },
             model: None,
+            ensemble: None,
         });
         assert!(cfg2.build_grid2d().is_some());
         assert!(cfg2.build_grid1d().is_none());

@@ -54,6 +54,7 @@ fn test_config_2d_file_io() {
     ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: 2,
         height: 2,
@@ -123,6 +124,7 @@ fn test_build_grid1d_fail_wrong_dim() {
     let init = vec!["A".to_string()];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: 1,
         height: 1,
@@ -148,6 +150,7 @@ fn test_build_grid2d_success() {
     ];
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: 2,
         height: 2,
@@ -168,6 +171,7 @@ fn test_build_grid2d_fail_length() {
     let init = vec!["A".to_string()]; // Length 1
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: 2,
         height: 2, // Need 4

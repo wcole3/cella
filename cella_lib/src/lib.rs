@@ -19,6 +19,7 @@
 
 mod chunking;
 pub mod config;
+pub mod ensemble;
 pub mod external;
 pub mod grid1d;
 pub mod grid2d;
@@ -27,6 +28,7 @@ pub mod state;
 pub mod threads;
 pub mod types;
 pub mod wildfire;
+pub mod wind_field;
 
 pub use external::{
     ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
@@ -37,7 +39,9 @@ pub use rules::{
     CountOp, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError,
     neighborhood_contains,
 };
+pub use ensemble::{AssimilationReport, EnsembleConfig, MemberParams, WildfireEnsemble, WildfirePrior};
 pub use state::{GridState, grid2d_to_json};
+pub use wind_field::{MassConsistentOptions, WindField, mass_consistent};
 // Re-exports for ergonomic public API
 pub use types::{CellState, CellType, INACTIVE};
 pub use wildfire::{FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams};
@@ -382,6 +386,7 @@ mod tests {
         initial[1 * w + 2] = alive.as_str().to_string();
         initial[1 * w + 3.min(w - 1)] = alive.as_str().to_string();
         let cfg = CellaConfig::D2(Config2D {
+            ensemble: None,
             colors: Default::default(),
             width: w,
             height: h,
@@ -1054,6 +1059,7 @@ mod more_tests {
             ],
         };
         let cfg = CellaConfig::D2(Config2D {
+            ensemble: None,
             colors: Default::default(),
             width: w,
             height: h,
