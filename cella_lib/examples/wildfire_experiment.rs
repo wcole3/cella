@@ -8,6 +8,19 @@
 //!   experiments; ERA5 daily means flatten gusts).
 //! - `EXP_WIND_ROT_DEG=90` — adds a constant to every wind direction
 //!   (convention diagnostic: a non-zero rotation must not score better).
+//! - `EXP_LINE_RATE=300` — dynamic fire-line agent (E18): after every wind
+//!   window, paint this many cells per day of window time to Inactive along
+//!   the model's *own* fire edge, heel first (perimeter fuel cells ranked by
+//!   distance to the ignition centroid), starting after `EXP_LINE_DELAY_H`
+//!   hours (default 24). Uses no truth; stands in for crews building line.
+//! - `EXP_TICK_SCALE=path.json` — per-window multiplier on `steps_per_hour`
+//!   (E22): a rate-of-spread-driven clock. Ticks accumulate as a float so
+//!   fractional ticks per hour carry over between windows.
+//! - `EXP_LINE_RAMP_DAYS=3` — line rate ramps as 1 − e^(−t/τ) from the delay
+//!   (E23); `EXP_LINE_TYPE=Line` paints that fuel class (must exist in the
+//!   config, e.g. veg_factor 0.1 = breachable line) instead of Inactive;
+//!   `EXP_LINE_TACTIC=upwind` ranks the edge by up-wind-ness (heel and
+//!   flanks first, never the head) instead of distance to the ignition.
 //! - `EXP_SEED_BASE=100` — offsets every ensemble seed (per-seed field dumps
 //!   for ensemble-probability experiments).
 //!
@@ -199,6 +212,48 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
+    let line_rate: f64 = std::env::var("EXP_LINE_RATE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let line_delay_h: f64 = std::env::var("EXP_LINE_DELAY_H")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24.0);
+    let line_ramp_days: f64 = std::env::var("EXP_LINE_RAMP_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let line_type: CellType = std::env::var("EXP_LINE_TYPE")
+        .ok()
+        .map(|n| CellType::new(&n))
+        .unwrap_or_else(CellType::inactive);
+    let line_upwind = std::env::var("EXP_LINE_TACTIC").ok().as_deref() == Some("upwind");
+    let tick_scale: Option<Vec<f64>> = std::env::var("EXP_TICK_SCALE").ok().map(|p| {
+        serde_json::from_str(&std::fs::read_to_string(&p).expect("EXP_TICK_SCALE file"))
+            .expect("EXP_TICK_SCALE json")
+    });
+    if let Some(t) = &tick_scale {
+        assert_eq!(t.len(), sc.wind.len() - 1, "one tick scale per wind window");
+    }
+    let mut steps_target = 0.0f64;
+    let width = sc.grid.width;
+    let height = sc.grid.height;
+    // Ignition centroid: where the crews anchor (the heel of the fire).
+    let (mut cx, mut cy, mut cn) = (0.0f64, 0.0f64, 0usize);
+    for i in 0..total {
+        if grid.cell_type(i) == burning {
+            cx += (i % width) as f64;
+            cy += (i / width) as f64;
+            cn += 1;
+        }
+    }
+    if cn > 0 {
+        cx /= cn as f64;
+        cy /= cn as f64;
+    }
+    let inactive = CellType::inactive();
+    let mut line_budget = 0.0f64;
 
     let base_p0;
     {
@@ -226,21 +281,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
     let mut steps_done = 0u64;
     for (wi, win) in sc.wind.windows(2).enumerate() {
         let (cur, next) = (&win[0], &win[1]);
-        if let Some(s) = &p0_scale {
-            // p0 is baked into derived.p_base at attach time, so a plain
-            // params.p0 write is silently ignored. Clone the model, set the
-            // window's params on the clone, and re-attach so attach()
-            // rebuilds p_base. (Wind is read live per chunk; p0 is not.)
-            let mut fresh = grid.model_mut().unwrap().boxed_clone();
-            {
-                let wm = fresh.as_any_mut().downcast_mut::<WildfireModel>().unwrap();
-                wm.params.seed = seed;
-                wm.params.wind_speed = cur.speed_ms * wind_scale;
-                wm.params.wind_from_deg = (cur.from_deg + wind_rot).rem_euclid(360.0);
-                wm.params.p0 = base_p0 * s[wi];
-            }
-            grid.attach_model(fresh).expect("re-attach");
-        } else {
+        {
             let m = grid
                 .model_mut()
                 .unwrap()
@@ -249,16 +290,82 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 .unwrap();
             m.params.wind_speed = cur.speed_ms * wind_scale;
             m.params.wind_from_deg = (cur.from_deg + wind_rot).rem_euclid(360.0);
+            if let Some(s) = &p0_scale {
+                // p0 is baked into derived.p_base at attach time, so a plain
+                // params.p0 write is silently ignored. set_p0 rebuilds p_base
+                // in O(cells) with attach's exact arithmetic (no slope-table
+                // rebuild), which is what makes hourly schedules affordable.
+                m.set_p0((base_p0 * s[wi]).min(1.0)).expect("p0 in range");
+            }
         }
         // Integer step counts drift from real time; track cumulatively so the
         // total stays aligned with the schedule.
         let now_hours = next.hours;
-        let target_steps = (now_hours * sc.steps_per_hour).round() as u64;
+        let scale = tick_scale.as_ref().map_or(1.0, |t| t[wi]);
+        steps_target += (next.hours - cur.hours) * sc.steps_per_hour * scale;
+        let target_steps = steps_target.round() as u64;
         for _ in steps_done..target_steps {
             grid.step();
         }
         steps_done = target_steps;
         record(&grid, &mut arrival, now_hours);
+        if line_rate > 0.0 && now_hours >= line_delay_h {
+            // E18 fire-line agent. Candidates: fuel cells (not burning, burned
+            // or inactive) with a burning 8-neighbour = the model's own active
+            // edge. Heel first: nearest to the ignition centroid. Budget
+            // accrues with window length so hourly and daily windows match.
+            let ramp = if line_ramp_days > 0.0 {
+                1.0 - (-(now_hours - line_delay_h) / (24.0 * line_ramp_days)).exp()
+            } else {
+                1.0
+            };
+            line_budget += line_rate * ramp * (next.hours - cur.hours) / 24.0;
+            // Wind the fire is spreading under in this window, as a grid vector.
+            let toward = (cur.from_deg + wind_rot + 90.0).to_radians();
+            let (wy, wx) = toward.sin_cos();
+            let n_paint = line_budget.floor() as usize;
+            if n_paint > 0 {
+                let mut cands: Vec<(f64, usize)> = Vec::new();
+                for i in 0..total {
+                    let t = grid.cell_type(i);
+                    if t == burning || t == burned || t == inactive || t == line_type {
+                        continue;
+                    }
+                    let (x, y) = ((i % width) as i64, (i / width) as i64);
+                    let mut edge = false;
+                    'nb: for dy in -1..=1i64 {
+                        for dx in -1..=1i64 {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+                            let (nx, ny) = (x + dx, y + dy);
+                            if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                                continue;
+                            }
+                            if grid.cell_type(ny as usize * width + nx as usize) == burning {
+                                edge = true;
+                                break 'nb;
+                            }
+                        }
+                    }
+                    if edge {
+                        let (rx, ry) = (x as f64 - cx, y as f64 - cy);
+                        // Heel-first: distance to ignition. Upwind tactic: how far
+                        // up-wind of the fire centre the cell sits (most negative
+                        // dot product first); the head is last and, with a finite
+                        // budget, never reached.
+                        let key = if line_upwind { rx * wx + ry * wy } else { rx * rx + ry * ry };
+                        cands.push((key, i));
+                    }
+                }
+                cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
+                let k = n_paint.min(cands.len());
+                for &(_, i) in cands.iter().take(k) {
+                    grid.transition_state_and_buffer(i, &line_type);
+                }
+                line_budget -= k as f64;
+            }
+        }
     }
     arrival
 }
