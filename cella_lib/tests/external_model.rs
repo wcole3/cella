@@ -413,6 +413,7 @@ fn wildfire_grid(w: usize, h: usize, seed: u64, history_limit: usize) -> Grid2D 
         WildfireEnv {
             density: vec![],
             elevation,
+            ..Default::default()
         },
     )))
     .unwrap();

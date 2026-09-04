@@ -222,6 +222,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
         .map(|i| g.cell_type(i).as_str().to_string())
         .collect();
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: g.width,
         height: g.height,
@@ -1159,6 +1160,7 @@ fn wildfire_grid_256(spotting: bool) -> Grid2D {
         WildfireEnv {
             density: vec![],
             elevation,
+            ..Default::default()
         },
     )))
     .expect("wildfire scenario attaches");
@@ -1617,6 +1619,7 @@ fn stress_config_load_and_run() {
     }
 
     let cfg = CellaConfig::D2(Config2D {
+        ensemble: None,
         colors: Default::default(),
         width: w,
         height: h,

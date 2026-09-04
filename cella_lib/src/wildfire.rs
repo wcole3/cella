@@ -34,6 +34,8 @@
 //! landing distance along the wind vector (Sardoy et al.) and is delivered
 //! through [`ModelEvent`]s.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::external::{
@@ -178,6 +180,14 @@ pub struct WildfireParams {
 pub struct WildfireEnv {
     pub density: Vec<f32>,
     pub elevation: Vec<f32>,
+    /// Optional per-cell wind, eastward component in m/s (meteorological
+    /// `u`). Empty = use the uniform `wind_speed` / `wind_from_deg` params.
+    /// Set together with `wind_v`; see [`WildfireModel::set_wind_field`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wind_u: Vec<f32>,
+    /// Optional per-cell wind, northward component in m/s (meteorological `v`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wind_v: Vec<f32>,
 }
 
 /// State derived from params + env + grid at attach time. Never serialized;
@@ -187,7 +197,12 @@ struct WildfireDerived {
     /// `p0 * veg_factor * density` per cell; `0.0` marks non-fuel.
     p_base: Vec<f32>,
     /// `exp(slope_a * slope_angle_deg)` per (cell, neighbor j); length `8·w·h`.
-    slope: Vec<f32>,
+    /// Shared between clones (ensemble members) — it depends only on the
+    /// static elevation layer and `slope_a`, and is the largest buffer here.
+    slope: Arc<Vec<f32>>,
+    /// Per-cell wind factors, `8·w·h`, present only when `env.wind_u/v` are
+    /// set; otherwise the uniform `dir_factors()` apply to every cell.
+    wind_factors: Vec<f32>,
     /// The eight Moore offsets, in `neighborhood_offsets` order.
     offsets: [(i32, i32); 8],
     /// Linear index offsets matching `offsets` for the interior fast path.
@@ -303,6 +318,13 @@ impl WildfireModel {
         let v = self.params.wind_speed;
         let theta_w = wind_toward_grid_deg(self.params.wind_from_deg).to_radians();
         let (wy, wx) = theta_w.sin_cos();
+        self.factors_for_vector(wx, wy, v)
+    }
+
+    /// The eight factors for a wind of speed `v` blowing along the unit grid
+    /// vector `(wx, wy)` (+x right, +y down). Shared by the uniform path and
+    /// the per-cell field so both use identical arithmetic.
+    fn factors_for_vector(&self, wx: f64, wy: f64, v: f64) -> [f32; 8] {
         let mut f = [0.0f32; 8];
         for (j, &(dx, dy)) in self.derived.offsets.iter().enumerate() {
             // Spread direction: from the burning neighbor toward this cell.
@@ -313,6 +335,106 @@ impl WildfireModel {
             f[j] = (wind / norm) as f32;
         }
         f
+    }
+
+    /// Grid unit vector and speed of the wind at cell `idx` from the per-cell
+    /// field. `u` is eastward (+x), `v` northward (−y on a north-up grid).
+    fn cell_wind(&self, idx: usize) -> (f64, f64, f64) {
+        let u = f64::from(self.env.wind_u[idx]);
+        let v = f64::from(self.env.wind_v[idx]);
+        let speed = u.hypot(v);
+        if speed <= 0.0 {
+            (1.0, 0.0, 0.0)
+        } else {
+            (u / speed, -v / speed, speed)
+        }
+    }
+
+    /// Rebuild the per-cell wind factor table from `env.wind_u/v` (no-op when
+    /// the field is empty).
+    fn rebuild_wind_factors(&mut self) {
+        let n = self.derived.p_base.len();
+        if self.env.wind_u.len() != n || self.env.wind_v.len() != n {
+            self.derived.wind_factors = Vec::new();
+            return;
+        }
+        let mut table = vec![0.0f32; n * 8];
+        for idx in 0..n {
+            let (wx, wy, v) = self.cell_wind(idx);
+            table[idx * 8..idx * 8 + 8].copy_from_slice(&self.factors_for_vector(wx, wy, v));
+        }
+        self.derived.wind_factors = table;
+    }
+
+    /// Replace the per-cell wind field on an attached model (m/s, `u`
+    /// eastward, `v` northward, one value per cell) and rebuild the factor
+    /// table. Pass two empty slices to go back to the uniform wind. This is
+    /// how a terrain-adjusted field (see [`crate::wind_field`]) or a gridded
+    /// forecast reaches the kernel; `wind_speed` / `wind_from_deg` are
+    /// ignored while a field is set.
+    pub fn set_wind_field(&mut self, u: &[f32], v: &[f32]) -> Result<(), ModelError> {
+        let n = self.derived.p_base.len();
+        if n == 0 {
+            return Err(ModelError::InvalidParam(
+                "set_wind_field needs an attached model".into(),
+            ));
+        }
+        if u.is_empty() && v.is_empty() {
+            self.env.wind_u = Vec::new();
+            self.env.wind_v = Vec::new();
+            self.derived.wind_factors = Vec::new();
+            return Ok(());
+        }
+        for (layer, len) in [("wind_u", u.len()), ("wind_v", v.len())] {
+            if len != n {
+                return Err(ModelError::LayerLength {
+                    layer,
+                    expected: n,
+                    got: len,
+                });
+            }
+        }
+        self.env.wind_u = u.to_vec();
+        self.env.wind_v = v.to_vec();
+        self.rebuild_wind_factors();
+        Ok(())
+    }
+
+    /// Whether a per-cell wind field is active.
+    pub fn has_wind_field(&self) -> bool {
+        !self.derived.wind_factors.is_empty()
+    }
+
+    /// Set one cell's density multiplier on an attached model and refresh its
+    /// base probability. Density multiplies `p0 × veg_factor`, so `0.2` on a
+    /// cell is "this fuel is five times harder to ignite" — the way a
+    /// retardant drop or a wet line is represented (PROPAGATOR raises fuel
+    /// moisture to a prescribed level on treated cells; here the same effect
+    /// is a multiplier). Unlike painting a type, the cell keeps its fuel
+    /// class and can be restored by setting the density back to `1.0`.
+    pub fn set_density(&mut self, idx: usize, density: f32) -> Result<(), ModelError> {
+        let n = self.derived.p_base.len();
+        if idx >= n {
+            return Err(ModelError::InvalidParam(format!(
+                "set_density: cell {idx} is outside the attached grid of {n} cells"
+            )));
+        }
+        if density.is_nan() || density < 0.0 {
+            return Err(ModelError::InvalidParam(format!(
+                "set_density: {density} is not a non-negative multiplier"
+            )));
+        }
+        if self.env.density.is_empty() {
+            self.env.density = vec![1.0; n];
+        }
+        self.env.density[idx] = density;
+        let slot = self.derived.fuel_slot[idx];
+        self.derived.p_base[idx] = if slot == u16::MAX {
+            0.0
+        } else {
+            self.derived.fuels[slot as usize].1 * density
+        };
+        Ok(())
     }
 
     /// Sample a spot-fire landing cell for a burning cell, if any.
@@ -331,7 +453,13 @@ impl WildfireModel {
         let dist = spot.median_distance * (spot.sigma * z).exp();
         let jitter = (2.0 * f64::from(cell_rand(seed, ctx.step, iu, STREAM_ANGLE)) - 1.0)
             * spot.angle_jitter_deg;
-        let angle = (wind_toward_grid_deg(self.params.wind_from_deg) + jitter).to_radians();
+        let base_deg = if self.has_wind_field() {
+            let (wx, wy, _) = self.cell_wind(idx);
+            wy.atan2(wx).to_degrees()
+        } else {
+            wind_toward_grid_deg(self.params.wind_from_deg)
+        };
+        let angle = (base_deg + jitter).to_radians();
         let (ay, ax) = angle.sin_cos();
         let tx = x as f64 + dist * ax;
         let ty = y as f64 + dist * ay;
@@ -679,17 +807,15 @@ impl ExternalModel for WildfireModel {
                 ));
             }
         }
-        for (name, len) in [
+        for (layer, len) in [
             ("density", self.env.density.len()),
             ("elevation", self.env.elevation.len()),
+            ("wind_u", self.env.wind_u.len()),
+            ("wind_v", self.env.wind_v.len()),
         ] {
             if len != 0 && len != n {
                 return Err(ModelError::LayerLength {
-                    layer: if name == "density" {
-                        "density"
-                    } else {
-                        "elevation"
-                    },
+                    layer,
                     expected: n,
                     got: len,
                 });
@@ -741,7 +867,8 @@ impl ExternalModel for WildfireModel {
 
         self.derived = WildfireDerived {
             p_base: Vec::new(),
-            slope: Vec::new(),
+            slope: Arc::new(Vec::new()),
+            wind_factors: Vec::new(),
             offsets,
             lin,
             burning,
@@ -785,7 +912,8 @@ impl ExternalModel for WildfireModel {
                 }
             }
         }
-        self.derived.slope = slope;
+        self.derived.slope = Arc::new(slope);
+        self.rebuild_wind_factors();
         Ok(())
     }
 
@@ -899,12 +1027,19 @@ impl ExternalModel for WildfireModel {
                     let idx = y * width + x;
                     let local = idx - start;
                     let cur = cells[idx];
+                    // Uniform wind: the chunk's eight factors. Per-cell field:
+                    // this cell's row of the precomputed table.
+                    let dir_cell: &[f32; 8] = if d.wind_factors.is_empty() {
+                        &dir
+                    } else {
+                        d.wind_factors[idx * 8..idx * 8 + 8].try_into().unwrap()
+                    };
                     let new_type = if row_interior && x >= 1 && x + 1 < width {
-                        self.next_type(ctx, idx, local, cur, &dir, |j| {
+                        self.next_type(ctx, idx, local, cur, dir_cell, |j| {
                             cells[idx.wrapping_add_signed(d.lin[j])]
                         })
                     } else {
-                        self.next_type(ctx, idx, local, cur, &dir, |j| {
+                        self.next_type(ctx, idx, local, cur, dir_cell, |j| {
                             let (dx, dy) = d.offsets[j];
                             let (nx, ny) = (x as i64 + dx as i64, y as i64 + dy as i64);
                             if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
@@ -1195,6 +1330,7 @@ mod tests {
             WildfireEnv {
                 density: vec![1.0; 3],
                 elevation: vec![],
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -1210,6 +1346,7 @@ mod tests {
             WildfireEnv {
                 density: vec![],
                 elevation: vec![0.0; 5],
+                ..Default::default()
             },
         );
         assert!(matches!(
@@ -1242,6 +1379,7 @@ mod tests {
         let env = WildfireEnv {
             density: vec![1.0, 2.0, 1.0, 1.0],
             elevation: vec![],
+            ..Default::default()
         };
         let m = attach_on(WildfireModel::new(p, env), 2, 2, &cells);
         let pb = &m.derived.p_base;
@@ -1308,6 +1446,7 @@ mod tests {
                 WildfireEnv {
                     density: vec![],
                     elevation: elev,
+                    ..Default::default()
                 },
             ),
             3,
@@ -1624,6 +1763,7 @@ mod tests {
         let env = WildfireEnv {
             density: vec![1.0, 0.5, 1.0, 1.0, 2.0, 0.25, 1.0, 1.0, 0.8],
             elevation: vec![],
+            ..Default::default()
         };
         let mut m = attach_on(WildfireModel::new(p.clone(), env.clone()), 3, 3, &cells);
         m.set_p0(0.12).unwrap();
@@ -1643,6 +1783,79 @@ mod tests {
         // Out-of-range p0 is refused just like attach refuses it.
         assert!(m.set_p0(1.5).is_err());
         assert_eq!(m.params.p0, 0.12, "a refused write changes nothing");
+    }
+
+    #[test]
+    fn slope_table_is_shared_between_clones() {
+        // Ensemble members clone an attached model; the slope table depends
+        // only on static elevation, so clones must share one allocation.
+        let cells = forest_grid(3, 3);
+        let env = WildfireEnv {
+            density: vec![],
+            elevation: (0..9).map(|i| i as f32 * 10.0).collect(),
+            wind_u: vec![],
+            wind_v: vec![],
+        };
+        let m = attach_on(WildfireModel::new(base_params(), env), 3, 3, &cells);
+        let c = m.clone();
+        assert!(Arc::ptr_eq(&m.derived.slope, &c.derived.slope));
+        assert_eq!(m.derived.slope.len(), 72);
+    }
+
+    #[test]
+    fn per_cell_wind_field_drives_each_cell_by_its_own_wind() {
+        let cells = forest_grid(3, 3);
+        let mut m = attach_on(WildfireModel::new(base_params(), WildfireEnv::default()), 3, 3, &cells);
+        assert!(!m.has_wind_field());
+        // Cell 0: strong east wind (u > 0 blows toward +x); cell 8: strong
+        // wind blowing south (v < 0 = toward +y on a north-up grid).
+        let mut u = vec![0.0f32; 9];
+        let mut v = vec![0.0f32; 9];
+        u[0] = 8.0;
+        v[8] = -8.0;
+        m.set_wind_field(&u, &v).unwrap();
+        assert!(m.has_wind_field());
+        let offs = m.derived.offsets;
+        let west = offs.iter().position(|&o| o == (-1, 0)).unwrap();
+        let east = offs.iter().position(|&o| o == (1, 0)).unwrap();
+        let north = offs.iter().position(|&o| o == (0, -1)).unwrap();
+        let south = offs.iter().position(|&o| o == (0, 1)).unwrap();
+        let f0 = &m.derived.wind_factors[0..8];
+        assert!(f0[west] > f0[east], "east wind: fire to the west spreads best");
+        let f8 = &m.derived.wind_factors[64..72];
+        assert!(f8[north] > f8[south], "south-blowing wind: fire to the north spreads best");
+        // Calm cells get the calm kernel: cardinals 1, diagonals 1/sqrt2.
+        let f4 = &m.derived.wind_factors[32..40];
+        assert!((f4[west] - 1.0).abs() < 1e-6 && (f4[east] - 1.0).abs() < 1e-6);
+        // The uniform path is untouched and identical to before.
+        let mut p = base_params();
+        p.wind_speed = 8.0;
+        p.wind_from_deg = 270.0;
+        let mu = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        assert_eq!(mu.dir_factors(), <[f32; 8]>::try_from(f0).unwrap(), "same arithmetic");
+        // Wrong lengths are refused; empty slices clear the field.
+        assert!(m.set_wind_field(&u[..4], &v).is_err());
+        m.set_wind_field(&[], &[]).unwrap();
+        assert!(!m.has_wind_field());
+    }
+
+    #[test]
+    fn set_density_is_a_paintable_multiplier_that_can_be_undone() {
+        let cells = forest_grid(2, 2);
+        let mut m = attach_on(WildfireModel::new(base_params(), WildfireEnv::default()), 2, 2, &cells);
+        let before = m.derived.p_base[1];
+        assert!(before > 0.0);
+        m.set_density(1, 0.2).unwrap();
+        assert!((m.derived.p_base[1] - before * 0.2).abs() < 1e-7, "retardant: five times harder to ignite");
+        assert_eq!(m.env.density.len(), 4, "the layer is materialised on first paint");
+        m.set_density(1, 1.0).unwrap();
+        assert_eq!(m.derived.p_base[1], before, "restored exactly");
+        assert!(m.set_density(9, 0.5).is_err());
+        assert!(m.set_density(0, -1.0).is_err());
+        // Non-fuel cells stay non-fuel whatever the density.
+        m.on_paint(0, CellType::inactive());
+        m.set_density(0, 3.0).unwrap();
+        assert_eq!(m.derived.p_base[0], 0.0);
     }
 
     #[test]
