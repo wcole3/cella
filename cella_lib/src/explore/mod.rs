@@ -27,14 +27,23 @@
 //! [`genome`] for how knobs become genes, [`metrics`] for how a run is
 //! scored, and the two engines.
 
+pub mod archive;
 pub mod driver;
 pub mod ensemble;
+pub mod evolve;
 pub mod genome;
 pub mod metrics;
 pub mod sim;
 
+pub use archive::{
+    Archive, ArchiveReport, ArchiveSnapshot, ArchiveStats, Descriptor, DescriptorSpec, Elite,
+    SnapshotCell, Thumbnail, thumbnail_from_rows,
+};
 pub use driver::{Forcing, MemberDriver, MemberState};
 pub use ensemble::{AssimilationReport, Ensemble, EnsembleConfig, Member};
+pub use evolve::{
+    Evolution, EvolveConfig, GenerationReport, Individual, InitialCondition, Search, Selection,
+};
 pub use genome::{Gene, GeneKind, GeneSpace, GeneSpec, Genome, Scale};
 pub use metrics::{Fitness, Goal, MaskScore, Metric, Objective, When};
 pub use sim::Sim;
