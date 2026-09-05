@@ -13,14 +13,31 @@
 //! members keep simulating. Every score at t_k is a forecast from the state
 //! assimilated at t_{k-1}: the mask at t_k is never seen before it is scored.
 //!
+//! `evolve` mode (validation E36) — fit first: a genetic algorithm
+//! ([`cella_lib::Evolution`] with the same driver) searches the genes for the
+//! settings whose single run best matches the first `SMC_FIT_DAYS` observed
+//! perimeters (mean IoU over those days). The winner is then run forward as
+//! an `open` ensemble (every member = the fitted genes, its own seed) and
+//! scored on every observation, so the days after the fit window are honest
+//! forecasts and directly comparable with `assim` on the same days.
+//!
+//! `map` mode (validation E37) — MAP-Elites illumination of the spread genes
+//! (`model.p0`, `model.burn_duration`, `wind_scale`): no objective, two
+//! behaviour axes (growth of the burned area, elongation of its shape) over
+//! `SMC_MAP_DAYS` days of the scenario's weather. The report is the archive:
+//! which shapes and sizes the model can produce at all, next to the observed
+//! perimeter's own growth and elongation on the same days.
+//!
 //! Usage (from cella_lib/):
-//!   cargo run --release --example wildfire_smc -- <scenario_dir> <members> <open|assim> <out.json>
-//! Env: SMC_BETA (10), SMC_SIGMA (0.2), SMC_IMMIGRANTS (0), SMC_SEED (0),
+//!   cargo run --release --example wildfire_smc -- <scenario_dir> <members> <open|assim|evolve|map> <out.json>
+//! Env: SMC_BETA (10), SMC_SIGMA (0.2), SMC_IMMIGRANTS (0), SMC_CROSSOVER (0), SMC_SEED (0),
 //!      SMC_WIND_ROT_DEG (0), SMC_ASSIM_EVERY (1),
 //!      SMC_PRIOR=path.json (a JSON array of genes replacing the default list),
 //!      SMC_CONTAIN=1 (add the containment genes `contain_a`/`contain_b`, so
 //!      the driver draws a containment once a day — the E28 operator),
-//!      SMC_TAU_OFF=1 (drop the `tau_days` gene so containment is the only stop).
+//!      SMC_TAU_OFF=1 (drop the `tau_days` gene so containment is the only stop),
+//!      SMC_FIT_DAYS (3), SMC_GENERATIONS (20 evolve / 30 map), SMC_POP (24 evolve /
+//!      32 map batch), SMC_REPEATS (2), SMC_MAP_DAYS (5).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -29,14 +46,20 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use std::sync::Arc;
+
 use cella_lib::config::CellaConfig;
+use cella_lib::explore::archive::{ArchiveReport, DescriptorSpec};
 use cella_lib::explore::driver::Forcing;
-use cella_lib::explore::metrics::{brier, iou, mean_sd};
+use cella_lib::explore::metrics::{Fitness, When, brier, elongation, fraction, iou, mean_sd};
+use cella_lib::explore::{Search, Sim};
+use cella_lib::wildfire::driver::WeatherWindow;
 use cella_lib::wildfire::driver::{
     FORCING_HOURS, FORCING_WIND_FROM, FORCING_WIND_SPEED, GENE_CONTAIN_A, GENE_CONTAIN_B,
     GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED,
 };
 use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue, WildfireDriver};
+use cella_lib::{Evolution, EvolveConfig, Grid2D, Metric, Rule2D};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -115,6 +138,108 @@ struct Report {
     mean_brier_ensemble: f64,
     mean_brier_radial: f64,
     final_genomes: Vec<BTreeMap<String, ParamValue>>,
+    /// Present in `evolve` mode: what the fit found before the forecast ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fit: Option<FitReport>,
+}
+
+/// The offline fit of `evolve` mode.
+#[derive(Serialize)]
+struct FitReport {
+    fit_days: usize,
+    fit_steps: u64,
+    population: usize,
+    generations: usize,
+    repeats: usize,
+    /// Mean IoU over the fit days of the best genome's evaluation runs.
+    best_fit_iou: f64,
+    best_genome: BTreeMap<String, ParamValue>,
+    /// `(generation, best, mean)` per generation.
+    log: Vec<(u64, f64, f64)>,
+}
+
+/// The `map` mode's report: the archive plus the observed fire's own place
+/// in the same descriptor space.
+#[derive(Serialize)]
+struct MapReport {
+    scenario: String,
+    days: u64,
+    steps: u64,
+    genes: Vec<GeneSpec>,
+    generations: usize,
+    batch: usize,
+    archive: ArchiveReport,
+    /// `(hours, growth, elongation)` of the observed burned set at each
+    /// observation up to `days`.
+    observed: Vec<(f64, f64, f64)>,
+    /// `(generation, coverage, qd_score)` per generation.
+    log: Vec<(u64, f64, f64)>,
+}
+
+/// Fitness for `evolve` mode: IoU against the observed perimeter at each of
+/// the fit days, averaged. Sampled every step; steps that are not an
+/// observation contribute nothing.
+struct ObsFitness {
+    /// `(step, hours)` of every observation inside the fit window.
+    obs: Vec<(u64, f64)>,
+    arrival: Vec<f64>,
+    burnt: [CellType; 2],
+}
+
+impl Fitness for ObsFitness {
+    fn sample(&self, sim: &Sim) -> f64 {
+        let step = sim.step_count();
+        match self.obs.iter().find(|(s, _)| *s == step) {
+            Some((_, hours)) => iou(&sim.mask(&self.burnt), &mask_at(&self.arrival, *hours)),
+            None => f64::NAN,
+        }
+    }
+
+    fn every_step(&self) -> bool {
+        true
+    }
+
+    fn aggregate(&self, samples: &[f64]) -> f64 {
+        let hits: Vec<f64> = samples.iter().copied().filter(|v| v.is_finite()).collect();
+        if hits.is_empty() {
+            0.0
+        } else {
+            hits.iter().sum::<f64>() / hits.len() as f64
+        }
+    }
+}
+
+/// A gene pinned to one value, so an `open` ensemble runs one genome with
+/// many seeds.
+fn pinned(key: &str, value: &ParamValue) -> GeneSpec {
+    let v = match value {
+        ParamValue::Float(x) => *x,
+        ParamValue::Int(i) => *i as f64,
+        other => panic!("cannot pin a {other:?} gene"),
+    };
+    GeneSpec::range(key, v, v)
+}
+
+/// The scenario's wind as a driver schedule (hours are absolute).
+fn weather_schedule(sc: &Scenario, rot: f64) -> Vec<WeatherWindow> {
+    sc.wind
+        .iter()
+        .map(|w| WeatherWindow {
+            hours: w.hours,
+            speed_ms: w.speed_ms,
+            from_deg: w.from_deg + rot,
+        })
+        .collect()
+}
+
+/// A grid holding just the observed burned set, for the shape metrics.
+fn observed_sim(mask: &[bool], w: usize, h: usize) -> Sim {
+    let burning = CellType::new("Burning");
+    let cells = mask
+        .iter()
+        .map(|&b| if b { burning } else { CellType::inactive() })
+        .collect();
+    Sim::D2(Grid2D::new(w, h, 0, cells, Rule2D { subrules: vec![] }))
 }
 
 fn load<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
@@ -236,18 +361,51 @@ fn main() {
     assert_eq!(truth.format_version, 2, "unknown truth format");
     let total = sc.grid.width * sc.grid.height;
     let burnt = [CellType::new("Burning"), CellType::new("BurnedOut")];
+    let steps_per_day = (24.0 * sc.steps_per_hour).round().max(1.0) as u64;
+    let seed = envf("SMC_SEED", 0.0) as u64;
+
+    if mode == "map" {
+        run_map(
+            &sc,
+            &truth,
+            &cfg,
+            &out,
+            &genes,
+            rot,
+            steps_per_day,
+            seed,
+            &burnt,
+        );
+        return;
+    }
+
+    let mut fit = None;
+    if mode == "evolve" {
+        let (report, best) =
+            fit_first_days(&sc, &truth, &cfg, &genes, rot, steps_per_day, seed, &burnt);
+        eprintln!(
+            "fit over {} days: best mean IoU {:.3}, genome {:?}",
+            report.fit_days, report.best_fit_iou, best
+        );
+        genes = genes
+            .iter()
+            .map(|g| pinned(&g.key, &best[&g.key]))
+            .collect();
+        fit = Some(report);
+    }
 
     let ens_cfg = EnsembleConfig {
         members,
-        seed: envf("SMC_SEED", 0.0) as u64,
+        seed,
         genes: genes.clone(),
         track: vec!["Burning".into(), "BurnedOut".into()],
         beta: envf("SMC_BETA", 10.0),
         sigma: envf("SMC_SIGMA", 0.2),
         immigrants: envf("SMC_IMMIGRANTS", 0.0),
+        crossover: envf("SMC_CROSSOVER", 0.0),
         driver: Some(Box::new(WildfireDriver {
             // One containment draw per simulated day.
-            steps_per_day: (24.0 * sc.steps_per_hour).round().max(1.0) as u64,
+            steps_per_day,
             weather: Vec::new(),
         })),
     };
@@ -406,6 +564,7 @@ fn main() {
         mean_brier_radial: mean(&|s| s.brier_radial),
         final_genomes: ens.genomes(),
         scores,
+        fit,
     };
     if let Some(parent) = out.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -418,6 +577,219 @@ fn main() {
         report.mean_radial_iou,
         report.mean_brier_ensemble,
         report.mean_brier_radial,
+        out.display()
+    );
+}
+
+/// Observation steps and hours, in order, skipping the ignition (index 0).
+fn observation_steps(sc: &Scenario, truth: &Truth) -> Vec<(u64, f64)> {
+    truth
+        .observed_at
+        .iter()
+        .skip(1)
+        .map(|&h| ((h * sc.steps_per_hour).round() as u64, h))
+        .collect()
+}
+
+fn env_f64(key: &str, default: f64) -> f64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// `evolve` mode, step one: a GA over `genes` scored on the first
+/// `SMC_FIT_DAYS` observations. Returns the fit report and the best genome.
+#[allow(clippy::too_many_arguments)]
+fn fit_first_days(
+    sc: &Scenario,
+    truth: &Truth,
+    cfg: &CellaConfig,
+    genes: &[GeneSpec],
+    rot: f64,
+    steps_per_day: u64,
+    seed: u64,
+    burnt: &[CellType; 2],
+) -> (FitReport, BTreeMap<String, ParamValue>) {
+    let fit_days = env_usize("SMC_FIT_DAYS", 3).max(1);
+    let obs: Vec<(u64, f64)> = observation_steps(sc, truth)
+        .into_iter()
+        .take(fit_days)
+        .collect();
+    let fit_steps = obs.last().map_or(steps_per_day, |o| o.0);
+    let fitness = ObsFitness {
+        obs,
+        arrival: truth.arrival_hours.clone(),
+        burnt: *burnt,
+    };
+    let evo_cfg = EvolveConfig {
+        population: env_usize("SMC_POP", 24),
+        generations: env_usize("SMC_GENERATIONS", 20),
+        seed,
+        genes: genes.to_vec(),
+        objective: None,
+        steps: fit_steps,
+        repeats: env_usize("SMC_REPEATS", 2),
+        driver: Some(Box::new(WildfireDriver {
+            steps_per_day,
+            weather: weather_schedule(sc, rot),
+        })),
+        ..EvolveConfig::default()
+    };
+    let template = cfg
+        .build_sim()
+        .expect("config builds a grid with its model");
+    let mut evo =
+        Evolution::with_fitness(template, &evo_cfg, Arc::new(fitness)).expect("evolution builds");
+    let mut log = Vec::new();
+    evo.run(evo_cfg.generations, |r| {
+        eprintln!(
+            "  gen {:2} best {:.3} mean {:.3} invalid {}",
+            r.generation, r.best, r.mean, r.invalid
+        );
+        log.push((r.generation, r.best, r.mean));
+    });
+    let best = evo.best().expect("at least one valid genome");
+    let named = evo.named(&best.genome);
+    (
+        FitReport {
+            fit_days,
+            fit_steps,
+            population: evo_cfg.population,
+            generations: evo_cfg.generations,
+            repeats: evo_cfg.repeats,
+            best_fit_iou: best.fitness,
+            best_genome: named.clone(),
+            log,
+        },
+        named,
+    )
+}
+
+/// `map` mode: MAP-Elites over the spread genes with growth × elongation
+/// axes and no objective, plus the observed fire in the same coordinates.
+#[allow(clippy::too_many_arguments)]
+fn run_map(
+    sc: &Scenario,
+    truth: &Truth,
+    cfg: &CellaConfig,
+    out: &Path,
+    genes: &[GeneSpec],
+    rot: f64,
+    steps_per_day: u64,
+    seed: u64,
+    burnt: &[CellType; 2],
+) {
+    let days = env_usize("SMC_MAP_DAYS", 5).max(1) as u64;
+    let steps = days * steps_per_day;
+    let types: Vec<String> = burnt.iter().map(|t| t.as_str().to_string()).collect();
+    let batch = env_usize("SMC_POP", 32);
+    let evo_cfg = EvolveConfig {
+        population: batch,
+        generations: env_usize("SMC_GENERATIONS", 30),
+        seed,
+        genes: genes.to_vec(),
+        objective: None,
+        search: Search::MapElites {
+            batch,
+            iso_line: true,
+        },
+        descriptors: vec![
+            // Growth is a share of the whole grid; a real fire over a few
+            // days is a few per cent of it, so the natural [-1, 1] would
+            // put every run in one bin.
+            DescriptorSpec {
+                metric: Metric::Growth {
+                    types: types.clone(),
+                },
+                when: When::End,
+                range: Some([0.0, env_f64("SMC_MAP_GROWTH_MAX", 0.1)]),
+                bins: 20,
+            },
+            DescriptorSpec {
+                metric: Metric::Elongation { types },
+                when: When::End,
+                range: Some([1.0, 4.0]),
+                bins: 20,
+            },
+        ],
+        thumbnails: false,
+        steps,
+        repeats: 1,
+        driver: Some(Box::new(WildfireDriver {
+            steps_per_day,
+            weather: weather_schedule(sc, rot),
+        })),
+        ..EvolveConfig::default()
+    };
+    let template = cfg
+        .build_sim()
+        .expect("config builds a grid with its model");
+    let mut evo = Evolution::new(template, &evo_cfg).expect("evolution builds");
+    let mut log = Vec::new();
+    evo.run(evo_cfg.generations, |r| {
+        if let Some(a) = &r.archive {
+            eprintln!(
+                "  gen {:2} elites {} coverage {:.2} qd {:.1} invalid {}",
+                r.generation, a.elites, a.coverage, a.qd_score, r.invalid
+            );
+            log.push((r.generation, a.coverage, a.qd_score));
+        }
+    });
+    let archive = evo
+        .archive()
+        .expect("map mode has an archive")
+        .to_report(false);
+
+    // The observed fire in the same coordinates: growth = burned fraction
+    // now minus at ignition; elongation of the burned set.
+    let burning = CellType::new("Burning");
+    let (w, h) = (sc.grid.width, sc.grid.height);
+    let start = fraction(
+        &observed_sim(&mask_at(&truth.arrival_hours, 0.0), w, h),
+        &[burning],
+    );
+    let observed: Vec<(f64, f64, f64)> = truth
+        .observed_at
+        .iter()
+        .skip(1)
+        .filter(|&&hh| hh <= days as f64 * 24.0 + 1e-6)
+        .map(|&hh| {
+            let sim = observed_sim(&mask_at(&truth.arrival_hours, hh), w, h);
+            (
+                hh,
+                fraction(&sim, &[burning]) - start,
+                elongation(&sim, &[burning]),
+            )
+        })
+        .collect();
+    let report = MapReport {
+        scenario: sc.id.clone(),
+        days,
+        steps,
+        genes: genes.to_vec(),
+        generations: evo_cfg.generations,
+        batch,
+        archive,
+        observed,
+        log,
+    };
+    if let Some(parent) = out.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(out, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    eprintln!(
+        "archive: {} elites, coverage {:.2}; observed (hours, growth, elongation) {:?} -> {}",
+        report.archive.stats.elites,
+        report.archive.stats.coverage,
+        report.observed,
         out.display()
     );
 }

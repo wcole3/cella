@@ -770,8 +770,12 @@ impl Evolution {
                 if let (Some(d), Some(n)) = (&self.config.driver, period)
                     && n > 0
                     && t.is_multiple_of(n)
-                    && d.period_end(&mut sim, genome, &self.space, &mut state, &mut period_rng)
+                    && (d.period_end(&mut sim, genome, &self.space, &mut state, &mut period_rng)
                         .is_err()
+                        // Re-read the driver's schedule at the period boundary
+                        // (see `Ensemble::step`).
+                        || d.apply(&mut sim, genome, &self.space, &self.config.forcing, &mut state)
+                            .is_err())
                 {
                     return Evaluation::invalid(dims);
                 }

@@ -1,0 +1,6 @@
+[
+ {"key": "model.p0", "range": [0.18, 0.32], "scale": "log"},
+ {"key": "model.burn_duration", "range": [11, 17]},
+ {"key": "wind_scale", "range": [0.5, 0.9]},
+ {"key": "tau_days", "range": [2.0, 100.0], "scale": "log"}
+]

@@ -164,6 +164,48 @@ pub fn bbox_fraction(sim: &Sim, types: &[CellType]) -> f64 {
     ((x1 - x0 + 1) * (y1 - y0 + 1)) as f64 / (w * h) as f64
 }
 
+/// Largest elongation reported; a single row of cells would be infinite.
+pub const MAX_ELONGATION: f64 = 10.0;
+
+/// How stretched the set of tracked cells is: the square root of the ratio
+/// of the two eigenvalues of its second-moment matrix (the same measure the
+/// wildfire validation calls "elongation", experiment E12). 1 means as wide
+/// as it is long in every direction (a disc, a square); 2 means twice as
+/// long as wide, whichever way it points. Clamped to `[1, MAX_ELONGATION]`;
+/// 1 when fewer than two cells are tracked.
+pub fn elongation(sim: &Sim, types: &[CellType]) -> f64 {
+    let (w, _) = sim.dims();
+    if w == 0 {
+        return 1.0;
+    }
+    let (mut n, mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
+    for (i, c) in sim.cells().iter().enumerate() {
+        if types.contains(c) {
+            let (x, y) = ((i % w) as f64, (i / w) as f64);
+            n += 1.0;
+            sx += x;
+            sy += y;
+            sxx += x * x;
+            syy += y * y;
+            sxy += x * y;
+        }
+    }
+    if n < 2.0 {
+        return 1.0;
+    }
+    let (mx, my) = (sx / n, sy / n);
+    // Add a twelfth per axis: each cell is a unit square, not a point, so a
+    // straight line of cells has a finite width.
+    let cxx = sxx / n - mx * mx + 1.0 / 12.0;
+    let cyy = syy / n - my * my + 1.0 / 12.0;
+    let cxy = sxy / n - mx * my;
+    let tr = cxx + cyy;
+    let det = (cxx * cyy - cxy * cxy).max(0.0);
+    let disc = (tr * tr / 4.0 - det).max(0.0).sqrt();
+    let (l1, l2) = (tr / 2.0 + disc, (tr / 2.0 - disc).max(1e-12));
+    (l1 / l2).sqrt().clamp(1.0, MAX_ELONGATION)
+}
+
 /// Centre of mass `(x, y)` of the cells in `types`, or `None` if there are none.
 pub fn centroid(cells: &[CellType], width: usize, types: &[CellType]) -> Option<(f64, f64)> {
     if width == 0 {
@@ -277,6 +319,11 @@ pub enum Metric {
     /// Bounding-box area of `types` as a fraction of the grid. Descriptor,
     /// range 0..1.
     BboxFraction { types: Vec<String> },
+    /// How stretched the tracked cells are: `√(λ₁/λ₂)` of their
+    /// second-moment (covariance) matrix, 1 for a disc or square, larger
+    /// for a streak, whatever its direction; clamped to `[1, 10]`, 1 when
+    /// fewer than two cells are tracked.
+    Elongation { types: Vec<String> },
     /// Mean per-step movement of the centre of mass of `types`, in cells.
     /// Descriptor, range 0..1 (a pattern cannot move faster than one cell a
     /// step; noisy small masses can, and are clamped).
@@ -309,6 +356,7 @@ impl Metric {
             | Metric::TargetMask { types, .. }
             | Metric::Series { types, .. }
             | Metric::BboxFraction { types }
+            | Metric::Elongation { types }
             | Metric::CentroidSpeed { types }
             | Metric::Growth { types } => types.iter().map(String::as_str).collect(),
             Metric::DensityClassification { types } => types.iter().map(String::as_str).collect(),
@@ -383,6 +431,7 @@ impl Metric {
             Metric::Entropy => [0.0, (sim.declared_types().len().max(2) as f64).log2()],
             Metric::Lifetime => [0.0, steps as f64],
             Metric::Growth { .. } => [-1.0, 1.0],
+            Metric::Elongation { .. } => [1.0, MAX_ELONGATION],
             Metric::Period { window } => [0.0, f64::from(*window / 2)],
         }
     }
@@ -405,6 +454,7 @@ impl Metric {
             }
             Metric::DensityClassification { types } => fraction(sim, &[CellType::new(&types[0])]),
             Metric::BboxFraction { types } => bbox_fraction(sim, &cell_types(types)),
+            Metric::Elongation { types } => elongation(sim, &cell_types(types)),
             Metric::CentroidSpeed { types } => centroid_speed(sim, &cell_types(types)),
             // Keep 52 bits so the fingerprint survives the trip through f64.
             Metric::Period { .. } => (state_hash(sim) >> 12) as f64,
@@ -1019,5 +1069,36 @@ mod tests {
             serde_json::from_str::<Objective>(r#"{"metric": "fraction"}"#).is_err(),
             "fraction needs types"
         );
+    }
+
+    #[test]
+    fn elongation_is_one_for_blobs_and_large_for_streaks() {
+        let alive = CellType::from("Alive");
+        // A 4x4 block: as wide as it is long.
+        let block: Vec<(usize, usize)> = (2..6).flat_map(|y| (2..6).map(move |x| (x, y))).collect();
+        let e = elongation(&life(12, 12, &block), &[alive]);
+        assert!((e - 1.0).abs() < 1e-9, "{e}");
+        // A horizontal line of 10 cells, and the same line diagonally.
+        let row: Vec<(usize, usize)> = (1..11).map(|x| (x, 5)).collect();
+        let e_row = elongation(&life(12, 12, &row), &[alive]);
+        assert!(e_row > 5.0 && e_row <= MAX_ELONGATION, "{e_row}");
+        let diag: Vec<(usize, usize)> = (1..11).map(|x| (x, x)).collect();
+        let e_diag = elongation(&life(12, 12, &diag), &[alive]);
+        assert!(e_diag > 5.0, "direction does not matter: {e_diag}");
+        // A 2:1 rectangle is about 2.
+        let rect: Vec<(usize, usize)> = (2..10).flat_map(|x| (4..8).map(move |y| (x, y))).collect();
+        let e_rect = elongation(&life(12, 12, &rect), &[alive]);
+        assert!((e_rect - 2.0).abs() < 0.15, "{e_rect}");
+        // Fewer than two cells: 1.
+        assert_eq!(elongation(&life(12, 12, &[(3, 3)]), &[alive]), 1.0);
+        assert_eq!(elongation(&life(12, 12, &[]), &[alive]), 1.0);
+        // As a metric: descriptor, range [1, 10], sampled.
+        let m = Metric::Elongation {
+            types: vec!["Alive".into()],
+        };
+        assert!(m.is_descriptor());
+        assert_eq!(m.range(&life(12, 12, &row), 10), [1.0, MAX_ELONGATION]);
+        assert_eq!(m.sample(&life(12, 12, &row)), e_row);
+        assert_eq!(m.type_names(), vec!["Alive"]);
     }
 }

@@ -342,3 +342,106 @@ fn a_1d_config_takes_both_blocks_and_bad_blocks_are_reported_not_panicked() {
     assert!(none.build_ensemble().is_none() && none.build_evolution().is_none());
     let _ = Metric::Activity;
 }
+
+/// A driver whose `apply` counts its own calls into the member state and
+/// makes the model faster each time, so a re-application is observable.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct RampDriver {
+    period: u64,
+}
+
+#[typetag::serde(name = "explore_test_ramp_driver")]
+impl MemberDriver for RampDriver {
+    fn owned_keys(&self) -> Vec<String> {
+        vec!["model.rate".into()]
+    }
+
+    fn period_steps(&self) -> Option<u64> {
+        (self.period > 0).then_some(self.period)
+    }
+
+    fn apply(
+        &self,
+        sim: &mut Sim,
+        _genome: &Genome,
+        _space: &GeneSpace,
+        _forcing: &Forcing,
+        state: &mut MemberState,
+    ) -> Result<(), ModelError> {
+        let n = state.get("applies").unwrap_or(0.0) + 1.0;
+        state.set("applies", n);
+        // First application: frozen. Every later one: everything advances.
+        let rate = if n >= 2.0 { 1.0 } else { 0.0 };
+        sim.set_param("model.rate", ParamValue::Float(rate))
+    }
+
+    fn boxed_clone(&self) -> Box<dyn MemberDriver> {
+        Box::new(self.clone())
+    }
+}
+
+#[test]
+fn drivers_are_reapplied_at_every_period_boundary_in_both_engines() {
+    // Ensemble: after two periods the driver has been applied three times
+    // (construction + one per boundary) and the model runs.
+    let json = config_json(
+        r#""ensemble": {
+            "members": 2, "seed": 1, "genes": [], "track": ["A"],
+            "driver": {"explore_test_ramp_driver": {"period": 3}}
+        }"#,
+    );
+    let cfg: CellaConfig = serde_json::from_str(&json).unwrap();
+    let mut ens = cfg.build_ensemble().unwrap().unwrap();
+    let start = ens.state_probability(&[CellType::new("A")]);
+    ens.step_n(3).unwrap();
+    let applies = |e: &cella_lib::Ensemble| {
+        e.members()
+            .iter()
+            .map(|m| m.state.get("applies").unwrap_or(0.0))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        applies(&ens),
+        vec![2.0, 2.0],
+        "construction + first boundary"
+    );
+    assert_eq!(
+        ens.state_probability(&[CellType::new("A")]),
+        start,
+        "frozen for the first period"
+    );
+    // Two more steps, not three: the test model cycles A -> B -> C -> A, so a
+    // full period would land back on the start state.
+    ens.step_n(2).unwrap();
+    assert_eq!(applies(&ens), vec![2.0, 2.0]);
+    assert_ne!(
+        ens.state_probability(&[CellType::new("A")]),
+        start,
+        "moving after the re-application"
+    );
+
+    // Evolution: the same genome scores differently with and without period
+    // boundaries, because only the boundary re-applies the driver.
+    let block = |period: u64| {
+        format!(
+            r#""evolve": {{
+                "population": 4, "elite": 1, "generations": 1, "repeats": 1, "steps": 5, "seed": 1,
+                "genes": [{{"key": "model.rate"}}],
+                "objective": {{"metric": "activity", "goal": "maximise"}},
+                "driver": {{"explore_test_ramp_driver": {{"period": {period}}}}}
+            }}"#
+        )
+    };
+    let with: CellaConfig = serde_json::from_str(&config_json(&block(3))).unwrap();
+    let without: CellaConfig = serde_json::from_str(&config_json(&block(0))).unwrap();
+    let evo_with = with.build_evolution().unwrap().unwrap();
+    let evo_without = without.build_evolution().unwrap().unwrap();
+    let genome = evo_with.population()[0].genome.clone();
+    let frozen = evo_without.evaluate(&genome, 0, 0);
+    let moving = evo_with.evaluate(&genome, 0, 0);
+    assert!(frozen.is_finite() && moving.is_finite());
+    assert_ne!(
+        frozen, moving,
+        "re-application at the boundary changes the run"
+    );
+}

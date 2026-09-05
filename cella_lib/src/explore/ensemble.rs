@@ -75,6 +75,11 @@ pub struct EnsembleConfig {
     /// population never collapses onto one genome.
     #[serde(default = "default_immigrants")]
     pub immigrants: f64,
+    /// Chance that a resampled child's genome is a cross of two parents
+    /// (uniform per gene) before it is mutated. 0 (the default) keeps the
+    /// classic particle filter: children inherit one parent's genome.
+    #[serde(default)]
+    pub crossover: f64,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Box<dyn MemberDriver>>,
@@ -103,6 +108,7 @@ impl Default for EnsembleConfig {
             beta: default_beta(),
             sigma: default_sigma(),
             immigrants: default_immigrants(),
+            crossover: 0.0,
             driver: None,
         }
     }
@@ -352,6 +358,26 @@ impl Ensemble {
             && self.step_count().is_multiple_of(n)
         {
             self.period_end()?;
+            // A period boundary is also when a driver re-reads its own
+            // schedule (a weather window that changed with the clock), so
+            // the current forcing is applied again.
+            self.reapply_driver()?;
+        }
+        Ok(())
+    }
+
+    /// Run the driver's `apply` on every member with the forcing as it is.
+    fn reapply_driver(&mut self) -> Result<(), ModelError> {
+        if let Some(d) = &self.config.driver {
+            for m in &mut self.members {
+                d.apply(
+                    &mut m.sim,
+                    &m.genome,
+                    &self.space,
+                    &self.forcing,
+                    &mut m.state,
+                )?;
+            }
         }
         Ok(())
     }
@@ -527,6 +553,12 @@ impl Ensemble {
                 self.space.sample(&mut self.rng)
             } else {
                 let mut g = parent_genome.clone();
+                // Crossover draws nothing when it is off, so a config
+                // without it reproduces the pre-crossover results exactly.
+                if self.config.crossover > 0.0 && self.rng.uniform() < self.config.crossover {
+                    let other = parents[self.rng.below(m)];
+                    g = self.space.crossover(&mut self.rng, &g, &parent_info[other].0);
+                }
                 self.space.mutate(&mut self.rng, &mut g, self.config.sigma);
                 g
             };
@@ -877,5 +909,66 @@ mod tests {
             "the old prior block is refused"
         );
         assert!(serde_json::from_str::<EnsembleConfig>(r#"{"members": "many"}"#).is_err());
+    }
+
+    #[test]
+    fn crossover_mixes_two_parents_and_is_off_by_default() {
+        // Two genes, no mutation, no immigrants: every child gene must equal
+        // some parent's value, and with crossover on some child must take one
+        // gene from each of two different parents.
+        let base = EnsembleConfig {
+            seed: 3,
+            // Tiny, not zero (zero is refused): an integer nudge rounds to 0.
+            sigma: 1e-9,
+            immigrants: 0.0,
+            beta: 0.0,
+            ..cfg(16)
+        };
+        // The tiny sigma still moves a float by ~1e-10, so compare loosely.
+        let close = |a: &ParamValue, b: &ParamValue| match (a, b) {
+            (ParamValue::Float(x), ParamValue::Float(y)) => (x - y).abs() < 1e-6,
+            _ => a == b,
+        };
+        let same_genome = |a: &BTreeMap<String, ParamValue>, b: &BTreeMap<String, ParamValue>| {
+            a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| close(v, w)))
+        };
+        let mut off = Ensemble::new(soup(8, 8), &base).unwrap();
+        let before = off.genomes();
+        off.assimilate_scores(&[1.0; 16]).unwrap();
+        for g in off.genomes() {
+            assert!(
+                before.iter().any(|p| same_genome(p, &g)),
+                "without crossover children are copies"
+            );
+        }
+        let mut on = Ensemble::new(
+            soup(8, 8),
+            &EnsembleConfig {
+                crossover: 1.0,
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        let parents = on.genomes();
+        on.assimilate_scores(&[1.0; 16]).unwrap();
+        let mut mixed = false;
+        for g in on.genomes() {
+            let a = parents
+                .iter()
+                .filter(|p| close(&p["rule.subrules[0].count"], &g["rule.subrules[0].count"]))
+                .count();
+            let b = parents
+                .iter()
+                .filter(|p| close(&p["rule.subrules[2].randomness"], &g["rule.subrules[2].randomness"]))
+                .count();
+            assert!(a > 0 && b > 0, "every gene comes from a parent");
+            if !parents.iter().any(|p| same_genome(p, &g)) {
+                mixed = true;
+            }
+        }
+        assert!(mixed, "with crossover 1.0 some child is a new combination");
+        // Off by default, and a config that says nothing about it parses.
+        let cfg: EnsembleConfig = serde_json::from_str(r#"{"members": 4}"#).unwrap();
+        assert_eq!(cfg.crossover, 0.0);
     }
 }

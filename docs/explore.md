@@ -180,8 +180,8 @@ The metrics, and when to reach for each:
   row at a random density, and score 1 if the row ends all-majority. Draws
   its own initial rows, fresh every generation. *Use it when* you want to
   evolve a rule that *computes* something.
-- **`bbox_fraction`**, **`centroid_speed`**, **`growth`**, **`period`** —
-  shape measures described in §6. They also work as objectives
+- **`bbox_fraction`**, **`elongation`**, **`centroid_speed`**, **`growth`**,
+  **`period`** — shape measures described in §6. They also work as objectives
   (`centroid_speed` maximised finds gliders).
 
 A metric can be measured every step (`"when": "mean"`, `series`,
@@ -217,6 +217,10 @@ The shape metrics exist for this:
 
 - **`bbox_fraction`** — bounding box of the tracked cells over grid area.
   Small = a compact object; 1 = it reached every edge.
+- **`elongation`** — how stretched the tracked cells are: `√(λ₁/λ₂)` of
+  their second-moment matrix, 1 for a blob, 2 for something twice as long
+  as it is wide, whichever way it points (clamped to 10). The validation
+  log's E12 shape measure.
 - **`centroid_speed`** — how far the centre of mass moved per step,
   averaged over the run (cells/step, clamped to 1). Non-zero = something
   travels: gliders, wind-driven fires.
@@ -253,6 +257,7 @@ rules.
 | `beta` | 10 | How sharply learning favours good members: weight = `e^(β × (score − best))`. 10 is gentle; 30 collapses the population onto a couple of members (experiment E24 shows it). |
 | `sigma` | 0.2 | Mutation size after learning (§4). |
 | `immigrants` | 0.2 | Share of the population re-drawn from scratch after each learning step. Keeps diversity: with 0 the population can converge on one wrong idea and never recover. |
+| `crossover` | 0 | Chance a resampled child takes each gene from either of two parents before mutation. Off by default: the classic particle filter copies one parent. Experiment E34 measures whether it helps. |
 | `driver` | none | A model-specific helper (§13); the wildfire one applies wind schedules and decides when a member is contained. Leave it out for rules. |
 
 What you get back (see the CLI report and the Rust API in §11):

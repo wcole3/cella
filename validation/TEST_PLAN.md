@@ -226,6 +226,24 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
+  *methods*, not the fire model. Base configuration = E31's recommended
+  row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
+  E33 noise floor (5 seeds; per-fire sd becomes the bar for every later
+  delta, replacing the 2-replicate E25d spread); E32 ensemble size M ∈ {8,
+  16, 32, 64, 128}; E34 operator ablation (immigrants {0, 0.1, 0.2, 0.4},
+  σ {0.1, 0.2, 0.4}, β {5, 10, 20}, genome crossover on/off — crossover is
+  a new ensemble option); E35 prior width (narrow ±25 % around the E28/E31
+  posterior medians, the E25 broad prior, very broad p0 0.02–0.95 /
+  duration 2–60); E36 offline evolution fitted to the first 3 observation
+  days only, then run forward and scored as forecasts on days 4+ against
+  the filter's forecasts on the same days (the honest form of E20); E37
+  MAP-Elites illumination of the fire model's knob space (growth × bounding
+  -box aspect descriptors, no objective) to ask whether *any* setting
+  reaches Brattain's observed elongation. Same metrics; same
+  calibration/holdout split; all six fires reported because nothing is
+  chosen per fire. A difference smaller than the E33 sd on that fire is
+  reported as a tie.
 - v1.6 (2026-09-05, before the E31 run): the wildfire-specific ensemble
   (`WildfireEnsemble`, `prior` block) was replaced by the model-agnostic
   `cella_lib::explore` engine with a `WildfireDriver` supplying the weather

@@ -166,19 +166,21 @@ pub(in crate::gui) enum MetricChoice {
     /// Match the main grid's current mask of the tracked types.
     MatchGrid,
     BboxFraction,
+    Elongation,
     CentroidSpeed,
     Growth,
     Period,
 }
 
 impl MetricChoice {
-    pub(in crate::gui) const ALL: [MetricChoice; 9] = [
+    pub(in crate::gui) const ALL: [MetricChoice; 10] = [
         MetricChoice::Fraction,
         MetricChoice::Activity,
         MetricChoice::Entropy,
         MetricChoice::Lifetime,
         MetricChoice::MatchGrid,
         MetricChoice::BboxFraction,
+        MetricChoice::Elongation,
         MetricChoice::CentroidSpeed,
         MetricChoice::Growth,
         MetricChoice::Period,
@@ -192,6 +194,7 @@ impl MetricChoice {
             MetricChoice::Lifetime => "Lifetime (steps until still)",
             MetricChoice::MatchGrid => "Match the current grid",
             MetricChoice::BboxFraction => "Bounding-box share",
+            MetricChoice::Elongation => "Elongation (shape)",
             MetricChoice::CentroidSpeed => "Centre-of-mass speed",
             MetricChoice::Growth => "Growth of tracked types",
             MetricChoice::Period => "Cycle length",
@@ -205,6 +208,7 @@ impl MetricChoice {
             MetricChoice::Fraction
                 | MetricChoice::MatchGrid
                 | MetricChoice::BboxFraction
+                | MetricChoice::Elongation
                 | MetricChoice::CentroidSpeed
                 | MetricChoice::Growth
         )
@@ -230,6 +234,7 @@ impl MetricChoice {
                 score: MaskScore::Iou,
             },
             MetricChoice::BboxFraction => Metric::BboxFraction { types },
+            MetricChoice::Elongation => Metric::Elongation { types },
             MetricChoice::CentroidSpeed => Metric::CentroidSpeed { types },
             MetricChoice::Growth => Metric::Growth { types },
             MetricChoice::Period => Metric::Period { window: 64 },
@@ -1181,6 +1186,7 @@ impl CellaApp {
             beta: mc.beta,
             sigma: mc.sigma,
             immigrants: mc.immigrants,
+            crossover: 0.0,
             driver: None,
         }
     }

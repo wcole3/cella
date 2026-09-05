@@ -82,6 +82,7 @@ fn label_of(metric: &Metric) -> String {
         Metric::Series { .. } => "series".into(),
         Metric::DensityClassification { .. } => "density_classification".into(),
         Metric::BboxFraction { types } => format!("bbox({})", types.join("+")),
+        Metric::Elongation { types } => format!("elongation({})", types.join("+")),
         Metric::CentroidSpeed { types } => format!("speed({})", types.join("+")),
         Metric::Growth { types } => format!("growth({})", types.join("+")),
         Metric::Period { window } => format!("period(≤{})", window / 2),
