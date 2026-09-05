@@ -6,13 +6,13 @@
 //! a plain function that tests can call directly.
 
 use super::app::{CellaApp, Dim, DrawMode};
+use super::shortcuts::shortcuts;
 use super::types::next_in_cycle;
 use cella_lib::*;
-use egui::Key;
 
 /// Zoom limits, in screen pixels per cell.
-const MIN_SCALE: usize = 1;
-const MAX_SCALE: usize = 64;
+pub(in crate::gui) const MIN_SCALE: usize = 1;
+pub(in crate::gui) const MAX_SCALE: usize = 64;
 
 /// Which cell a screen position falls on, or `None` if it is not on an
 /// editable cell.
@@ -216,28 +216,26 @@ impl CellaApp {
         self.set_cell(idx, next, "Cycle edit");
     }
 
-    /// Ctrl+Z undoes the most recent edit batch, while paused.
+    /// Turn key presses into actions, from the one table in
+    /// [`super::shortcuts`].
+    ///
+    /// Two guards matter. First: nothing fires while a text field has the
+    /// keyboard, so typing `30` into the Wolfram-code box or a type name with
+    /// an `s` in it never steps or resets the grid. Second: editing keys
+    /// (undo) are skipped while the simulation plays, but playback and view
+    /// keys must work while playing — otherwise Space could never pause.
+    /// `consume_shortcut` eats the press so nothing else reacts to it too.
     pub(in crate::gui) fn handle_hotkeys(&mut self, ui: &egui::Ui) {
-        if self.playback.playing {
+        if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let undo = ui.input(|i| (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(Key::Z));
-        if !undo {
-            return;
-        }
-        let Some(batch) = self.edit.undo_stack.pop() else {
-            return;
-        };
-        let limit = match self.grid_dims() {
-            Some(GridDims::D1 { width, .. }) => width,
-            Some(GridDims::D2 { width, height }) => width * height,
-            None => return,
-        };
-        for (idx, prev) in batch {
-            // Matches the original behaviour: skip out-of-range entries, but
-            // stop entirely at the first entry the engine rejects.
-            if idx < limit && !self.set_cell(idx, prev, "Undo") {
-                break;
+        let playing = self.playback.playing;
+        for s in shortcuts() {
+            if !s.while_playing && playing {
+                continue;
+            }
+            if ui.input_mut(|i| i.consume_shortcut(&s.keys)) {
+                self.push(s.action.clone());
             }
         }
     }

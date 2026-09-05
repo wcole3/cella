@@ -4,10 +4,13 @@
 //! It manages simulation state, rule editing, grid rendering, playback
 //! controls, statistics, drawing/painting, and GIF export.
 
+use super::actions::Action;
+use super::theme::ThemeChoice;
 use super::state::{
     Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
     ViewSettings,
 };
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -87,6 +90,8 @@ pub(in crate::gui) struct CellaApp {
     pub(in crate::gui) chrome: Chrome,
     /// Pending values typed into form fields.
     pub(in crate::gui) inputs: Inputs,
+    /// Actions queued by the panels this frame, applied by `drain_actions`.
+    pub(in crate::gui) actions: VecDeque<Action>,
 }
 
 impl CellaApp {
@@ -105,6 +110,7 @@ impl CellaApp {
             editor: EditorState::default(),
             chrome: Chrome::new(&cc.egui_ctx),
             inputs: Inputs::default(),
+            actions: VecDeque::new(),
         };
         app.apply_startup_config(config);
         app
@@ -136,6 +142,16 @@ impl CellaApp {
     ///
     /// Restyling forces egui to re-layout every galley, so this is a no-op unless
     /// the scale actually changed since the last frame.
+    /// Push the design tokens for the chosen theme into egui, only on frames
+    /// where the choice changed (the restyle is not free).
+    pub(in crate::gui) fn apply_theme_if_changed(&mut self, ctx: &Context) {
+        if self.chrome.applied_theme == Some(self.chrome.theme) {
+            return;
+        }
+        super::theme::apply(ctx, self.chrome.theme);
+        self.chrome.applied_theme = Some(self.chrome.theme);
+    }
+
     pub(in crate::gui) fn apply_font_scale(&mut self, ctx: &Context) {
         if self.chrome.font_scale == self.chrome.applied_font_scale {
             return;
@@ -178,31 +194,53 @@ impl CellaApp {
     /// The left-hand control column: scenario loading, UI settings, editing
     /// tools, export, colours, and statistics.
     pub(in crate::gui) fn ui_left_panel(&mut self, ui: &mut egui::Ui) {
+        // Same local-bool dance as the rule editor: `show_collapsible` writes
+        // back through the `&mut bool` on drag-to-close.
+        let mut open = self.chrome.left_open;
         egui::Panel::left("left_controls")
-            .default_size(260.0)
-            .show(ui, |ui| {
+            .resizable(true)
+            .min_size(220.0)
+            .default_size(280.0)
+            .show_collapsible(ui, &mut open, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         self.ui_dataset_controls(ui);
                         ui.separator();
-                        ui.collapsing("UI Settings", |ui| {
+                        let mut pending: Vec<Action> = Vec::new();
+                        super::theme::section(ui, "UI settings", |ui| {
                             ui.horizontal(|ui| {
+                                ui.label("Theme");
+                                for choice in [ThemeChoice::Dark, ThemeChoice::Light] {
+                                    if ui
+                                        .selectable_label(self.chrome.theme == choice, choice.label())
+                                        .clicked()
+                                    {
+                                        pending.push(Action::SetTheme(choice));
+                                    }
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                let f = self.chrome.font_scale;
                                 if ui.button("A-").clicked() {
-                                    self.chrome.font_scale =
-                                        (self.chrome.font_scale - 0.1).max(0.5);
+                                    pending.push(Action::SetFontScale(f - 0.1));
                                 }
                                 if ui.button("A+").clicked() {
-                                    self.chrome.font_scale =
-                                        (self.chrome.font_scale + 0.1).min(3.0);
+                                    pending.push(Action::SetFontScale(f + 0.1));
                                 }
-                                ui.label(format!("Font: {:.0}%", self.chrome.font_scale * 100.0));
+                                ui.label(format!("Font: {:.0}%", f * 100.0));
                             });
-                            ui.add(
-                                egui::Slider::new(&mut self.chrome.font_scale, 0.5..=3.0)
-                                    .text("Font scale"),
-                            );
+                            let mut f = self.chrome.font_scale;
+                            if ui
+                                .add(egui::Slider::new(&mut f, 0.5..=3.0).text("Font scale"))
+                                .changed()
+                            {
+                                pending.push(Action::SetFontScale(f));
+                            }
                         });
+                        for a in pending {
+                            self.push(a);
+                        }
                         ui.separator();
                         ui.collapsing("Editing", |ui| {
                             ui.horizontal(|ui| {
@@ -298,6 +336,7 @@ impl CellaApp {
                         self.ui_statistics(ui);
                     });
             });
+        self.chrome.left_open = open;
     }
 
     /// The bottom status strip: step counter, run timer, and the latest message.
@@ -305,6 +344,10 @@ impl CellaApp {
         egui::Panel::bottom("bottom_status").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("Step: {}", self.current_step()));
+                if self.playback.playing && self.playback.steps_per_s > 0.0 {
+                    ui.separator();
+                    ui.label(format!("{:.0} steps/s", self.playback.steps_per_s));
+                }
                 // Show simulation timer when steps have been timed
                 if self.playback.timed_steps > 0 || self.playback.play_start.is_some() {
                     let total = if let Some(start) = self.playback.play_start {
@@ -335,6 +378,9 @@ impl CellaApp {
     pub(in crate::gui) fn ui_viewport(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
             self.handle_hotkeys(ui);
+            // Remembered for "zoom to fit", which the toolbar asks for before
+            // this frame's viewport exists.
+            self.view.last_viewport_size = Some(ui.available_size());
             egui::ScrollArea::both()
                 // Left-drag is reserved for painting, so never drag-to-scroll.
                 .scroll_source(ScrollSource {
@@ -418,6 +464,7 @@ impl eframe::App for CellaApp {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         self.apply_font_scale(ctx);
+        self.apply_theme_if_changed(ctx);
 
         egui::Panel::top("top_controls").show(ui, |ui| {
             self.ui_top_controls(ui, ctx);
@@ -426,7 +473,10 @@ impl eframe::App for CellaApp {
         self.ui_rule_editor_panel(ui);
         self.ui_status_bar(ui);
         self.ui_viewport(ui);
+        self.ui_shortcuts_overlay(ctx);
 
+        // Everything the panels asked for lands here, after they were drawn.
+        self.drain_actions();
         self.poll_export();
         let stepped = self.tick_play();
         self.request_next_repaint(ctx, stepped);

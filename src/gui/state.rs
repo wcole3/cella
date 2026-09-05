@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use super::app::{Dim, DrawMode};
 use super::panels::rule_edit_model::{Rule1DEdit, Rule2DEdit};
 use super::render::default_palette;
+use super::theme::ThemeChoice;
 use cella_lib::*;
 use egui::{Color32, Shape};
 use lasso2::Spur;
@@ -63,6 +64,12 @@ pub(in crate::gui) struct Playback {
     pub(in crate::gui) timed_steps: u64,
     /// Start of the current play segment, if one is running.
     pub(in crate::gui) play_start: Option<Instant>,
+    /// Start of the window the live steps-per-second readout averages over.
+    pub(in crate::gui) rate_window_start: Instant,
+    /// Steps run since `rate_window_start`.
+    pub(in crate::gui) rate_window_steps: u64,
+    /// The live steps-per-second readout shown in the status bar.
+    pub(in crate::gui) steps_per_s: f64,
 }
 
 impl Default for Playback {
@@ -78,6 +85,9 @@ impl Default for Playback {
             elapsed: Duration::ZERO,
             timed_steps: 0,
             play_start: None,
+            rate_window_start: Instant::now(),
+            rate_window_steps: 0,
+            steps_per_s: 0.0,
         }
     }
 }
@@ -109,6 +119,10 @@ pub(in crate::gui) struct ViewSettings {
     /// Minimum rows to allocate in the 1D viewport, so scrollbars do not
     /// overlap the content.
     pub(in crate::gui) min_view_rows_1d: usize,
+    /// The viewport's size on the last frame. The toolbar is drawn before the
+    /// viewport, so "zoom to fit" reads last frame's value; one frame of lag
+    /// is invisible.
+    pub(in crate::gui) last_viewport_size: Option<egui::Vec2>,
 }
 
 impl Default for ViewSettings {
@@ -124,6 +138,7 @@ impl Default for ViewSettings {
             history_1d: VecDeque::new(),
             history_limit_1d: 100,
             min_view_rows_1d: 3,
+            last_viewport_size: None,
         }
     }
 }
@@ -221,7 +236,8 @@ impl Default for EditorState {
     }
 }
 
-/// Window furniture: text scaling and the status line.
+/// Window furniture: text scaling, the theme, which panels are open, and the
+/// status line.
 pub(in crate::gui) struct Chrome {
     pub(in crate::gui) font_scale: f32,
     /// Last `font_scale` actually pushed into the egui style, so the (fairly
@@ -229,6 +245,15 @@ pub(in crate::gui) struct Chrome {
     pub(in crate::gui) applied_font_scale: f32,
     pub(in crate::gui) base_text_styles: BTreeMap<egui::TextStyle, egui::FontId>,
     pub(in crate::gui) status_message: Option<String>,
+    /// The theme the user chose.
+    pub(in crate::gui) theme: ThemeChoice,
+    /// The theme last pushed into egui (`None` before the first frame), so
+    /// the restyle happens only when it changes.
+    pub(in crate::gui) applied_theme: Option<ThemeChoice>,
+    /// Whether the left control panel is open.
+    pub(in crate::gui) left_open: bool,
+    /// Whether the keyboard-shortcut overlay is showing.
+    pub(in crate::gui) show_shortcuts: bool,
 }
 
 impl Chrome {
@@ -240,6 +265,10 @@ impl Chrome {
             applied_font_scale: 1.0,
             base_text_styles: ctx.style_of(egui::Theme::Dark).text_styles.clone(),
             status_message: None,
+            theme: ThemeChoice::default(),
+            applied_theme: None,
+            left_open: true,
+            show_shortcuts: false,
         }
     }
 }

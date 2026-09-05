@@ -223,6 +223,32 @@ impl CellaApp {
     /// chart, and status line on screen and must be drawn again — see
     /// [`CellaApp::request_next_repaint`].
     pub(in crate::gui) fn tick_play(&mut self) -> bool {
+        let stepped = self.tick_play_inner();
+        self.update_rate_meter();
+        stepped
+    }
+
+    /// Keep the status bar's steps-per-second readout current: count the
+    /// steps run since the window opened and refresh the figure every half
+    /// second. Reset when playback stops so a stale number is not shown.
+    fn update_rate_meter(&mut self) {
+        let now = Instant::now();
+        if !self.playback.playing {
+            self.playback.steps_per_s = 0.0;
+            self.playback.rate_window_start = now;
+            self.playback.rate_window_steps = self.playback.timed_steps;
+            return;
+        }
+        let elapsed = now.duration_since(self.playback.rate_window_start);
+        if elapsed >= Duration::from_millis(500) {
+            let steps = self.playback.timed_steps.saturating_sub(self.playback.rate_window_steps);
+            self.playback.steps_per_s = steps as f64 / elapsed.as_secs_f64();
+            self.playback.rate_window_start = now;
+            self.playback.rate_window_steps = self.playback.timed_steps;
+        }
+    }
+
+    fn tick_play_inner(&mut self) -> bool {
         if let Some(target) = self.burst_target() {
             // Burst: keep stepping until the frame's time budget is spent. The
             // clock is read once per chunk rather than once per step, which on
@@ -404,6 +430,7 @@ pub(in crate::gui) mod tests {
             editor: EditorState::default(),
             chrome: Chrome::new(&ctx),
             inputs: Inputs::default(),
+            actions: std::collections::VecDeque::new(),
         }
     }
 
