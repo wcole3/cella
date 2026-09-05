@@ -27,6 +27,7 @@ pub mod rng;
 pub mod rules;
 pub mod state;
 pub mod threads;
+pub mod tunables;
 pub mod types;
 pub mod wildfire;
 pub mod wind_field;

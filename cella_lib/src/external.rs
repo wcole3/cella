@@ -292,7 +292,7 @@ use rayon::prelude::*;
 /// A rejected value comes back as [`ModelError::InvalidParam`] saying what was
 /// wrong with it. The message does not name the parameter; callers add that
 /// with [`with_param_key`].
-fn check_value_against_kind(kind: &ParamKind, value: &ParamValue) -> Result<(), ModelError> {
+pub(crate) fn check_value_against_kind(kind: &ParamKind, value: &ParamValue) -> Result<(), ModelError> {
     let reject = |msg: String| Err(ModelError::InvalidParam(msg));
     match (kind, value) {
         (ParamKind::Float { min, max, .. }, ParamValue::Float(v)) => {
