@@ -223,6 +223,8 @@ fn export_config_2d(name: &str, g: &Grid2D) {
         .collect();
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: g.width,
         height: g.height,
@@ -247,6 +249,9 @@ fn export_config_1d(name: &str, g: &Grid1D) {
         .collect();
     let cfg = CellaConfig::D1(Config1D {
         colors: Default::default(),
+        seed: 0,
+        ensemble: None,
+        evolve: None,
         width: g.width,
         history_limit: g.history_limit,
         initial,
@@ -1763,6 +1768,8 @@ fn stress_config_load_and_run() {
 
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: w,
         height: h,

@@ -1,0 +1,133 @@
+{
+ "dim": "1d",
+ "width": 63,
+ "history_limit": 0,
+ "seed": 3,
+ "initial": [
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "X",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive"
+ ],
+ "rule": {
+  "subrules": [
+   {
+    "wolfram_code": "30",
+    "randomness": null,
+    "n": 1,
+    "output_type": "X",
+    "current_type": "X",
+    "criteria_type": "X"
+   },
+   {
+    "wolfram_code": "30",
+    "randomness": null,
+    "n": 1,
+    "output_type": "X",
+    "current_type": "Inactive",
+    "criteria_type": "X"
+   }
+  ]
+ },
+ "evolve": {
+  "search": {
+   "novelty": {
+    "k": 15
+   }
+  },
+  "population": 48,
+  "generations": 40,
+  "steps": 128,
+  "repeats": 1,
+  "seed": 3,
+  "genes": [
+   {
+    "key": "rule.subrules[*].wolfram_code",
+    "bits": 8
+   }
+  ],
+  "objective": {
+   "metric": "fraction",
+   "types": [
+    "X"
+   ],
+   "goal": "maximise"
+  },
+  "descriptors": [
+   {
+    "metric": "fraction",
+    "types": [
+     "X"
+    ],
+    "when": "end"
+   },
+   {
+    "metric": "activity",
+    "when": "mean"
+   },
+   {
+    "metric": "period",
+    "window": 64
+   }
+  ]
+ }
+}

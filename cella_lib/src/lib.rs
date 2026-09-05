@@ -19,7 +19,6 @@
 
 mod chunking;
 pub mod config;
-pub mod ensemble;
 pub mod explore;
 pub mod external;
 pub mod grid1d;
@@ -42,7 +41,10 @@ pub use rules::{
     CountOp, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError,
     neighborhood_contains,
 };
-pub use ensemble::{AssimilationReport, EnsembleConfig, MemberParams, WildfireEnsemble, WildfirePrior};
+pub use explore::{
+    Ensemble, EnsembleConfig, Evolution, EvolveConfig, GeneSpec, MemberDriver, Metric, Objective,
+    Sim,
+};
 pub use state::{GridState, grid2d_to_json};
 pub use wind_field::{MassConsistentOptions, WindField, mass_consistent};
 // Re-exports for ergonomic public API
@@ -393,6 +395,8 @@ mod tests {
         initial[1 * w + 3.min(w - 1)] = alive.as_str().to_string();
         let cfg = CellaConfig::D2(Config2D {
             ensemble: None,
+            evolve: None,
+            seed: 0,
             colors: Default::default(),
             width: w,
             height: h,
@@ -1066,6 +1070,8 @@ mod more_tests {
         };
         let cfg = CellaConfig::D2(Config2D {
             ensemble: None,
+            evolve: None,
+            seed: 0,
             colors: Default::default(),
             width: w,
             height: h,

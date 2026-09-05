@@ -16,6 +16,9 @@ fn test_config_1d_file_io() {
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
         colors: Default::default(),
+        seed: 0,
+        ensemble: None,
+        evolve: None,
         width: 2,
         history_limit: 5,
         initial: init.clone(),
@@ -55,6 +58,8 @@ fn test_config_2d_file_io() {
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: 2,
         height: 2,
@@ -90,6 +95,9 @@ fn test_build_grid1d_success() {
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
         colors: Default::default(),
+        seed: 0,
+        ensemble: None,
+        evolve: None,
         width: 2,
         history_limit: 2,
         initial: init,
@@ -107,6 +115,9 @@ fn test_build_grid1d_fail_length() {
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
         colors: Default::default(),
+        seed: 0,
+        ensemble: None,
+        evolve: None,
         width: 2, // Width 2 -> Mismatch
         history_limit: 2,
         initial: init,
@@ -125,6 +136,8 @@ fn test_build_grid1d_fail_wrong_dim() {
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: 1,
         height: 1,
@@ -151,6 +164,8 @@ fn test_build_grid2d_success() {
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: 2,
         height: 2,
@@ -172,6 +187,8 @@ fn test_build_grid2d_fail_length() {
     let rule = Rule2D { subrules: vec![] };
     let cfg = CellaConfig::D2(Config2D {
         ensemble: None,
+        evolve: None,
+        seed: 0,
         colors: Default::default(),
         width: 2,
         height: 2, // Need 4
@@ -193,6 +210,9 @@ fn test_build_grid2d_fail_wrong_dim() {
     let rule = Rule1D { subrules: vec![] };
     let cfg = CellaConfig::D1(Config1D {
         colors: Default::default(),
+        seed: 0,
+        ensemble: None,
+        evolve: None,
         width: 1,
         history_limit: 2,
         initial: init,
@@ -221,4 +241,29 @@ fn colors_parse_from_json_and_default_to_empty() {
     // An empty map is left out again when written back.
     let back = serde_json::to_string(&cfg_1d).unwrap();
     assert!(!back.contains("colors"), "got {back}");
+}
+
+/// Every config shipped in `configs/` must load, build its grid, and build
+/// whatever `ensemble` / `evolve` block it carries.
+#[test]
+fn every_shipped_config_loads_and_builds_its_blocks() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).expect("configs directory") {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        seen += 1;
+        let cfg = CellaConfig::from_file(&path)
+            .unwrap_or_else(|e| panic!("{} does not load: {e}", path.display()));
+        assert!(cfg.build_sim().is_some(), "{} does not build a grid", path.display());
+        if let Some(r) = cfg.build_ensemble() {
+            r.unwrap_or_else(|e| panic!("{} ensemble block: {e}", path.display()));
+        }
+        if let Some(r) = cfg.build_evolution() {
+            r.unwrap_or_else(|e| panic!("{} evolve block: {e}", path.display()));
+        }
+    }
+    assert!(seen >= 20, "expected the shipped configs, found {seen}");
 }

@@ -1,0 +1,167 @@
+{
+ "dim": "2d",
+ "width": 8,
+ "height": 8,
+ "history_limit": 0,
+ "seed": 0,
+ "colors": {
+  "Alive": "#f0e442",
+  "Inactive": "#1e1e23"
+ },
+ "initial": [
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Alive",
+  "Alive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive",
+  "Inactive"
+ ],
+ "rule": {
+  "subrules": [
+   {
+    "current_type": "Alive",
+    "criteria_type": "Alive",
+    "count": 4,
+    "op": "gt",
+    "range": 1,
+    "neighborhood": "Moore",
+    "randomness": null,
+    "output_type": "Inactive"
+   },
+   {
+    "current_type": "Alive",
+    "criteria_type": "Alive",
+    "count": 2,
+    "op": "gt",
+    "limit": 3,
+    "range": 1,
+    "neighborhood": "Moore",
+    "randomness": null,
+    "output_type": "Alive"
+   },
+   {
+    "current_type": "Inactive",
+    "criteria_type": "Alive",
+    "count": 3,
+    "op": "eq",
+    "range": 1,
+    "neighborhood": "Moore",
+    "randomness": null,
+    "output_type": "Alive"
+   }
+  ]
+ },
+ "evolve": {
+  "population": 24,
+  "generations": 30,
+  "repeats": 3,
+  "steps": 100,
+  "genes": [
+   {
+    "key": "rule.subrules[0].count",
+    "range": [
+     3,
+     8
+    ]
+   },
+   {
+    "key": "rule.subrules[1].count",
+    "range": [
+     1,
+     3
+    ]
+   },
+   {
+    "key": "rule.subrules[1].limit",
+    "range": [
+     3,
+     8
+    ]
+   },
+   {
+    "key": "rule.subrules[2].count",
+    "range": [
+     1,
+     6
+    ]
+   },
+   {
+    "key": "rule.subrules[2].op",
+    "choices": [
+     "eq",
+     "gt"
+    ]
+   }
+  ],
+  "objective": {
+   "metric": "fraction",
+   "types": [
+    "Alive"
+   ],
+   "when": {
+    "step": 100
+   },
+   "goal": {
+    "target": 0.3
+   }
+  }
+ }
+}

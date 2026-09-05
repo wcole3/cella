@@ -1,6 +1,8 @@
 //! Simple JSON configuration format to build grids without writing Rust code.
 //! This format focuses on readability: you specify dimensions, history limit,
 //! an initial array of type names, and the rule definition.
+use crate::explore::{Ensemble, EnsembleConfig, Evolution, EvolveConfig, Sim};
+use crate::external::ModelError;
 use crate::grid1d::Grid1D;
 use crate::grid2d::Grid2D;
 use crate::rules::{Rule1D, Rule2D};
@@ -65,12 +67,41 @@ pub struct Config1D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule1D,
+    /// Seed for the rule's `randomness` draws (default 0). Same seed, same
+    /// run, on any thread count. See [`crate::Grid1D::seed`].
+    #[serde(default)]
+    pub seed: u64,
     /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
     /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
     /// GUI applies them on load, and any type not listed gets an automatic
     /// colour. `"Inactive"` sets the background colour.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub colors: BTreeMap<String, String>,
+    /// Optional ensemble settings; see [`crate::explore::ensemble`] and
+    /// `docs/explore.md`. [`CellaConfig::build_ensemble`] uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ensemble: Option<EnsembleConfig>,
+    /// Optional evolution settings; see [`crate::explore::evolve`] and
+    /// `docs/explore.md`. [`CellaConfig::build_evolution`] uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evolve: Option<EvolveConfig>,
+}
+
+impl Default for Config1D {
+    fn default() -> Self {
+        Config1D {
+            width: 0,
+            history_limit: 0,
+            initial: Vec::new(),
+            rule: Rule1D {
+                subrules: Vec::new(),
+            },
+            seed: 0,
+            colors: BTreeMap::new(),
+            ensemble: None,
+            evolve: None,
+        }
+    }
 }
 
 /// 2D configuration.
@@ -90,17 +121,47 @@ pub struct Config2D {
     /// present it replaces the subrule engine. See [`crate::external`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<Box<dyn crate::external::ExternalModel>>,
+    /// Seed for the rule's `randomness` draws (default 0). Same seed, same
+    /// run, on any thread count. A model keeps its own seed; ensembles and
+    /// evolutions reseed both per member. See [`crate::Grid2D::seed`].
+    #[serde(default)]
+    pub seed: u64,
     /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
     /// `{"Forest": "#2e8b57"}`. Optional; the engine never reads them — the
     /// GUI applies them on load, and any type not listed gets an automatic
     /// colour. `"Inactive"` sets the background colour.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub colors: BTreeMap<String, String>,
-    /// Optional ensemble settings (members, prior, assimilation operators).
-    /// Only meaningful with a wildfire `model`; see [`crate::ensemble`] and
-    /// `docs/ensemble.md`. [`CellaConfig::build_ensemble`] uses it.
+    /// Optional ensemble settings (members, genes, tracked types, learning
+    /// operators, driver); works with any rule or model. See
+    /// [`crate::explore::ensemble`] and `docs/explore.md`.
+    /// [`CellaConfig::build_ensemble`] uses it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ensemble: Option<crate::ensemble::EnsembleConfig>,
+    pub ensemble: Option<EnsembleConfig>,
+    /// Optional evolution settings (population, genes, objective, search
+    /// mode). See [`crate::explore::evolve`] and `docs/explore.md`.
+    /// [`CellaConfig::build_evolution`] uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evolve: Option<EvolveConfig>,
+}
+
+impl Default for Config2D {
+    fn default() -> Self {
+        Config2D {
+            width: 0,
+            height: 0,
+            history_limit: 0,
+            initial: Vec::new(),
+            rule: Rule2D {
+                subrules: Vec::new(),
+            },
+            model: None,
+            seed: 0,
+            colors: BTreeMap::new(),
+            ensemble: None,
+            evolve: None,
+        }
+    }
 }
 
 impl CellaConfig {
@@ -143,25 +204,56 @@ impl CellaConfig {
                     return None;
                 }
                 let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
-                Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()))
+                Some(Grid1D::new(c.width, c.history_limit, init, c.rule.clone()).with_seed(c.seed))
             }
             _ => None,
         }
     }
 
-    /// Build the ensemble this config describes: the grid is built and
-    /// attached once, then cloned per member with parameters drawn from the
-    /// `ensemble.prior`. `None` when the config has no `ensemble` block or is
-    /// not a 2D config; `Some(Err)` when the block is invalid or the model is
-    /// not a wildfire model.
-    pub fn build_ensemble(
-        &self,
-    ) -> Option<Result<crate::ensemble::WildfireEnsemble, crate::external::ModelError>> {
-        let ens = match self {
-            CellaConfig::D2(c) => c.ensemble.as_ref()?,
-            CellaConfig::D1(_) => return None,
-        };
-        Some(crate::ensemble::WildfireEnsemble::from_config(self, ens))
+    /// Build whichever grid this config describes, as a [`Sim`]. `None` on a
+    /// length mismatch or a model that fails to attach.
+    pub fn build_sim(&self) -> Option<Sim> {
+        match self {
+            CellaConfig::D1(_) => self.build_grid1d().map(Sim::D1),
+            CellaConfig::D2(_) => self.build_grid2d().map(Sim::D2),
+        }
+    }
+
+    /// The `ensemble` block, if the config has one.
+    pub fn ensemble(&self) -> Option<&EnsembleConfig> {
+        match self {
+            CellaConfig::D1(c) => c.ensemble.as_ref(),
+            CellaConfig::D2(c) => c.ensemble.as_ref(),
+        }
+    }
+
+    /// The `evolve` block, if the config has one.
+    pub fn evolve(&self) -> Option<&EvolveConfig> {
+        match self {
+            CellaConfig::D1(c) => c.evolve.as_ref(),
+            CellaConfig::D2(c) => c.evolve.as_ref(),
+        }
+    }
+
+    /// Build the ensemble this config describes: the grid is built (and its
+    /// model attached) once, then cloned per member with genes drawn from the
+    /// `ensemble.genes` ranges. `None` when the config has no `ensemble`
+    /// block or the grid cannot be built; `Some(Err)` when the block is
+    /// invalid (a gene names an unknown knob, a tracked type is not declared,
+    /// a free gene has no driver, ...).
+    pub fn build_ensemble(&self) -> Option<Result<Ensemble, ModelError>> {
+        let cfg = self.ensemble()?;
+        let sim = self.build_sim()?;
+        Some(Ensemble::new(sim, cfg))
+    }
+
+    /// Build the evolution this config describes from its `evolve` block.
+    /// `None` when there is no block or the grid cannot be built;
+    /// `Some(Err)` when the block is invalid.
+    pub fn build_evolution(&self) -> Option<Result<Evolution, ModelError>> {
+        let cfg = self.evolve()?;
+        let sim = self.build_sim()?;
+        Some(Evolution::new(sim, cfg))
     }
 
     /// Build a Grid2D from D2 config.
@@ -176,7 +268,8 @@ impl CellaConfig {
                 }
                 let init: Vec<CellType> = c.initial.iter().map(|s| CellType::new(s)).collect();
                 let mut grid =
-                    Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone());
+                    Grid2D::new(c.width, c.height, c.history_limit, init, c.rule.clone())
+                        .with_seed(c.seed);
                 if let Some(model) = &c.model {
                     grid.attach_model(model.clone()).ok()?;
                 }
@@ -197,6 +290,9 @@ mod tests {
         let rule1 = Rule1D { subrules: vec![] };
         let cfg1 = CellaConfig::D1(Config1D {
             colors: Default::default(),
+            seed: 0,
+            ensemble: None,
+            evolve: None,
             width: 3,
             history_limit: 1,
             initial: vec!["A".to_string(), "B".to_string()],
@@ -214,6 +310,8 @@ mod tests {
             rule: rule2,
             model: None,
             ensemble: None,
+            evolve: None,
+            seed: 0,
         });
         assert!(cfg2.build_grid2d().is_none());
     }
@@ -225,6 +323,9 @@ mod tests {
 
         let cfg1 = CellaConfig::D1(Config1D {
             colors: Default::default(),
+            seed: 0,
+            ensemble: None,
+            evolve: None,
             width: 2,
             history_limit: 1,
             initial: vec![a.clone(), b.clone()],
@@ -242,6 +343,8 @@ mod tests {
             rule: Rule2D { subrules: vec![] },
             model: None,
             ensemble: None,
+            evolve: None,
+            seed: 0,
         });
         assert!(cfg2.build_grid2d().is_some());
         assert!(cfg2.build_grid1d().is_none());
@@ -273,6 +376,9 @@ mod tests {
 
         let cfg = CellaConfig::D1(Config1D {
             colors: Default::default(),
+            seed: 0,
+            ensemble: None,
+            evolve: None,
             width: 1,
             history_limit: 0,
             initial: vec!["Inactive".to_string()],
