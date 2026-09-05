@@ -5,14 +5,12 @@
 //! controls, statistics, drawing/painting, and GIF export.
 
 use super::actions::Action;
-use super::theme::ThemeChoice;
 use super::state::{
     Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
     ViewSettings,
 };
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::render::color_for;
@@ -20,13 +18,13 @@ use cella_lib::*;
 use egui::scroll_area::{DragScroll, ScrollSource};
 use egui::{Color32, Context};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::gui) enum Dim {
     D1,
     D2,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::gui) enum DrawMode {
     Cycle,
     Paint,
@@ -166,179 +164,6 @@ impl CellaApp {
 }
 
 impl CellaApp {
-    /// The right-hand rule editor panel, which can be collapsed by the
-    /// toolbar toggle or by dragging its edge past the minimum width.
-    pub(in crate::gui) fn ui_rule_editor_panel(&mut self, ui: &mut egui::Ui) {
-        // Right-side Rule Editor panel (resizable, can be hidden via toggle).
-        // `show_collapsible` animates the slide in/out and lets a drag past the
-        // minimum width collapse the panel, keeping `editor.visible` in sync with
-        // the toolbar toggle.
-        // Held in a local because `show_collapsible` writes back through the `&mut bool`
-        // (drag-to-close), which would otherwise alias the `&mut self` the body needs.
-        let mut show_editor = self.editor.visible;
-        egui::Panel::right("right_rule_editor")
-            .resizable(true)
-            .min_size(220.0)
-            .default_size(340.0)
-            .show_collapsible(ui, &mut show_editor, |ui| {
-                ui.heading("Rule Editor");
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        self.ui_rule_editor(ui);
-                    });
-            });
-        self.editor.visible = show_editor;
-    }
-
-    /// The left-hand control column: scenario loading, UI settings, editing
-    /// tools, export, colours, and statistics.
-    pub(in crate::gui) fn ui_left_panel(&mut self, ui: &mut egui::Ui) {
-        // Same local-bool dance as the rule editor: `show_collapsible` writes
-        // back through the `&mut bool` on drag-to-close.
-        let mut open = self.chrome.left_open;
-        egui::Panel::left("left_controls")
-            .resizable(true)
-            .min_size(220.0)
-            .default_size(280.0)
-            .show_collapsible(ui, &mut open, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        self.ui_dataset_controls(ui);
-                        ui.separator();
-                        let mut pending: Vec<Action> = Vec::new();
-                        super::theme::section(ui, "UI settings", |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("Theme");
-                                for choice in [ThemeChoice::Dark, ThemeChoice::Light] {
-                                    if ui
-                                        .selectable_label(self.chrome.theme == choice, choice.label())
-                                        .clicked()
-                                    {
-                                        pending.push(Action::SetTheme(choice));
-                                    }
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                let f = self.chrome.font_scale;
-                                if ui.button("A-").clicked() {
-                                    pending.push(Action::SetFontScale(f - 0.1));
-                                }
-                                if ui.button("A+").clicked() {
-                                    pending.push(Action::SetFontScale(f + 0.1));
-                                }
-                                ui.label(format!("Font: {:.0}%", f * 100.0));
-                            });
-                            let mut f = self.chrome.font_scale;
-                            if ui
-                                .add(egui::Slider::new(&mut f, 0.5..=3.0).text("Font scale"))
-                                .changed()
-                            {
-                                pending.push(Action::SetFontScale(f));
-                            }
-                        });
-                        for a in pending {
-                            self.push(a);
-                        }
-                        ui.separator();
-                        ui.collapsing("Editing", |ui| {
-                            ui.horizontal(|ui| {
-                                let is_cycle = matches!(self.edit.draw_mode, DrawMode::Cycle);
-                                if ui.radio(is_cycle, "Cycle").clicked() {
-                                    self.edit.draw_mode = DrawMode::Cycle;
-                                }
-                                let is_paint = matches!(self.edit.draw_mode, DrawMode::Paint);
-                                if ui.radio(is_paint, "Paint").clicked() {
-                                    self.edit.draw_mode = DrawMode::Paint;
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Paint type:");
-                                // Build a type list from rule/config declared types (not just currently present)
-                                let mut names: Vec<String> = self
-                                    .declared_types()
-                                    .into_iter()
-                                    .map(|t| t.as_str().to_string())
-                                    .collect();
-                                // Ensure ordering with Inactive first
-                                names.sort();
-                                names.sort_by_key(|a| a != INACTIVE);
-                                let current_name = self
-                                    .edit
-                                    .selected_draw_type
-                                    .as_ref()
-                                    .map(|t| t.as_str())
-                                    .unwrap_or_else(|| INACTIVE);
-                                let mut sel = current_name;
-                                egui::ComboBox::from_label("").selected_text(sel).show_ui(
-                                    ui,
-                                    |ui| {
-                                        for n in &names {
-                                            ui.selectable_value(&mut sel, n.as_str(), n);
-                                        }
-                                    },
-                                );
-                                if sel != current_name {
-                                    self.edit.selected_draw_type = Some(CellType::from(sel));
-                                }
-                            });
-                            ui.label("Hold and drag on the grid while paused to paint.");
-                        });
-                        ui.separator();
-                        ui.collapsing("Export", |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut self.export.steps).range(1..=10_000),
-                                );
-                                ui.label("steps");
-                            });
-                            ui.horizontal(|ui| {
-                                ui.add(egui::DragValue::new(&mut self.export.fps).range(1..=60));
-                                ui.label("fps");
-                            });
-                            ui.collapsing("Options", |ui| {
-                                ui.horizontal(|ui| {
-                                    let mut flag = self.export.with_history_1d;
-                                    if ui
-                                        .checkbox(&mut flag, "1D GIF: include vertical history")
-                                        .changed()
-                                    {
-                                        self.export.with_history_1d = flag;
-                                    }
-                                });
-                                ui.small(
-                                    "Applies to 1D GIF export; height limited by 1D history limit.",
-                                );
-                            });
-                            ui.separator();
-                            if let Some(p) = &self.export.progress {
-                                let done = p.load(Ordering::Relaxed) as u32;
-                                let total = self.export.total.max(1) as u32;
-                                let frac = (done as f32) / (total as f32);
-                                ui.add(
-                                    egui::ProgressBar::new(frac)
-                                        .text(format!("Exporting: {} / {}", done, total)),
-                                );
-                            }
-                            if let Some(msg) = &self.export.message {
-                                ui.label(msg.clone());
-                            }
-                        });
-                        ui.separator();
-                        // No separator after this one: `ui_model_params` draws
-                        // nothing at all for a scenario without a model, and a
-                        // separator on each side of nothing is two rules in a
-                        // row. It draws its own trailing separator instead.
-                        self.ui_model_params(ui);
-                        self.ui_colors(ui);
-                        ui.separator();
-                        self.ui_statistics(ui);
-                    });
-            });
-        self.chrome.left_open = open;
-    }
-
     /// The bottom status strip: step counter, run timer, and the latest message.
     pub(in crate::gui) fn ui_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("bottom_status").show(ui, |ui| {
@@ -469,8 +294,8 @@ impl eframe::App for CellaApp {
         egui::Panel::top("top_controls").show(ui, |ui| {
             self.ui_top_controls(ui, ctx);
         });
-        self.ui_left_panel(ui);
-        self.ui_rule_editor_panel(ui);
+        self.ui_control_panel(ui);
+        self.ui_workbench_panel(ui);
         self.ui_status_bar(ui);
         self.ui_viewport(ui);
         self.ui_shortcuts_overlay(ctx);

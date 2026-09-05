@@ -19,10 +19,23 @@
 //! a slider's local copy). Anything that touches `scenario`, `playback`,
 //! `view`, the undo stack or a worker goes through an action.
 
-use super::app::CellaApp;
+use super::app::{CellaApp, Dim, DrawMode};
 use super::interact::{GridDims, MAX_SCALE, MIN_SCALE};
-use super::state::Pacing;
+use super::state::{ControlTab, Pacing, WorkbenchTab};
 use super::theme::ThemeChoice;
+use cella_lib::types::interner;
+use cella_lib::{CellType, INACTIVE, ParamValue};
+use egui::Color32;
+
+/// The built-in demo scenarios.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::gui) enum Demo {
+    Life,
+    Rule30,
+    Radius2,
+    ThreeState2D,
+    StraightLine2D,
+}
 
 /// Something the user asked for. Cheap to clone; carries its own data.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,9 +65,38 @@ pub(in crate::gui) enum Action {
     /// Switch the theme. Background and grid-line colours still at the old
     /// theme's defaults follow it; colours the user picked stay.
     SetTheme(ThemeChoice),
+    SetGridLineColor(Color32),
+    SetInactiveColor(Color32),
+    SetTypeColor(CellType, Color32),
+    SetHistoryLimit1D(usize),
     // ── edit ──
     Undo,
+    SetDrawMode(DrawMode),
+    SetDrawType(CellType),
+    // ── scenario / rule / model ──
+    LoadDemo(Demo),
+    LoadConfigDialog,
+    /// Rebuild the grid at a new size, keeping the cells that overlap.
+    Resize {
+        w: usize,
+        h: usize,
+    },
+    /// Build the custom 1D scenario from a Wolfram code and radius.
+    Build1D {
+        code: String,
+        n: u8,
+    },
+    /// Write the rule editor's working copy into the grid.
+    ApplyRule,
+    ApplyModelParam {
+        key: String,
+        value: ParamValue,
+    },
+    /// Declare a new cell type for the rule editor.
+    AddType(String),
     // ── chrome / io ──
+    SetControlTab(ControlTab),
+    SetWorkbenchTab(WorkbenchTab),
     ToggleLeft,
     ToggleRight,
     ToggleShortcuts,
@@ -165,12 +207,86 @@ impl CellaApp {
                 }
                 self.chrome.theme = theme;
             }
+            Action::SetGridLineColor(c) => self.view.grid_line_color = c,
+            Action::SetInactiveColor(c) => self.view.inactive_color = c,
+            Action::SetTypeColor(ty, c) => self.set_color_for(&ty, c),
+            Action::SetHistoryLimit1D(n) => self.view.history_limit_1d = n.clamp(1, 10_000),
             Action::Undo => self.undo_last_batch(),
+            Action::SetDrawMode(mode) => self.edit.draw_mode = mode,
+            Action::SetDrawType(ty) => self.edit.selected_draw_type = Some(ty),
+            Action::LoadDemo(demo) => match demo {
+                Demo::Life => self.load_demo_life(),
+                Demo::Rule30 => self.load_demo_1d_rule30(),
+                Demo::Radius2 => self.load_demo_1d_n2(),
+                Demo::ThreeState2D => self.load_demo_2d_three_state_cycle(),
+                Demo::StraightLine2D => self.load_demo_2d_straightline(),
+            },
+            Action::LoadConfigDialog => self.load_config_dialog(),
+            Action::Resize { w, h } => {
+                self.inputs.grid_width = w.max(1);
+                self.inputs.grid_height = h.max(1);
+                self.resize_grid();
+            }
+            Action::Build1D { code, n } => {
+                self.inputs.custom_code = code;
+                self.inputs.custom_n = n.max(1);
+                self.load_demo_1d_custom_from_inputs();
+            }
+            Action::ApplyRule => self.apply_rule_draft(),
+            Action::ApplyModelParam { key, value } => self.apply_model_param(&key, value),
+            Action::AddType(name) => {
+                let name = name.trim();
+                if !name.is_empty() && name != INACTIVE {
+                    self.editor
+                        .custom_types
+                        .insert(interner().get_or_intern(name));
+                    self.set_status(format!("Added type '{name}'"));
+                }
+            }
+            Action::SetControlTab(tab) => self.chrome.control_tab = tab,
+            Action::SetWorkbenchTab(tab) => self.chrome.workbench_tab = tab,
             Action::ToggleLeft => self.chrome.left_open = !self.chrome.left_open,
-            Action::ToggleRight => self.editor.visible = !self.editor.visible,
+            Action::ToggleRight => self.chrome.right_open = !self.chrome.right_open,
             Action::ToggleShortcuts => self.chrome.show_shortcuts = !self.chrome.show_shortcuts,
             Action::ExportGif => self.export_gif_dialog(),
             Action::SaveFinalState => self.save_final_state(),
+        }
+    }
+
+    /// Write the rule editor's working copy into the live grid. A draft the
+    /// library refuses stays in the editor with the reason shown; a good one
+    /// becomes the grid's rule and the editor re-reads it.
+    fn apply_rule_draft(&mut self) {
+        let result = match self.scenario.dim {
+            Some(Dim::D1) => self
+                .editor
+                .rule_1d
+                .as_ref()
+                .map(|e| e.to_rule().map(|r| (Some(r), None))),
+            Some(Dim::D2) => self
+                .editor
+                .rule_2d
+                .as_ref()
+                .map(|e| e.to_rule().map(|r| (None, Some(r)))),
+            None => None,
+        };
+        match result {
+            Some(Ok((r1, r2))) => {
+                if let (Some(r), Some(g)) = (r1, self.scenario.d1.as_mut()) {
+                    g.rule = r;
+                }
+                if let (Some(r), Some(g)) = (r2, self.scenario.d2.as_mut()) {
+                    g.rule = r;
+                }
+                self.editor.error_msg = None;
+                self.refresh_rule_editor_from_current();
+                self.set_status("Applied rule");
+            }
+            Some(Err(e)) => {
+                self.editor.error_msg = Some(e.clone());
+                self.set_status(format!("Rule error: {e}"));
+            }
+            None => {}
         }
     }
 
@@ -313,9 +429,93 @@ mod tests {
         app.apply_action(Action::ToggleLeft);
         assert!(!app.chrome.left_open);
         app.apply_action(Action::ToggleRight);
-        assert!(!app.editor.visible);
+        assert!(!app.chrome.right_open);
         app.apply_action(Action::ToggleShortcuts);
         assert!(app.chrome.show_shortcuts);
+        app.apply_action(Action::SetControlTab(ControlTab::Style));
+        assert_eq!(app.chrome.control_tab, ControlTab::Style);
+        app.apply_action(Action::SetWorkbenchTab(WorkbenchTab::Explore));
+        assert_eq!(app.chrome.workbench_tab, WorkbenchTab::Explore);
+        let red = Color32::from_rgb(200, 0, 0);
+        app.apply_action(Action::SetGridLineColor(red));
+        assert_eq!(app.view.grid_line_color, red);
+        app.apply_action(Action::SetInactiveColor(red));
+        assert_eq!(app.view.inactive_color, red);
+        let alive = CellType::from("Alive");
+        app.apply_action(Action::SetTypeColor(alive, red));
+        assert_eq!(app.color_of(&alive), red);
+        app.apply_action(Action::SetHistoryLimit1D(0));
+        assert_eq!(app.view.history_limit_1d, 1);
+    }
+
+    #[test]
+    fn scenario_edit_and_rule_actions_change_the_grid() {
+        let mut app = test_app();
+        app.apply_action(Action::LoadDemo(Demo::Rule30));
+        assert_eq!(app.scenario.dim, Some(Dim::D1));
+        app.apply_action(Action::LoadDemo(Demo::Radius2));
+        assert_eq!(app.scenario.dim, Some(Dim::D1));
+        app.apply_action(Action::LoadDemo(Demo::ThreeState2D));
+        assert_eq!(app.scenario.dim, Some(Dim::D2));
+        app.apply_action(Action::LoadDemo(Demo::StraightLine2D));
+        assert_eq!(app.scenario.dim, Some(Dim::D2));
+        app.apply_action(Action::LoadDemo(Demo::Life));
+        assert_eq!(app.scenario.dim, Some(Dim::D2));
+        app.apply_action(Action::Resize { w: 12, h: 7 });
+        let g = app.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height), (12, 7));
+        app.apply_action(Action::Build1D {
+            code: "110".into(),
+            n: 1,
+        });
+        assert_eq!(app.scenario.dim, Some(Dim::D1));
+        assert_eq!(
+            app.scenario.d1.as_ref().unwrap().rule.subrules[0].wolfram_code,
+            110
+        );
+        app.apply_action(Action::SetDrawMode(DrawMode::Paint));
+        assert_eq!(app.edit.draw_mode, DrawMode::Paint);
+        let x = CellType::from("X");
+        app.apply_action(Action::SetDrawType(x));
+        assert_eq!(app.edit.selected_draw_type, Some(x));
+        app.apply_action(Action::AddType("  Ember ".into()));
+        assert!(app.editor.custom_types.contains(&CellType::from("Ember").0));
+        app.apply_action(Action::AddType(INACTIVE.into()));
+        assert!(!app.editor.custom_types.contains(&CellType::inactive().0));
+
+        // A rule draft goes live through ApplyRule; a bad one stays in the editor.
+        app.apply_action(Action::LoadDemo(Demo::Life));
+        {
+            let draft = app.editor.rule_2d.as_mut().expect("draft mirrors the grid");
+            draft.subrules[0].count = 5;
+        }
+        app.apply_action(Action::ApplyRule);
+        assert_eq!(app.scenario.d2.as_ref().unwrap().rule.subrules[0].count, 5);
+        assert!(app.editor.error_msg.is_none());
+        {
+            let draft = app.editor.rule_2d.as_mut().unwrap();
+            draft.subrules[0].range = 0;
+        }
+        app.apply_action(Action::ApplyRule);
+        assert!(app.editor.error_msg.is_some(), "range 0 is refused");
+        assert_eq!(
+            app.scenario.d2.as_ref().unwrap().rule.subrules[0].range,
+            1,
+            "grid untouched"
+        );
+        // Model parameters route through the same door.
+        app.apply_action(Action::ApplyModelParam {
+            key: "p0".into(),
+            value: ParamValue::Float(0.1),
+        });
+        assert!(
+            app.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Model parameter error")
+                || app.scenario.d2.as_ref().unwrap().model.is_none()
+        );
     }
 
     #[test]

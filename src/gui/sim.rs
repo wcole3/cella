@@ -946,14 +946,12 @@ pub(in crate::gui) mod tests {
         );
     }
 
-    /// Height a *closed* collapsing section occupies: one header row and
-    /// nothing else. It is the yardstick for "the body did not run".
-    fn closed_header_height() -> f32 {
+    /// Height one plain label row occupies, the yardstick for "the body drew
+    /// its controls" rather than just a heading.
+    fn label_row_height() -> f32 {
         let mut height = 0.0;
         egui::__run_test_ui(|ui| {
-            egui::CollapsingHeader::new("Model")
-                .default_open(false)
-                .show(ui, |ui| ui.label("body that never draws"));
+            ui.label("one row");
             height = ui.min_rect().height();
         });
         height
@@ -970,20 +968,18 @@ pub(in crate::gui) mod tests {
     }
 
     #[test]
-    fn the_model_panel_starts_open_so_its_controls_are_drawn() {
-        // A section that starts closed hides the feature, and its body — every
-        // control, and the whole read/commit path behind them — never runs in
-        // a headless test either. The wildfire model in this fixture declares
-        // more than a dozen parameters, so an open body is far taller than the
-        // lone header row a closed section would leave behind.
+    fn the_model_panel_draws_every_control_not_just_a_heading() {
+        // The wildfire model in this fixture declares more than a dozen
+        // parameters, so the section is far taller than a heading plus one row.
         let mut app = test_app_with_model();
 
         let drawn = model_panel_height(&mut app);
 
         assert!(
-            drawn > closed_header_height() * 3.0,
-            "the section must start open: {drawn} points is about a closed header"
+            drawn > label_row_height() * 6.0,
+            "the section must draw its controls: {drawn} points is about a heading"
         );
+        assert!(app.actions.is_empty(), "an untouched panel commits nothing");
     }
 
     #[test]

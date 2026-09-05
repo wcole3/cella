@@ -2,14 +2,15 @@
 //! subrule chain that drives the automaton.
 
 use super::rule_edit_model::{Rule1DEdit, Rule1DSubruleEdit, Rule2DEdit, Rule2DSubruleEdit};
+use crate::gui::actions::Action;
 use crate::gui::app::{CellaApp, Dim};
 use crate::gui::panels::widgets::{randomness_control, type_combo};
-use cella_lib::types::interner;
 use cella_lib::*;
 
 impl CellaApp {
     pub(in crate::gui) fn ui_rule_editor(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("Rule editor", |ui| {
+        let mut pending: Vec<Action> = Vec::new();
+        {
             // Manage known types
             ui.label("Types/states available to rules:").on_hover_text("Declare the distinct cell states used by your rules. 'Inactive' is reserved and always present.");
             ui.horizontal(|ui| {
@@ -18,11 +19,9 @@ impl CellaApp {
                 if ui.button("Add type")
                     .on_hover_text("Add the typed state so it can be used in rules and colored in the viewport.")
                     .clicked() {
-                    let name = self.editor.new_type_name.trim();
-                    if !name.is_empty() && name != INACTIVE {
-                        self.editor.custom_types.insert(interner().get_or_intern(name));
-                        self.set_status(format!("Added type '{}'", name));
-                        // set a default color if desired (optional; fallback hash works)
+                    let name = self.editor.new_type_name.trim().to_string();
+                    if !name.is_empty() {
+                        pending.push(Action::AddType(name));
                         self.editor.new_type_name.clear();
                     }
                 }
@@ -114,15 +113,7 @@ impl CellaApp {
                                 edit.subrules.push(Rule1DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), wolfram_code: "0".into(), n: 1, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string()});
                             }
                             if ui.button("Apply to grid").clicked() {
-                                match edit.to_rule() {
-                                    Ok(rule) => {
-                                        if let Some(g) = &mut self.scenario.d1 { g.rule = rule; }
-                                        self.editor.error_msg = None;
-                                        self.refresh_rule_editor_from_current();
-                                        self.set_status("Applied 1D rule");
-                                    }
-                                    Err(e) => { self.editor.error_msg = Some(e.clone()); self.set_status(format!("Rule error: {}", e)); }
-                                }
+                                pending.push(Action::ApplyRule);
                             }
                         } else {
                             ui.label("No 1D grid loaded.");
@@ -244,15 +235,7 @@ impl CellaApp {
                                 edit.subrules.push(Rule2DSubruleEdit{ current: INACTIVE.to_string(), criteria: INACTIVE.to_string(), count: 0, op: CountOp::Gt, limit_enabled: false, limit_value: 0, range: 1, neighborhood: Neighborhood2D::Moore, randomness_enabled: false, randomness_value: 0.0, output: INACTIVE.to_string() });
                             }
                             if ui.button("Apply to grid").clicked() {
-                                match edit.to_rule() {
-                                    Ok(rule) => {
-                                        if let Some(g) = &mut self.scenario.d2 { g.rule = rule; }
-                                        self.editor.error_msg = None;
-                                        self.refresh_rule_editor_from_current();
-                                        self.set_status("Applied 2D rule");
-                                    }
-                                    Err(e) => { self.editor.error_msg = Some(e.clone()); self.set_status(format!("Rule error: {}", e)); }
-                                }
+                                pending.push(Action::ApplyRule);
                             }
                         } else {
                             ui.label("No 2D grid loaded.");
@@ -264,7 +247,10 @@ impl CellaApp {
             }
 
             if let Some(err) = &self.editor.error_msg { ui.colored_label(egui::Color32::RED, format!("Rule error: {}", err)); }
-        });
+        }
+        for a in pending {
+            self.push(a);
+        }
     }
     /// Build the color editor panel, including the Inactive color.
     pub(in crate::gui) fn refresh_rule_editor_from_current(&mut self) {

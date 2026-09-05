@@ -148,7 +148,7 @@ impl CellaApp {
                 ui,
                 ctx,
                 "\u{25E8}",
-                "Show or hide the rule editor",
+                "Show or hide the workbench (rule, model, explore)",
                 Action::ToggleRight,
             ) {
                 pending.push(Action::ToggleRight);

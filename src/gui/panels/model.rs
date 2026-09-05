@@ -10,7 +10,9 @@
 
 use std::collections::HashMap;
 
+use crate::gui::actions::Action;
 use crate::gui::app::CellaApp;
+use crate::gui::theme::section;
 use cella_lib::{GridState, ParamDesc, ParamKind, ParamValue};
 
 impl CellaApp {
@@ -37,35 +39,26 @@ impl CellaApp {
         // One slot is enough: a person finishes at most one control per frame,
         // and the edit has to leave the closures before `self` can be touched.
         let mut commit: Option<(String, ParamValue)> = None;
-        // Open on first sight: a section that starts closed hides the whole
-        // feature behind a click nobody knows to make.
-        egui::CollapsingHeader::new(title)
-            .default_open(true)
-            .show(ui, |ui| {
-                for (group, descs) in &groups {
-                    if let Some(name) = group {
-                        ui.separator();
-                        ui.strong(name);
-                    }
-                    for desc in descs {
-                        // A key `params` lists but `get_param` will not answer
-                        // has no current value to draw, so it is skipped.
-                        let Some(value) = values.get(&desc.key) else {
-                            continue;
-                        };
-                        if let Some(edited) = param_control(ui, desc, value) {
-                            commit = Some((desc.key.clone(), edited));
-                        }
+        section(ui, &title, |ui| {
+            for (group, descs) in &groups {
+                if let Some(name) = group {
+                    ui.separator();
+                    ui.strong(name);
+                }
+                for desc in descs {
+                    // A key `params` lists but `get_param` will not answer
+                    // has no current value to draw, so it is skipped.
+                    let Some(value) = values.get(&desc.key) else {
+                        continue;
+                    };
+                    if let Some(edited) = param_control(ui, desc, value) {
+                        commit = Some((desc.key.clone(), edited));
                     }
                 }
-            });
-        // The rule the left panel follows is one separator between sections.
-        // It lives here rather than at the call site because this panel is the
-        // only one that can draw nothing at all: put it there and a scenario
-        // with no model would show two separators with nothing between them.
-        ui.separator();
+            }
+        });
         if let Some((key, value)) = commit {
-            self.apply_model_param(&key, value);
+            self.push(Action::ApplyModelParam { key, value });
         }
     }
 

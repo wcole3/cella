@@ -212,6 +212,7 @@ impl Default for StatsState {
 
 /// The rule editor's working copy of the rule, kept separate from the grid's
 /// live rule until "Apply to grid" is pressed.
+#[derive(Default)]
 pub(in crate::gui) struct EditorState {
     pub(in crate::gui) rule_1d: Option<Rule1DEdit>,
     pub(in crate::gui) rule_2d: Option<Rule2DEdit>,
@@ -219,25 +220,29 @@ pub(in crate::gui) struct EditorState {
     /// Types added through the editor, beyond those seen in rules or the grid.
     pub(in crate::gui) custom_types: BTreeSet<Spur>,
     pub(in crate::gui) new_type_name: String,
-    /// Whether the right-hand rule editor panel is open.
-    pub(in crate::gui) visible: bool,
 }
 
-impl Default for EditorState {
-    fn default() -> Self {
-        Self {
-            rule_1d: None,
-            rule_2d: None,
-            error_msg: None,
-            custom_types: BTreeSet::new(),
-            new_type_name: String::new(),
-            visible: true,
-        }
-    }
+/// Which tab of the left control panel is showing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::gui) enum ControlTab {
+    #[default]
+    Scenario,
+    Edit,
+    Style,
+    Stats,
 }
 
-/// Window furniture: text scaling, the theme, which panels are open, and the
-/// status line.
+/// Which tab of the right workbench panel is showing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::gui) enum WorkbenchTab {
+    #[default]
+    Rule,
+    Model,
+    Explore,
+}
+
+/// Window furniture: text scaling, the theme, which panels and tabs are open,
+/// and the status line.
 pub(in crate::gui) struct Chrome {
     pub(in crate::gui) font_scale: f32,
     /// Last `font_scale` actually pushed into the egui style, so the (fairly
@@ -252,6 +257,10 @@ pub(in crate::gui) struct Chrome {
     pub(in crate::gui) applied_theme: Option<ThemeChoice>,
     /// Whether the left control panel is open.
     pub(in crate::gui) left_open: bool,
+    /// Whether the right workbench panel is open.
+    pub(in crate::gui) right_open: bool,
+    pub(in crate::gui) control_tab: ControlTab,
+    pub(in crate::gui) workbench_tab: WorkbenchTab,
     /// Whether the keyboard-shortcut overlay is showing.
     pub(in crate::gui) show_shortcuts: bool,
 }
@@ -268,6 +277,9 @@ impl Chrome {
             theme: ThemeChoice::default(),
             applied_theme: None,
             left_open: true,
+            right_open: true,
+            control_tab: ControlTab::default(),
+            workbench_tab: WorkbenchTab::default(),
             show_shortcuts: false,
         }
     }

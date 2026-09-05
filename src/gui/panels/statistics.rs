@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 impl CellaApp {
     pub(in crate::gui) fn ui_statistics(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("Statistics", |ui| {
+        {
             // Current/peak table
             let mut entries: Vec<(CellType, u64, u64)> = Vec::new();
             {
@@ -86,6 +86,6 @@ impl CellaApp {
                     plot_ui.line(Line::new(ty.as_str(), pts).color(self.color_of(ty)));
                 }
             });
-        });
+        }
     }
 }
