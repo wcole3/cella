@@ -15,7 +15,8 @@ section, which lists what lives in which `src/gui/` file.
 | 1 | Reorganize the GUI so the rest is safe to change | *(done)* — commit `b092beb` |
 | 2 | GUI performance: measure, then fix three suspected defects | *(done)* — commits `e5c304d..8c1c1a7` |
 | 3 | Let external models describe their own parameters | *(done)* — commits `6d7e9b3..ad3654d` |
-| 4 | Usability and fun | *(open)* |
+| 4 | Usability and fun | *(mostly done)* — items 1, 2, 4, 5, 6, 7 landed in Phase 5; 3 and 8 open |
+| 5 | Workbench redesign + Explore (ensembles, evolution, illumination in the GUI) | *(done, click-through owed)* — branch `explore` |
 
 ## Background: why this order
 
@@ -760,7 +761,16 @@ wildfire, Phase 3 succeeded.
 
 ---
 
-## 4. Phase 4 — usability and fun *(open)*
+## 4. Phase 4 — usability and fun *(mostly done)*
+
+Items 1, 2, 4, 5, 6 and 7 landed as part of Phase 5 (September 2026): see
+`src/gui/shortcuts.rs` (1), the toolbar's log speed slider + Max (2),
+`fit_scale` in `actions.rs` (4), `random_fill` (5), `brush_indices` (6) and
+`patterns.rs` (7). Still open: **3 (redo stack)** and **8 (CSV export)**,
+plus two ideas that came up in the Phase 5 design review and were deferred:
+**snapshots/bookmarks** (save the grid at a step, jump back) and a
+**Save-config writer** (the reverse of Load Config, so a tuned rule + model
+can be shared as JSON). The original notes stay below for the two open items.
 
 Ordered by value per line of code. Every item lands in a module that Phase 1
 created.
@@ -773,7 +783,8 @@ created.
    - It returns early when `playback.playing` is true, so `Space` cannot pause
      from inside it as written. Narrow that guard to the *editing* keys (undo,
      redo); playback keys must work while playing.
-   - It never checks `ui.ctx().wants_keyboard_input()`. Without that, typing
+   - It never checks `ui.ctx().egui_wants_keyboard_input()` (the egui 0.35 name;
+     there is no `wants_keyboard_input`). Without that, typing
      `30` into the Wolfram code box, or a type name containing `s`, `r`, or
      `g`, would step, reset, or toggle the grid. Add the check first, before
      any new key. Reset gets `Ctrl`, not a bare key, because it throws away
@@ -830,7 +841,64 @@ existing file-dialog code.
 
 ---
 
-## 5. Verification
+## 5. Phase 5 — workbench and Explore *(done, click-through owed)*
+
+Landed September 2026 on branch `explore` (library commits first, then GUI
+commits `beddbcf..a520994`, docs last). Scope:
+
+- **Library** (`cella_lib`): `rng` module; grid `seed` and counter-based
+  subrule randomness (`rand` dropped; two new FNV snapshots, the sixteen
+  old ones bit-identical); `ParamKind::Bits`; `tunables` (one key grammar
+  over rule and model knobs); the `explore` module (`Sim`, metrics,
+  genes, `Ensemble` with particle-filter learning, `Evolution` with
+  objective / novelty / MAP-Elites search, archive with thumbnails);
+  `WildfireDriver` as the exemplar `MemberDriver`; `WildfireEnsemble`
+  deleted; `wildfire_smc.rs` ported onto the generic engine with the same
+  CLI and report; `examples/explore.rs`; five example configs. Guide:
+  [explore.md](explore.md).
+- **GUI**: actions + reducer, design tokens, icon toolbar, one shortcut
+  table, tab strips (control: Scenario · Edit · Style · Stats; workbench:
+  Rule · Model · Explore), brush / stamps / hover inspector / random fill,
+  themes and palette presets, overlay layers, the Explore tab with a
+  background worker, Surprise me / Mutate rule / Undo rule, the MAP-Elites
+  gallery.
+
+**Acceptance that is checked by tests**: `grep -i wildfire src/gui/explore.rs
+src/gui/panels/explore.rs src/gui/gallery.rs` returns nothing (the tab is
+model-agnostic); every tab draws headless for no scenario, Life, Rule 30
+and a model grid; a real ensemble and a real evolution round-trip through
+the worker; the reducer handles every action in the shortcut table; the
+snapshot suite is unchanged; E31 replicates E25/E28 through the generic
+engine (`validation/experiments/33-e31-generic-engine-replication.md`).
+
+**Acceptance still owed — the manual GL checklist** (this machine cannot
+open a window; see §6):
+
+1. Every shortcut in `?`, once with a `TextEdit` focused (nothing should
+   fire) and once without.
+2. **Max** speed: the status bar's steps/s climbs well above the slider's
+   1000 and Pause still responds.
+3. `F` on `configs/2d_large_moore_256.json`: the whole grid fits.
+4. Random fill, seed 42, *Clear first*, then Run to +200: two runs give the
+   same picture.
+5. Light theme: readable everywhere, the accent colour changes, the
+   inactive colour follows the theme only if you had not customised it.
+6. Age layer over the wildfire demo: the front glows, burned-out cells
+   fade to violet.
+7. Explore → Monte Carlo on the wildfire demo, Start, Run +100: the
+   probability map appears and bends with the Wind direction slider after
+   a Discard + Start.
+8. Explore → Evolve on Life with `rule.subrules[2].count` varying and
+   "Share of tracked types" targeting 0.3 at step 50: best fitness rises
+   over ten generations; Apply best changes the rule; Undo rule restores it.
+9. MAP-Elites on `configs/2d_map_elites_life_classes.json` (load, Explore,
+   Search: MAP-Elites, Run +20): the heat map fills, hovering shows
+   midpoints, clicking a cell applies its genome and Play shows that
+   behaviour.
+
+---
+
+## 6. Verification
 
 ### The commands that actually gate this repo
 
@@ -863,13 +931,15 @@ Phases 1 and 2 are confined to the binary, so this does not matter there.
 cd cella_lib && cargo clippy --package cella_lib -- -D warnings
 ```
 
-Expect **22 pre-existing errors** (16 `collapsible_if`, 3 `clone_on_copy` on
-`CellType`, 2 `too_many_arguments`, 1 `redundant_closure`). Compare against that
+Expect a small, stable number of pre-existing errors (about 13 in
+`grid1d`/`grid2d`/`threads`/`wildfire` as of Phase 5). Compare against that
 count. Do **not** fix them as a drive-by — that is unrelated churn in a
 determinism-critical crate — and do not add new ones.
 
-**2. Do not use `--all-targets`.** On `cella_lib` it reports **169**
-pre-existing errors in test code, which drowns any real signal.
+**2. `--all-targets` has its own baseline.** `cd cella_lib && cargo clippy
+--package cella_lib --all-targets` reports about **351** warnings, almost all
+in test code. The Phase 5 gate was "the count must not grow"; treat it the
+same way.
 
 ### The determinism gate
 

@@ -19,17 +19,21 @@ The library is designed with a focus on:
 | `state` | `GridState` snapshots and `Grid*::from_state` |
 | `config` | `CellaConfig`, `Config1D`, `Config2D` — JSON scenario loading |
 | `threads` | `thread_count()`, `MIN_WORK_PER_CHUNK`, worker pools, test overrides |
-| `external` | `ExternalModel` plugin trait, `ChunkCtx`, `ModelEvent`, `GridView` — pluggable transition models |
-| `wildfire` | `WildfireModel` — stochastic Alexandridis-style wildfire spread, the first `ExternalModel` |
+| `external` | `ExternalModel` plugin trait, `ChunkCtx`, `ModelEvent`, `GridView`, `ParamDesc`/`ParamKind`/`ParamValue` — pluggable transition models |
+| `rng` | `Rng` (SplitMix64), `mix`, `cell_rand(seed, step, idx, stream)`, `STREAM_RULE`, `STREAM_FILL` — the one source of randomness |
+| `tunables` | one key grammar over every knob: `rule.subrules[i].field` and `model.key` as `ParamDesc`s, `Grid*::{params, get_param, set_param}` |
+| `explore` | ensembles, evolution and illumination for any grid: `sim` (`Sim`), `metrics`, `genome`, `driver`, `ensemble`, `evolve`, `archive` — guide in [explore.md](explore.md) |
+| `wildfire` | `WildfireModel` — stochastic Alexandridis-style wildfire spread, the first `ExternalModel`; `wildfire::driver::WildfireDriver`, the worked example of a `MemberDriver` |
+| `wind_field` | `mass_consistent` terrain wind downscaling for the wildfire model |
 | `chunking` (private) | `split_chunks` — carves the output buffers into disjoint per-worker slices |
 
-Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, `grid2d_to_json`.
+Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, `grid2d_to_json`, the model-parameter types, and from `explore`: `Sim`, `Ensemble`, `EnsembleConfig`, `Evolution`, `EvolveConfig`, `GeneSpec`, `Metric`, `Objective`, `MemberDriver`, plus `WildfireDriver`/`WeatherWindow`.
 
 ### Core Components
 
 - **`CellType`**: An interned symbol identifying a semantic state (e.g., "Alive", "Dead", "X", "Inactive"). It is a newtype over a `lasso2::Spur` — a 4-byte handle into a global `ThreadedRodeo` interner — so it is `Copy` and comparisons in the stepping hot path are single integer compares. Create one with `CellType::from("Alive")` or `CellType::new("Alive")`; get the name back with `.as_str()`; the raw handle is the public field `.0`.
 - **`CellState`**: A per-cell snapshot (current type, `age_in_state`, `history_limit`, bounded history). Used as a serialization intermediate; the live grids do not store `CellState`s. Rebuild them on demand with `grid.to_cell_states()`.
-- **`Grid1D` / `Grid2D`**: The primary simulation containers. Internally they use a struct-of-arrays layout: flat `Vec`s for current types, ages, and a per-cell circular history buffer (`history_data` + `history_heads` + `history_counts`), plus a second cell buffer for double-buffered stepping. `history_limit` must be ≤ 255 — the heads/counts arrays are `u8`, and `new()` asserts it.
+- **`Grid1D` / `Grid2D`**: The primary simulation containers. Internally they use a struct-of-arrays layout: flat `Vec`s for current types, ages, and a per-cell circular history buffer (`history_data` + `history_heads` + `history_counts`), plus a second cell buffer for double-buffered stepping. `history_limit` must be ≤ 255 — the heads/counts arrays are `u8`, and `new()` asserts it. Each grid carries a `seed` (`with_seed`, `set_seed`; 2D forwards it to the model) that every random draw is keyed on, `cells()` for read access, and `reset_cells(Vec<CellType>)` to replace the whole picture (ages, history and counts reset; a model is re-attached).
 - **`Rule1D` / `Rule2D`**: Contain lists of subrules that define how cells transition between states.
 - **`GridState`**: A flat, serializable representation of a grid's current configuration, useful for snapshots.
 
@@ -123,9 +127,9 @@ Both steppers split each chunk's cells into an **interior** fast path and an **e
 
 2D hoists the y-component of the interior test to the row level (`row_interior`), so the per-cell check only bounds `x`.
 
-`Rule2DPlan` holds the per-step precomputation shared by every chunk: linear offsets per subrule, the max `pad`, whether any subrule `needs_rng`, and `work_per_cell`. It is rebuilt each `step()` rather than cached on the grid, so mutating `grid.rule` between steps can never leave a stale plan. Its cost is O(subrules × neighbors) against tens of thousands of cells.
+`Rule2DPlan` holds the per-step precomputation shared by every chunk: linear offsets per subrule, the max `pad`, and `work_per_cell`. It is rebuilt each `step()` rather than cached on the grid, so mutating `grid.rule` between steps can never leave a stale plan. Its cost is O(subrules × neighbors) against tens of thousands of cells.
 
-RNG is only constructed when `needs_rng` is set, so deterministic rules pay nothing for the randomness feature.
+**Subrule `randomness` is counter-based.** When subrule `i` has a skip probability, the stepper draws `rng::cell_rand(grid.seed, step, cell_index, STREAM_RULE + i)` — a stateless hash, no shared generator. Two consequences: a rule with `randomness` is exactly reproducible for a given `seed` on any thread count (the `1d_randomness_512` / `2d_randomness_128` FNV snapshots pin this), and deterministic rules pay nothing, because the draw only happens for subrules that ask for it. The crate has no `rand` dependency.
 
 ---
 
@@ -135,7 +139,7 @@ RNG is only constructed when `needs_rng` is set, so deterministic rules pay noth
 
 The step pipeline: `chunks_for_work(total × model.work_per_cell())` sizes the split → each chunk calls `model.step_chunk(&ChunkCtx, next)` to fill the next types, then the engine runs its bookkeeping pass → chunk results (a `TypeCounter` and any `ModelEvent`s) are reduce-merged → events are sorted and applied serially before the buffer swap, gated by `model.event_applies` so application is idempotent and independent of chunk count.
 
-**Determinism contract**: `step_chunk` runs concurrently under any grid partition. A model must derive randomness from per-cell counters (e.g. a stateless hash of `(seed, ctx.step, index)` — see `wildfire::cell_rand`) rather than shared RNG state; that makes stochastic runs exactly reproducible, thread-count-independent, and FNV-snapshot-testable.
+**Determinism contract**: `step_chunk` runs concurrently under any grid partition. A model must derive randomness from per-cell counters (a stateless hash of `(seed, ctx.step, index, stream)` — `cella_lib::rng::cell_rand`, the same function the rule stepper uses) rather than shared RNG state; that makes stochastic runs exactly reproducible, thread-count-independent, and FNV-snapshot-testable. Implement `set_seed(&mut self, seed)` (default no-op) so `Grid2D::set_seed` reaches the model; ensembles call it once per member.
 
 ### Writing a model in your own crate
 
@@ -162,16 +166,21 @@ impl ExternalModel for MyModel {
 }
 ```
 
-Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {"my_model": {...}}` alongside an empty rule. The model round-trips through `GridState` snapshots (derived state is rebuilt via `attach` on restore). Optional hooks: `event_applies` (gate long-range writes), `on_paint` (refresh derived state when the user paints), `declared_types` (painting palette), `work_per_cell` (parallel split sizing).
+Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {"my_model": {...}}` alongside an empty rule. The model round-trips through `GridState` snapshots (derived state is rebuilt via `attach` on restore). Optional hooks: `event_applies` (gate long-range writes), `on_paint` (refresh derived state when the user paints), `declared_types` (painting palette), `work_per_cell` (parallel split sizing), `set_seed` (reseed for ensembles), and the parameter trio below.
+
+### Drivers: what a model adds to an ensemble
+
+Knob-turning is generic; anything else a model needs per member (a weather schedule, a daily containment roll) is a `MemberDriver` in the model's own crate, registered with `#[typetag::serde(name = "...")]` and named in JSON as `"driver": {"name": {...}}`. It gets `apply` (every member, every forcing change), an optional `period_end` every `period_steps`, `free_genes` for genes only it reads, and `owned_keys` for prefixed knobs it writes itself. `wildfire::driver::WildfireDriver` is the worked example, explained line by line in [explore.md](explore.md) §13.
 
 ### The wildfire model
 
-**Ensembles and wind fields (September 2026).** `ensemble::WildfireEnsemble`
-runs many wildfire grids at once from a parameter prior, gives a per-cell
-burn probability, and can learn from an observed perimeter (resample,
-mutate, immigrants — a particle filter with GA operators); configure with an
-`"ensemble"` block and `CellaConfig::build_ensemble()`, full guide in
-[ensemble.md](ensemble.md). `wind_field::mass_consistent` /
+**Ensembles and wind fields (September 2026).** Ensembles are a generic
+feature (`explore::Ensemble`, [explore.md](explore.md)); the wildfire model
+takes part through `WildfireDriver`, which applies the wind schedule,
+optional `tau_days` decay and the FSim-style daily containment roll to each
+member. `configs/2d_wildfire_ensemble.json` shows the `"ensemble"` block;
+`examples/wildfire_smc.rs` is the validation runner built on it.
+`wind_field::mass_consistent` /
 `MassConsistentBasis` downscale one wind over the elevation layer
 (WindNinja-style mass conservation: ridges speed up, valleys channel) into a
 per-cell field for `WildfireModel::set_wind_field`; `set_density` paints a
@@ -184,13 +193,15 @@ the slope table (`Arc`), so an ensemble costs roughly cells × members × 8 B.
 
 A model can describe its own tunable values so a generic UI can build controls for it without knowing anything about the model. Three types in `external.rs` carry the description:
 
-- **`ParamValue`** — the value itself, as read from or written to a control: `Float(f64)`, `Int(i64)`, `Bool(bool)`, or `Choice(String)`.
-- **`ParamKind`** — what kind of control the value wants, and its legal range: `Float { min, max, step }`, `Int { min, max }`, `Bool`, or `Choice { options }`.
+- **`ParamValue`** — the value itself, as read from or written to a control: `Float(f64)`, `Int(i64)`, `Bool(bool)`, `Choice(String)`, or `Bits(u128)` (serialised as a decimal string so JSON stays lossless).
+- **`ParamKind`** — what kind of control the value wants, and its legal range: `Float { min, max, step }`, `Int { min, max }`, `Bool`, `Choice { options }`, or `Bits { len }` (`len` independent on/off bits; a 1D rule table is `2^(2n+1)` of them).
 - **`ParamDesc`** — one row of self-description: `key` (the stable name used with `get_param`/`set_param`), `label`, an optional `group` (so a panel can put related controls under one heading), an optional `help` tooltip, an optional `unit` suffix (`"m/s"`, `"°"`), the `kind`, whether changing it needs `reattach` (see below), and whether it is `read_only`.
 
 Three `ExternalModel` trait methods carry these around, and **all three have default implementations** — `params() -> Vec<ParamDesc>` defaults to an empty list, `get_param(&self, key) -> Option<ParamValue>` defaults to `None`, and `set_param(&mut self, key, value) -> Result<(), ModelError>` defaults to rejecting every key. A model that implements none of them keeps compiling and simply shows no controls.
 
 Two rules come with those methods, and both are easy to trip over. First, **`get_param` must return `Some` for every key `params()` lists**: the engine's rollback puts back the value `get_param` reported, so a `reattach: true` key it will not answer has no way home — and `set_model_param` refuses to write such a key at all rather than strand the model. Second, **`set_param` validates nothing and rebuilds nothing on its own**; it is the raw write, so library callers should go through `Grid2D::set_model_param`, which checks the descriptor first and re-runs `attach` when the descriptor asks for it. Calling `set_param` directly is for a model that is not attached to a grid, such as the clone inside a snapshot, which is re-attached when it is restored.
+
+The same description covers a grid's *rule*: `tunables::rule2d_params` / `rule1d_params` list `rule.subrules[i].count`, `.limit`, `.range`, `.op`, `.neighborhood`, `.randomness` (2D) and `.wolfram_code` (1D, as `Bits`) as `ParamDesc`s, and `Grid1D::params` / `Grid2D::params` return rule and `model.*` knobs together, with `get_param` / `set_param` (a rule write rebuilds the subrule through `Rule2DSubrule::new` and runs `validate()`; a refusal leaves the rule untouched). This is the key grammar the `explore` genes use.
 
 `Grid2D::set_model_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError>` is the engine-side half: it does the generic work so a model author does not have to write range checks. It looks up `key` in `model.params()` (unknown key or `read_only` → `Err`), checks `value` against that descriptor's `ParamKind` bounds itself (bounds check), reads the old value with `get_param` and refuses the whole write if a `reattach` parameter has none (there would be nothing to roll back to), calls `model.set_param(key, value)` (set), and — only when the descriptor says `reattach: true` — calls `model.attach` again to rebuild any derived state (reattach). If that `attach` call fails, `set_model_param` writes the old value back with another `set_param` and calls `attach` once more so the model ends up exactly as it was before the edit (rollback), then returns the original error.
 
@@ -310,6 +321,8 @@ it on load. It never influences a simulation.
 
 `initial` is a flat array of type *names* with length `width` (1D) or `width * height` (2D).
 
+Both variants also take `"seed"` (default 0, the grid's random seed), and two optional blocks, `"ensemble"` and `"evolve"`, whose fields are documented in [explore.md](explore.md) §7–8. `build_sim()` returns the grid as an `explore::Sim`; `build_ensemble()` / `build_evolution()` return `Option<Result<_, ModelError>>` — `None` when the block is absent, `Err` when it does not fit the grid (an unknown gene key, a `track` type nothing declares). Blocks reject unknown fields, so the pre-September-2026 `prior` form fails with a message pointing at the migration table in explore.md §15.
+
 ```rust
 use cella_lib::config::CellaConfig;
 let cfg = CellaConfig::from_file("configs/life.json")?;
@@ -357,7 +370,7 @@ Environment variables the suite reads:
 - `CELLA_BENCH_RUNS=N` — repeats per benchmark (default 10). Timings are recorded per thread count (`<name>_t<threads>`).
 - `CELLA_EXPORT_CONFIGS=1` — write a JSON config file for each scenario the tests build.
 
-Integration tests live in `cella_lib/tests/`: `config_tests.rs` (JSON round-trips), `edge_cases.rs` (validation boundaries), `randomness.rs`, `soa_robust.rs` (history circular buffer + serial/parallel agreement), and `long_suite.rs` (ignored-by-default stress, snapshots, benchmarks).
+Integration tests live in `cella_lib/tests/`: `config_tests.rs` (JSON round-trips; every shipped config loads and builds its blocks), `edge_cases.rs` (validation boundaries), `randomness.rs`, `soa_robust.rs` (history circular buffer + serial/parallel agreement), `external_model.rs`, `explore_generic.rs` (an out-of-tree model and driver run through `CellaConfig` JSON, proving the engines need nothing from the wildfire crate), and `long_suite.rs` (ignored-by-default stress, snapshots, benchmarks).
 
 ---
 

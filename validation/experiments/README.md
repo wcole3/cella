@@ -54,4 +54,5 @@ Research notes: [why fires slow down, what wind a fire feels, what suppression d
 | E26 | [terrain-adjusted wind field (mass-consistent downscaling)](30-e26-terrain-wind-field.md) | NULL at this kernel; infrastructure KEPT | Bear, Brattain, Buck, Chimney | ±0.01 at ×1, ±0.02 at ×3; run cost 6 s | Round 4 |
 | E27 | [painted retardant multiplier that dries out](31-e27-painted-retardant-multiplier.md) | REJECTED (tactics, not material) | Bear, Brattain, Buck, Chimney | 0.02 = fence, 0.1 = nothing; recovery time irrelevant | Round 4 |
 | E28 | [containment-probability operator replaces the decay](32-e28-containment-probability-operator.md) | KEPT (recommended over τ) | all six incl. holdout | containment-only: Bear 0.482 vs decay 0.456; others within noise | Round 4 |
+| E31 | [replicate E25/E28 through the generic `explore` engine](33-e31-generic-engine-replication.md) | PASS (replication); E28 Bear gain = noise | all six incl. holdout | containment-only within 0.009 IoU of record on every fire; containment vs decay a tie everywhere | Round 4 |
 

@@ -247,7 +247,8 @@ The egui GUI (launched with `--gui`) provides:
 | Document | Contents |
 |----------|----------|
 | [Library Documentation](docs/lib.md) | Architecture, module reference, rule system, serialisation, threading |
-| [Application Documentation](docs/app.md) | CLI usage, GUI walkthrough, GIF export, configuration guide |
+| [Application Documentation](docs/app.md) | CLI usage, GUI workbench tour, editing, layers, Explore tab, configuration guide |
+| [Explore Guide](docs/explore.md) | Ensembles, evolution and MAP-Elites for any rule or model; genes, metrics, drivers, CLI, honest reading of results |
 | [Performance Review](docs/performance.md) | Engine internals, optimizations, known issues, recommendations, Hashlife notes |
 
 ### Generating Rust API Docs
@@ -276,6 +277,7 @@ cella/
 ├── docs/
 │   ├── lib.md              # Library reference
 │   ├── app.md              # Application guide
+│   ├── explore.md          # Ensembles / evolution / illumination guide
 │   └── performance.md      # Performance review & roadmap
 ├── src/                    # Binary crate
 │   ├── main.rs             # Entry point (CLI menu / --gui)

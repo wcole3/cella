@@ -226,6 +226,17 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.6 (2026-09-05, before the E31 run): the wildfire-specific ensemble
+  (`WildfireEnsemble`, `prior` block) was replaced by the model-agnostic
+  `cella_lib::explore` engine with a `WildfireDriver` supplying the weather
+  schedule, decay and containment roll (`docs/explore.md`). E31 is declared
+  as a **replication, not an experiment**: re-run E25 (assimilating, 20 %
+  immigrants) and E28 (containment only, decay off) through the unchanged
+  runners `exp_smc_imm.py` / `exp_containment_op.py`. Acceptance: six-fire
+  mean consensus IoU within 0.02 and mean Brier within 0.005 of the
+  recorded rows (E25d replicate spread ≤ 0.02 is the bar). Bit-identity is
+  not expected: the member seeds and gene draws come from a different
+  generator. No metric, baseline or split changes.
 - v1.5 (2026-09-04, before E26–E28 runs): declared the terrain wind field
   (mass-consistent downscaling, layer depth ∈ {150, 300, 600} m), painted
   retardant (density multiplier ∈ {0.02, 0.05, 0.1}, recovery ∈ {24, 72, ∞} h)

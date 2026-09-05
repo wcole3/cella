@@ -209,6 +209,18 @@ physical replacement: the FSim-style containment-probability operator
 are in place but null/negative until the kernel's wind response (E30) and
 an agent placement rule exist.
 
+## Status update (2026-09-05): the ensemble became a library feature for any model
+
+The wildfire-only ensemble was replaced by `cella_lib::explore` — ensembles,
+evolution and MAP-Elites for any rule or model ([docs/explore.md](../docs/explore.md));
+the wildfire model takes part through `WildfireDriver` (weather schedule,
+decay, containment roll). E31 re-ran E25 and E28 through it with the
+unchanged runners: the recommended configuration (containment only)
+replicates within 0.009 IoU on all six fires; E28's +0.026 on Bear turned
+out to be noise, so containment-only and the decay are a tie everywhere and
+the operator is kept for being the physical mechanism at no cost. Runs are
+now bit-reproducible for a given seed. Next: E30 kernel wind-rate refit.
+
 ## The challenge ladder (downloaded and waiting)
 
 Deeper research found harder validation targets; the directly fetchable ones

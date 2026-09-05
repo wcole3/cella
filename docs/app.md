@@ -86,103 +86,170 @@ Save Final State and Export GIF use the same dialog and fail the same way;
 their status messages say "No save path chosen" / "No GIF path chosen". To
 see more detail from `rfd`, run with `RUST_LOG=rfd=debug`.
 
+### The workbench, in one picture
+
+```
+┌───────────────────────── toolbar ───────────────────────────┐
+│ ▶ ⏭ ⏩+N  Speed ──●── Max   − 8 + ⤢   ↺   🎞 💾   ◧ ◨   ? │
+├─────────────┬───────────────────────────────┬───────────────┤
+│ control     │                               │ workbench     │
+│ Scenario    │                               │ Rule          │
+│ Edit        │         viewport              │ Model         │
+│ Style       │      (grid + layers)          │ Explore       │
+│ Stats       │                               │               │
+├─────────────┴───────────────────────────────┴───────────────┤
+│ Step 120 · 60 steps/s · Time 2.0s · Avg 0.5 ms/step · status │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The **control** panel on the left is what you *do* to a simulation (load
+it, edit cells, style the view, watch statistics). The **workbench** on the
+right is what you *build* (the rule, the model's parameters, the Explore
+tools). Each is a strip of tabs, one visible at a time, so neither becomes
+a long scroll of collapsed headers. Both collapse from the toolbar (◧ ◨, or
+`L` / `W`) or by dragging their edge shut.
+
+### Toolbar and keyboard shortcuts
+
+Every shortcut lives in one table (`src/gui/shortcuts.rs`); the toolbar
+tooltips, the `?` overlay and the key handler all read it, so they cannot
+disagree. Press `?` in the app for the same list.
+
+| Button | Does | Key |
+|---|---|---|
+| ▶ / ⏸ | Play / pause | `Space` |
+| ⏭ | Step once | `S`, `→` |
+| ⏩ +N | Run N steps as fast as the engine allows, then stop | — |
+| Speed slider | Steps per second, 1–1000 on a log scale | — |
+| Max | Ignore the slider; as many steps per frame as fit the time budget | — |
+| − / value / + | Zoom out / set pixels per cell / zoom in | `−`, `+` or `=` |
+| ⤢ | Zoom to fit the grid in the viewport | `F` |
+| ↺ | Reset to the initial state | `Ctrl+R` |
+| 🎞 | Export a GIF (opens the Edit tab's Export section) | `Ctrl+E` |
+| 💾 | Save the current state as JSON | `Ctrl+S` |
+| ◧ / ◨ | Show or hide the control / workbench panel | `L` / `W` |
+| ? | The shortcut list | `?` |
+| | Toggle grid lines / age layer / probability layer | `G` / `A` / `P` |
+| | Undo the last paint stroke *(paused only)* | `Ctrl+Z` |
+| | Undo the last rule change *(paused only)* | `Ctrl+U` |
+| | Random fill / Surprise me / Mutate rule with the Edit tab's settings *(paused only)* | `R` / `Shift+R` / `M` |
+
+Keys are ignored while a text box has focus, so typing `30` into the
+Wolfram code box never steps the simulation. The editing keys are ignored
+while playing; playback and view keys always work.
+
+### Viewport
+
+- **Pan**: drag with the middle button, or left-drag on empty space.
+- **Zoom**: mouse wheel, the toolbar, or `F` to fit.
+- **Edit**: left-click / drag with the tool chosen in the Edit tab (below).
+- **Hover inspector** (Style tab): a tooltip with the cell's `x, y`, index,
+  type (with its colour) and age; on a 1D history row it says which row.
+- **Layers** are drawn over the cells: grid lines, the **age heat** (cells
+  tinted by how recently they changed, so fronts glow), and the
+  **probability map** an ensemble produces (blue = few members, red = most).
+  Toggle them in the Edit tab or with `G` / `A` / `P`.
+
+### Control tabs
+
+**Scenario.** Built-in demos (Life, Rule 30, radius-2, three-state 2D,
+straight-line), *Load Config JSON…*, the custom 1D builder (Wolfram code +
+radius), grid size + *Resize*, and the 1D history row count.
+
+**Edit.**
+- *Tool*: **Cycle** (click a cell to step it to the next type), **Paint**
+  (drag to paint the chosen type; brush size 1–15), **Stamp** (2D: place a
+  Glider, lightweight spaceship, R-pentomino or Acorn at the click; a ghost
+  outline shows where). One undo entry per stroke or stamp.
+- *Random fill*: density, type, a visible **seed** (↻ moves it on), and
+  *Clear first*. The same seed always paints the same picture. With *Clear
+  first* the result becomes the new starting state Reset returns to.
+- *Fun*: **Surprise me** rolls every knob of the rule and model at random
+  within its declared bounds and random-fills 30 % with the first type;
+  **Mutate rule** nudges every knob a little (the slider sets how much);
+  **Undo rule** puts the knobs back (up to 16 changes deep). Each press
+  moves the seed on so the next surprise differs.
+- *Layers*: grid lines, age heat + fade cap, probability map + opacity.
+- *Export GIF*: frame delay, scale, 1D space-time stacking, *Export…*.
+
+**Style.** Dark / light theme; font size; grid-line colour; hover
+inspector; a palette preset (Calm, Okabe-Ito, Tol bright, Viridis, Ember)
+with *Re-slot colours*; the Inactive colour; and one picker per declared
+type. Colours from a config's `colors` block survive a palette change.
+
+**Stats.** Live population and peak counts, and the history chart. During
+a *Run to +N* the chart gains one point per drawn frame rather than per
+step; the counters above it are exact either way.
+
+### Workbench tabs
+
+**Rule.** The subrule editor. Values are held as text so half-typed numbers
+are legal until *Apply to grid*; *Add type* declares a new cell type.
+
+**Model.** Shown only when the loaded grid has a `model` (for example
+`configs/2d_wildfire_demo.json`); Life shows a note instead. Controls are
+grouped under headings the model supplies. Cheap parameters commit as you
+drag; expensive ones (those needing an internal rebuild) commit when the
+gesture ends. Sliders stop at each parameter's end stops and typed values
+are pulled back into range, so an out-of-range value never reaches the
+model. A read-only parameter (the seed) shows as a label. **Reset keeps the
+values you set**: an accepted edit is mirrored into the snapshot Reset
+restores from.
+
+**Explore.** Run the loaded grid as an **ensemble** (a probability map that
+can learn from the cells you paint) or **evolve** its knobs (best score,
+novelty, or a MAP-Elites archive with a clickable gallery). The tab knows
+nothing about which model is loaded: genes come from the grid's own
+parameter list, tracked types from its declared types. The full walkthrough
+is [explore.md](explore.md) §14; the engines run on a background thread,
+so the grid stays paintable and playable while they work.
+
 ### Code Layout (Module Map)
 
-The GUI source lives in `src/gui/`. Each file owns one concern, so you can
-usually tell where a change belongs without reading the whole tree. If you are
-adding something, put it in the file whose description matches — and if nothing
-matches, that is a hint the thing deserves its own module.
+The GUI source lives in `src/gui/`. Each file owns one concern. The design
+borrows three habits from React-style UIs: panels **push actions** into a
+queue and one reducer applies them after everything is drawn (so a button
+never mutates state mid-frame); `state.rs` is the **single source of
+truth**, with derived data (declared types, gene rows) rebuilt per frame;
+and **design tokens** (`theme.rs`) hold spacing, radius, accent and palettes
+so the panels look alike without copying numbers around.
 
 | File | What lives here |
 |---|---|
-| `gui.rs` | Module list and the single `pub use app::run_gui` the binary calls. Nothing else. |
-| `gui/app.rs` | The `CellaApp` struct and the `eframe::App` impl. The `ui` method is deliberately short: it only says which panel is drawn in what order. |
-| `gui/state.rs` | The nine structs `CellaApp` is made of (`Scenario`, `Playback`, `ViewSettings`, …), each with the app's starting values in its `Default`. Add a new field to the group it belongs to, not to `CellaApp`. |
-| `gui/painter.rs` | Turning grid cells into rectangles, including the run-merging that keeps large grids cheap to draw. |
-| `gui/interact.rs` | Mouse and keyboard gestures on the viewport: zoom, pan, paint, click-to-cycle, undo. Also `cell_index_at`, the "which cell was clicked?" arithmetic. |
-| `gui/sim.rs` | Stepping the simulation and recording statistics. The playback clock. |
-| `gui/scenarios.rs` | Loading demos and JSON configs, resizing the grid, resetting to the initial state. |
-| `gui/types.rs` | Cell-type helpers: which states a scenario declares, what order to list them in, what a click cycles to next. |
-| `gui/export.rs` | Writing GIFs and JSON snapshots, plus the file dialogs that start them. |
-| `gui/render.rs` | The colour palette and the single function that maps a cell type to a colour, shared by the viewport and the GIF exporter so the two cannot disagree. |
-| `gui/panels/` | One file per region of the window — `toolbar`, `scenario`, `rule_editor`, `colors`, `statistics`, `model`. |
-| `gui/panels/widgets.rs` | Controls used by more than one panel, such as the cell-type picker. Reach for this before hand-rolling a widget a second time. |
-| `gui/panels/rule_edit_model.rs` | The rule editor's working copy of a rule, held as text so half-typed values are legal until "Apply to grid" converts them. |
+| `gui.rs` | Module list and the single `pub use app::run_gui` the binary calls. |
+| `gui/app.rs` | `CellaApp` and the `eframe::App` impl; `ui` only says which panel is drawn in what order, then drains actions and polls the workers. |
+| `gui/state.rs` | The structs `CellaApp` is made of (`Scenario`, `Playback`, `ViewSettings`, `EditState`, `Chrome`, …) with the starting values in their `Default`s. |
+| `gui/actions.rs` | The `Action` enum (every user intent) and the reducer `apply_action`; also random fill and the paint/stamp/undo helpers. |
+| `gui/shortcuts.rs` | The one keyboard table, read by the toolbar, the `?` overlay and the key handler. |
+| `gui/theme.rs` | Design tokens, `ThemeChoice`, `section()`, the palette presets. |
+| `gui/painter.rs` | Cells → rectangles with run merging; calls the layer pass between cells and grid lines. |
+| `gui/layers.rs` | `LayerState`, the probability map, the quantised overlay row emitter. |
+| `gui/render.rs` | `color_for`, the heat and age ramps; shared by viewport and GIF export so they cannot disagree. |
+| `gui/interact.rs` | Viewport gestures: zoom, pan, brush painting, cycle, stamp ghost, hover inspector, hotkeys. |
+| `gui/patterns.rs` | The stamp patterns as offset tables. |
+| `gui/sim.rs` | Stepping, the playback clock and rate meter, statistics recording, the `test_app()` fixture. |
+| `gui/scenarios.rs` | Demos, config loading, resize, reset. |
+| `gui/types.rs` | Which types a scenario declares and what a click cycles to. |
+| `gui/export.rs` | GIF and JSON writing plus the file dialogs. |
+| `gui/explore.rs` | Explore state, the worker thread and its messages, gene rows from `Grid::params()`, Surprise me / Mutate rule / Undo rule, applying genomes. |
+| `gui/gallery.rs` | Archive heat-map layout, top elites, thumbnail pixels (pure, unit-tested). |
+| `gui/panels/` | One file per region: `toolbar`, `tabs` (the two strips), `scenario`, `edit`, `style`, `statistics`, `rule_editor`, `model`, `explore`. |
+| `gui/panels/widgets.rs` | Controls used by more than one panel (type picker, randomness control). |
+| `gui/panels/rule_edit_model.rs` | The rule editor's text-form working copy. |
 
-### GUI Features
-
-#### Viewport
-- **Panning**: Click and drag with the middle mouse button (or left-click on empty space) to move the grid.
-- **Zooming**: Use the mouse wheel to zoom in and out of the grid.
-- **Painting**: Left-click on cells to toggle their state or "paint" with the currently selected `CellType`.
-
-#### Control Panel (Left Side)
-- **Simulation Controls**: Play/Pause, Step, and Reset.
-- **Speed Slider**: Control the simulation speed (steps per second).
-- **Preset Menu**: Quickly load built-in demos like Game of Life, Rule 30, and specialized neighborhoods.
-- **Grid Settings**: Change grid width, height, and history limit on the fly.
-- **Color Pickers**: Customize the colors for each `CellType` in the simulation.
-- **Rules Editor**:
-    - View and modify existing subrules.
-    - Change neighborhood shapes (Moore, VonNeumann, Langton, StraightLine, Knight), ranges, and thresholds.
-    - Add new subrules to create complex multi-state automata.
-
-#### Statistics Panel (Left Side)
-- **Population Counts**: Live counters for each cell type.
-- **Peak Counts**: Tracks the maximum population reached for each type.
-- **History Charts**: View live line graphs of population changes over time.
-
-#### Model Panel (Left Side)
-This panel only appears when the loaded config has a `model` (e.g.
-`configs/2d_wildfire_demo.json`) — a scenario with no model, like Game of
-Life, shows nothing here. The section starts expanded, and its controls are
-grouped under headings the model supplies (for the wildfire model: Wind, Fire,
-Terrain, and Spotting when spotting is turned on). Cheap parameters commit as
-soon as you move their slider, so the effect looks live; a handful of
-expensive ones wait until the gesture is over — you release the slider, tap an
-arrow key, or click away — so an internal rebuild only happens once per edit
-instead of once per frame. Opening the panel changes nothing by itself: a
-value is only written when it actually differs from the one the model already
-holds. A read-only parameter, such as the seed, shows as a plain label instead
-of a control — there is nothing to drag.
-
-The controls keep you inside each parameter's allowed range: a slider stops at
-its end stops, and a value you type is pulled back into range before the panel
-sees it, so an out-of-range number never reaches the model. A parameter error
-in the status bar therefore means something rarer — the model's own validation
-refused a value its own descriptor said was allowed. No wildfire parameter
-does that today (a test pins every descriptor's end stops to values the model
-accepts), so in practice you will not see one.
-
-Pressing **Reset** rewinds the grid but keeps the values you set with the
-sliders — an accepted edit is mirrored into the same snapshot Reset restores
-from, so tuning a model and then resetting the cells does not also undo your
-tuning.
-
-While you step or play normally, the history chart gains one point per step. A
-"Run to +N" run is different: it packs as many steps as it can into each drawn
-frame, and the chart gains one point per *frame* instead. Nothing useful is
-lost — the chart keeps a rolling window of the most recent samples
-(`StatsState::window_len`, 300 by default), so a run of thousands of steps would
-have thrown away all but the last few hundred points anyway, and recording them
-only to discard them slowed the run down. The population and peak counters above
-the chart are not affected at all: `ui_statistics` reads `counts_current` and
-`peak_counts` straight off the grid, so they are exact after every step no matter
-how the steps were paced.
+Tests run headless with `egui::__run_test_ui`; the app cannot open a window
+on this repo's WSL box, so the manual GL checklist lives in
+[roadmap.md](roadmap.md) Phase 5.
 
 ---
 
 ## GIF Export
 
-The GUI allows you to record your simulation and export it as an animated GIF.
-
-1.  Pause the simulation.
-2.  Open the **Export** section in the control panel.
-3.  Choose the **Frame Delay** (ms) and **Scale** (pixels per cell).
-4.  Toggle **Recording** to "On".
-5.  Press **Play** or **Step** to capture frames.
-6.  When finished, toggle **Recording** to "Off".
-7.  Provide a filename and click **Save GIF**.
+1. Pause.
+2. Edit tab → **Export GIF**: set the frame delay (ms), scale (pixels per
+   cell), and for 1D whether to stack steps into a space-time image.
+3. Press **Export…** (or `Ctrl+E`), pick a file. The frames are rendered on
+   a worker thread; the status bar reports progress and completion.
 
 ---
 

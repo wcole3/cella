@@ -63,3 +63,9 @@ would need its own ensemble to be meaningful. Next: check the learned
 daily containment rate against the ICS-209 percent-contained series
 (the data from E21, now used as a check rather than a driver), and give
 the operator a fuel-type term as Finney's model has.
+
+**Addendum (E31, 2026-09-05).** Re-run through the generic engine
+([33](33-e31-generic-engine-replication.md)), containment-only scores
+0.478 on Bear against 0.486 for the decay: the +0.026 above is
+run-to-run noise, not a gain. The verdict stands on the mechanism (a
+published stopping rule at no cost), not on the number.
