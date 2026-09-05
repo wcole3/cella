@@ -291,6 +291,7 @@ impl CellaApp {
     /// returns. Explicit colours from a config are applied on top afterwards.
     pub(in crate::gui) fn reset_colors_for_scenario(&mut self) {
         self.view.colors.clear();
+        self.view.config_colors.clear();
         let types: Vec<CellType> = self
             .declared_types()
             .into_iter()
@@ -311,6 +312,7 @@ impl CellaApp {
         &mut self,
         colors: &std::collections::BTreeMap<String, String>,
     ) {
+        self.view.config_colors = colors.clone();
         for (name, hex) in colors {
             match parse_hex_color(hex) {
                 Some(c) => self.set_color_for(&CellType::from(name.as_str()), c),

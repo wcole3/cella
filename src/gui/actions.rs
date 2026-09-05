@@ -65,6 +65,11 @@ pub(in crate::gui) enum Action {
     /// Switch the theme. Background and grid-line colours still at the old
     /// theme's defaults follow it; colours the user picked stay.
     SetTheme(ThemeChoice),
+    /// Switch to a palette preset (index into `theme::PALETTES`); automatic
+    /// colours are re-slotted, config colours re-applied, user picks reset.
+    SetPalette(usize),
+    /// Hand out palette slots again, dropping any colour the user picked.
+    ReslotColors,
     SetGridLineColor(Color32),
     SetInactiveColor(Color32),
     SetTypeColor(CellType, Color32),
@@ -227,6 +232,13 @@ impl CellaApp {
                 }
                 self.chrome.theme = theme;
             }
+            Action::SetPalette(i) => {
+                let i = i.min(super::theme::PALETTES.len() - 1);
+                self.view.palette = super::theme::PALETTES[i].colors.to_vec();
+                self.view.palette_index = i;
+                self.reslot_colors();
+            }
+            Action::ReslotColors => self.reslot_colors(),
             Action::SetGridLineColor(c) => self.view.grid_line_color = c,
             Action::SetInactiveColor(c) => self.view.inactive_color = c,
             Action::SetTypeColor(ty, c) => self.set_color_for(&ty, c),
@@ -324,6 +336,14 @@ impl CellaApp {
             }
             None => {}
         }
+    }
+
+    /// Give every type its automatic palette slot again, then put the loaded
+    /// config's colours back on top; colours the user picked by hand go.
+    fn reslot_colors(&mut self) {
+        let config_colors = self.view.config_colors.clone();
+        self.reset_colors_for_scenario();
+        self.apply_config_colors(&config_colors);
     }
 
     /// Paint the selected type onto `cells` as part of the current stroke.
@@ -789,6 +809,48 @@ mod tests {
             Some(inactive),
             "an empty stack is a no-op"
         );
+    }
+
+    #[test]
+    fn palette_presets_reslot_automatic_colours_but_keep_config_colours() {
+        use crate::gui::theme::PALETTES;
+        let mut app = test_app();
+        app.load_demo_life();
+        let alive = CellType::from("Alive");
+        assert_eq!(
+            app.color_of(&alive),
+            PALETTES[0].colors[0],
+            "first type, first slot"
+        );
+        // A colour the config asked for survives a palette change; a hand pick does not.
+        let mut cfg = std::collections::BTreeMap::new();
+        cfg.insert("Alive".to_string(), "#112233".to_string());
+        app.apply_config_colors(&cfg);
+        assert_eq!(app.color_of(&alive), Color32::from_rgb(0x11, 0x22, 0x33));
+        app.apply_action(Action::SetPalette(3));
+        assert_eq!(app.view.palette_index, 3);
+        assert_eq!(app.view.palette, PALETTES[3].colors.to_vec());
+        assert_eq!(
+            app.color_of(&alive),
+            Color32::from_rgb(0x11, 0x22, 0x33),
+            "config colour kept"
+        );
+        app.view.config_colors.clear();
+        app.apply_action(Action::SetTypeColor(alive, Color32::WHITE));
+        app.apply_action(Action::SetPalette(1));
+        assert_eq!(
+            app.color_of(&alive),
+            PALETTES[1].colors[0],
+            "hand pick dropped, new slot used"
+        );
+        app.apply_action(Action::SetTypeColor(alive, Color32::WHITE));
+        app.apply_action(Action::ReslotColors);
+        assert_eq!(app.color_of(&alive), PALETTES[1].colors[0]);
+        app.apply_action(Action::SetPalette(99));
+        assert_eq!(app.view.palette_index, PALETTES.len() - 1, "clamped");
+        // Loading a scenario forgets the previous config's colours.
+        app.load_demo_life();
+        assert!(app.view.config_colors.is_empty());
     }
 
     #[test]

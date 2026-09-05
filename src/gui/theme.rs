@@ -96,6 +96,86 @@ pub(in crate::gui) fn apply(ctx: &egui::Context, theme: ThemeChoice) {
     });
 }
 
+/// A named set of eight cell colours. Types take slots in order (see
+/// `reset_colors_for_scenario`), so the first colour is the first declared
+/// type's, and so on.
+pub(in crate::gui) struct PalettePreset {
+    pub name: &'static str,
+    pub colors: [Color32; 8],
+}
+
+/// The palette presets offered in the Style tab. "Calm" is the palette the
+/// app always had; Okabe-Ito and Tol are colour-blind-safe sets from the
+/// literature; Viridis and Ember are sequential ramps for when types have an
+/// order (fuel, burning, burnt).
+pub(in crate::gui) const PALETTES: [PalettePreset; 5] = [
+    PalettePreset {
+        name: "Calm",
+        colors: [
+            Color32::from_rgb(0x56, 0xB4, 0xE9),
+            Color32::from_rgb(0xE6, 0x9F, 0x00),
+            Color32::from_rgb(0x00, 0xA9, 0xCF),
+            Color32::from_rgb(0xF0, 0xE4, 0x42),
+            Color32::from_rgb(0x66, 0xA6, 0x69),
+            Color32::from_rgb(0xDF, 0x70, 0x93),
+            Color32::from_rgb(0x80, 0x80, 0x80),
+            Color32::from_rgb(0xAA, 0xCC, 0xEE),
+        ],
+    },
+    PalettePreset {
+        name: "Okabe-Ito",
+        colors: [
+            Color32::from_rgb(0xE6, 0x9F, 0x00),
+            Color32::from_rgb(0x56, 0xB4, 0xE9),
+            Color32::from_rgb(0x00, 0x9E, 0x73),
+            Color32::from_rgb(0xF0, 0xE4, 0x42),
+            Color32::from_rgb(0x00, 0x72, 0xB2),
+            Color32::from_rgb(0xD5, 0x5E, 0x00),
+            Color32::from_rgb(0xCC, 0x79, 0xA7),
+            Color32::from_rgb(0x99, 0x99, 0x99),
+        ],
+    },
+    PalettePreset {
+        name: "Tol bright",
+        colors: [
+            Color32::from_rgb(0x44, 0x77, 0xAA),
+            Color32::from_rgb(0xEE, 0x66, 0x77),
+            Color32::from_rgb(0x22, 0x88, 0x33),
+            Color32::from_rgb(0xCC, 0xBB, 0x44),
+            Color32::from_rgb(0x66, 0xCC, 0xEE),
+            Color32::from_rgb(0xAA, 0x33, 0x77),
+            Color32::from_rgb(0xBB, 0xBB, 0xBB),
+            Color32::from_rgb(0x77, 0x77, 0x77),
+        ],
+    },
+    PalettePreset {
+        name: "Viridis",
+        colors: [
+            Color32::from_rgb(0x44, 0x01, 0x54),
+            Color32::from_rgb(0x46, 0x32, 0x7E),
+            Color32::from_rgb(0x36, 0x5C, 0x8D),
+            Color32::from_rgb(0x27, 0x7F, 0x8E),
+            Color32::from_rgb(0x1F, 0xA1, 0x87),
+            Color32::from_rgb(0x4A, 0xC1, 0x6D),
+            Color32::from_rgb(0xA0, 0xDA, 0x39),
+            Color32::from_rgb(0xFD, 0xE7, 0x25),
+        ],
+    },
+    PalettePreset {
+        name: "Ember",
+        colors: [
+            Color32::from_rgb(0x7F, 0x00, 0x00),
+            Color32::from_rgb(0xB2, 0x22, 0x22),
+            Color32::from_rgb(0xFF, 0x45, 0x00),
+            Color32::from_rgb(0xFF, 0x8C, 0x00),
+            Color32::from_rgb(0xFF, 0xD7, 0x00),
+            Color32::from_rgb(0xFF, 0xF8, 0xDC),
+            Color32::from_rgb(0x8B, 0x45, 0x13),
+            Color32::from_rgb(0x4B, 0x2E, 0x05),
+        ],
+    },
+];
+
 /// A titled block: strong heading, the body, then a little air. Every panel
 /// section goes through here so headings and gaps match everywhere.
 pub(in crate::gui) fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
@@ -147,5 +227,26 @@ mod tests {
                 ui.label("body");
             })
         });
+    }
+
+    #[test]
+    fn palettes_are_named_and_each_has_eight_distinct_colours() {
+        let mut names = Vec::new();
+        for p in &PALETTES {
+            assert!(!p.name.is_empty());
+            names.push(p.name);
+            let mut cols = p.colors.to_vec();
+            cols.sort_by_key(|c| c.to_array());
+            cols.dedup();
+            assert_eq!(cols.len(), 8, "{} repeats a colour", p.name);
+        }
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), PALETTES.len());
+        assert_eq!(
+            PALETTES[0].colors.to_vec(),
+            crate::gui::render::default_palette(),
+            "Calm is the historical default"
+        );
     }
 }

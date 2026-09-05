@@ -101,6 +101,11 @@ pub(in crate::gui) struct ViewSettings {
     /// painting are a plain integer hash rather than a `String` allocation.
     pub(in crate::gui) colors: HashMap<Spur, Color32>,
     pub(in crate::gui) palette: Vec<Color32>,
+    /// Which preset `palette` came from (index into `theme::PALETTES`).
+    pub(in crate::gui) palette_index: usize,
+    /// Colours the loaded config asked for, kept so a palette change can put
+    /// them back on top of the new automatic slots.
+    pub(in crate::gui) config_colors: BTreeMap<String, String>,
     /// Scratch buffer for the shapes emitted while painting, reused every frame
     /// so painting does not reallocate.
     pub(in crate::gui) shape_buf: Vec<Shape>,
@@ -133,6 +138,8 @@ impl Default for ViewSettings {
             scale: 8,
             colors: HashMap::new(),
             palette: default_palette(),
+            palette_index: 0,
+            config_colors: BTreeMap::new(),
             shape_buf: Vec::new(),
             inactive_color: Color32::from_rgb(30, 30, 35),
             show_grid_lines: true,

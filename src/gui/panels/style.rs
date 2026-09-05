@@ -2,7 +2,7 @@
 
 use crate::gui::actions::Action;
 use crate::gui::app::CellaApp;
-use crate::gui::theme::{ThemeChoice, section};
+use crate::gui::theme::{PALETTES, ThemeChoice, section};
 use cella_lib::CellType;
 
 impl CellaApp {
@@ -57,6 +57,41 @@ impl CellaApp {
             {
                 pending.push(Action::ToggleInspector);
             }
+        });
+        section(ui, "Palette", |ui| {
+            ui.horizontal(|ui| {
+                let current = PALETTES
+                    .get(self.view.palette_index)
+                    .map_or("Custom", |p| p.name);
+                let mut sel = self.view.palette_index;
+                egui::ComboBox::from_id_salt("palette_preset")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (i, p) in PALETTES.iter().enumerate() {
+                            ui.selectable_value(&mut sel, i, p.name);
+                        }
+                    });
+                if sel != self.view.palette_index {
+                    pending.push(Action::SetPalette(sel));
+                }
+                if ui
+                    .button("Re-slot")
+                    .on_hover_text(
+                        "Give every type its automatic colour again (config colours stay)",
+                    )
+                    .clicked()
+                {
+                    pending.push(Action::ReslotColors);
+                }
+            });
+            ui.horizontal(|ui| {
+                for c in &self.view.palette {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 3.0, *c);
+                }
+            });
+            ui.small("Types take colours in order: the first declared type gets the first swatch.");
         });
         section(ui, "Colours", |ui| {
             let mut inactive = self.view.inactive_color;
