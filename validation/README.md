@@ -201,7 +201,13 @@ parameters and keeps simulating — a particle filter with GA operators
 whose scores are one-window-ahead forecasts (E25). Forecast IoU 0.35–0.62
 on all six fires, holdout included, within 0.03–0.07 of the Circle and
 above it on Chimney; Ferguson 0.13 → 0.34. Recommended: β 10, σ 0.2,
-20 % immigrants.
+20 % immigrants. Ensembles are a library feature (`"ensemble"` config
+block, [docs/ensemble.md](../docs/ensemble.md)). The ad-hoc decay has a
+physical replacement: the FSim-style containment-probability operator
+(E28) matches or beats it with the decay off. Terrain wind
+(`cella_lib::wind_field`, E26) and painted retardant (`set_density`, E27)
+are in place but null/negative until the kernel's wind response (E30) and
+an agent placement rule exist.
 
 ## The challenge ladder (downloaded and waiting)
 

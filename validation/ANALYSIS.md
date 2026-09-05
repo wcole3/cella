@@ -345,6 +345,20 @@ two to four. The gap to the Circle is now 0.03–0.07 on five fires, from
 0.13–0.32 at the start. What remains is the late-fire stall (the model
 still cannot stop *in place*) and the fast-fire speed problem.
 
+**Later that day: three more doors.** We read how the professionals make
+simulated fires stop, and replaced our invented "fire gets tired" knob
+with their rule: each day a fire that grew slowly yesterday has a good
+chance of being caught today, a fast one almost none. Learned from the
+perimeters like everything else, it does the old knob's job as well or
+better on all six fires — so the invented knob can go. We also built a
+proper terrain wind (air squeezed over ridges speeds up, valleys steer
+it) and found it changes nothing yet: the model's spread speed barely
+listens to wind at all, which is the next thing to fix before any wind
+work can pay off. And retardant painted as "this fuel is 50× harder to
+light" behaved exactly like the fences before it: either strangled the
+fire or was ignored. The paint is right; the crew's judgement about
+where to put it is what we have not modelled.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means

@@ -72,9 +72,24 @@ practice) tested in E25b.
    assimilation narrows but a kernel that stretches must close; and
    a perimeter-distance likelihood and reliability
    diagrams for the probability maps.
-5. Engine: `Grid2D: Clone` made the filter possible in an example; a
-   library-level ensemble type (shared static layers, per-member state
-   only) would cut memory ~10× and is the natural home for this.
+5. **Ensembles are first-party now.** `cella_lib::ensemble::WildfireEnsemble`
+   (config block `"ensemble"`, `CellaConfig::build_ensemble`, guide in
+   `docs/ensemble.md`); members share the slope table; the SMC example is
+   a thin scorer on top of it.
+6. **The decay has a physical replacement** (E28): the FSim-style
+   containment-probability operator — each day a member is contained with
+   probability sigmoid(a + b·ln growth), parameters learned by the filter —
+   matches or beats the τ decay on all six fires with the decay switched
+   off (Bear 0.482 vs 0.456). Recommended default for ensembles.
+7. **Terrain wind is null until the kernel responds to wind** (E26): the
+   mass-consistent downscaler (`cella_lib::wind_field`, 6 s per run via a
+   two-solve basis on a coarsened grid) moves scores by ±0.01. E19's
+   5–10 % wind–rate response is the bottleneck; E30 (kernel refit) comes
+   before any more wind work.
+8. **Retardant as a paintable multiplier** (E27, `set_density`) has the
+   same binary outcome as the fences of E18/E23: the representation is
+   right, the agent's placement rule is what is missing. Parked with the
+   line agents; ready for observed drop/line locations.
 
 Replicates (E25d, three seeds): Bear 0.468±0.005, Brattain 0.404±0.003, Buck 0.605±0.009, Chimney 0.429±0.004, Ferguson 0.349±0.008, Pier 0.535±0.004 — spread ≤ 0.02.
 
