@@ -7,6 +7,7 @@
 //! the wildfire model.
 
 use cella_lib::CellType;
+use cella_lib::EnsembleConfig;
 use cella_lib::config::CellaConfig;
 use cella_lib::explore::driver::{Forcing, MemberDriver, MemberState};
 use cella_lib::explore::genome::{Gene, GeneSpace, Genome};
@@ -444,4 +445,34 @@ fn drivers_are_reapplied_at_every_period_boundary_in_both_engines() {
         frozen, moving,
         "re-application at the boundary changes the run"
     );
+}
+
+#[test]
+fn immigrants_can_start_with_a_fresh_driver_state() {
+    let block = |reset: bool| {
+        format!(
+            r#""ensemble": {{
+                "members": 4, "seed": 1, "genes": [{{"key": "model.rate"}}], "track": ["A"],
+                "immigrants": 1.0, "immigrant_reset": {reset},
+                "driver": {{"explore_test_ramp_driver": {{"period": 0}}}}
+            }}"#
+        )
+    };
+    let applies = |e: &cella_lib::Ensemble| {
+        e.members()
+            .iter()
+            .map(|m| m.state.get("applies").unwrap_or(0.0))
+            .collect::<Vec<_>>()
+    };
+    for (reset, expect) in [(false, 2.0), (true, 1.0)] {
+        let cfg: CellaConfig = serde_json::from_str(&config_json(&block(reset))).unwrap();
+        let mut ens = cfg.build_ensemble().unwrap().unwrap();
+        assert_eq!(applies(&ens), vec![1.0; 4]);
+        // Every child is an immigrant: with reset its state starts empty and
+        // the driver's apply is its first; without, the parent's count carries.
+        ens.assimilate_scores(&[1.0; 4]).unwrap();
+        assert_eq!(applies(&ens), vec![expect; 4], "immigrant_reset = {reset}");
+    }
+    let cfg: EnsembleConfig = serde_json::from_str(r#"{"members": 2}"#).unwrap();
+    assert!(!cfg.immigrant_reset, "off by default");
 }

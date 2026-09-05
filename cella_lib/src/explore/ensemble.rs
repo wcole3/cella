@@ -80,6 +80,15 @@ pub struct EnsembleConfig {
     /// classic particle filter: children inherit one parent's genome.
     #[serde(default)]
     pub crossover: f64,
+    /// Whether an immigrant starts with a fresh driver state instead of
+    /// its parent's. A parent's state can carry decisions that should not
+    /// outlive its genome (the wildfire driver's "contained" flag), and with
+    /// it inherited a population in which every member has stopped can
+    /// never start again. Off by default; the driver must then be able to
+    /// rebuild what it needs from the genome (the wildfire driver reads
+    /// `model.p0` from the gene, so that gene must be present).
+    #[serde(default)]
+    pub immigrant_reset: bool,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Box<dyn MemberDriver>>,
@@ -109,6 +118,7 @@ impl Default for EnsembleConfig {
             sigma: default_sigma(),
             immigrants: default_immigrants(),
             crossover: 0.0,
+            immigrant_reset: false,
             driver: None,
         }
     }
@@ -573,7 +583,11 @@ impl Ensemble {
                     .clone()
             };
             sim.set_seed(self.next_seed);
-            let mut state = parent_state.clone();
+            let mut state = if ci < n_imm && self.config.immigrant_reset {
+                MemberState::default()
+            } else {
+                parent_state.clone()
+            };
             let genome = match self.space.apply(&mut sim, &genome) {
                 Ok(()) => genome,
                 Err(_) => {

@@ -244,6 +244,12 @@ in `validation/results/analysis/`.
   calibration/holdout split; all six fires reported because nothing is
   chosen per fire. A difference smaller than the E33 sd on that fire is
   reported as a tie.
+  Added after E33 ran (2026-09-05, before E38 runs): **E38 immigrant
+  reset** — E33 showed a seed in which every member was contained by day
+  12 and the population could not recover because immigrants inherit the
+  parent's contained flag; E38 runs the base configuration with
+  `immigrant_reset` on (five seeds, so it is judged against E33's own
+  five), predicting a gain on Buck seed 3 and a tie elsewhere.
 - v1.6 (2026-09-05, before the E31 run): the wildfire-specific ensemble
   (`WildfireEnsemble`, `prior` block) was replaced by the model-agnostic
   `cella_lib::explore` engine with a `WildfireDriver` supplying the weather

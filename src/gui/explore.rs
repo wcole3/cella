@@ -1187,6 +1187,7 @@ impl CellaApp {
             sigma: mc.sigma,
             immigrants: mc.immigrants,
             crossover: 0.0,
+            immigrant_reset: false,
             driver: None,
         }
     }
