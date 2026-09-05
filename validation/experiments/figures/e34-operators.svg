@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 488" role="img" aria-labelledby="e34-title e34-desc">
+<title id="e34-title">E34 operator ablation: change in forecast IoU</title>
+<desc id="e34-desc">Matrix of nine operator settings against six fires showing the change in mean forecast IoU from the recommended configuration, with ties inside each fire's noise left faint.</desc>
+<defs><style>@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<text x="296.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Bear</text>
+<text x="296.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.015</text>
+<text x="408.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Brattain</text>
+<text x="408.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.004</text>
+<text x="520.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Buck</text>
+<text x="520.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.039</text>
+<text x="632.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Chimney</text>
+<text x="632.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.012</text>
+<text x="744.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Ferguson*</text>
+<text x="744.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.007</text>
+<text x="856.0" y="56" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Pier*</text>
+<text x="856.0" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >sd 0.003</text>
+<text x="224" y="96.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >immigrants 0</text>
+<rect x="244" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.001</text>
+<rect x="356" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="408.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.001</text>
+<rect x="468" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.016</text>
+<rect x="580" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.009</text>
+<rect x="692" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="744.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.007</text>
+<rect x="804" y="72" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="94.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.002</text>
+<text x="224" y="136.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >immigrants 0.1</text>
+<rect x="244" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="296.0" y="134.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.046</text>
+<rect x="356" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="408.0" y="134.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.001</text>
+<rect x="468" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="134.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.011</text>
+<rect x="580" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="632.0" y="134.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.027</text>
+<rect x="692" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="134.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.013</text>
+<rect x="804" y="112" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="134.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.003</text>
+<text x="224" y="176.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >immigrants 0.4</text>
+<rect x="244" y="152" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="174.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.003</text>
+<rect x="356" y="152" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="408.0" y="174.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.007</text>
+<rect x="468" y="152" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="174.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.012</text>
+<rect x="580" y="152" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="174.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.009</text>
+<rect x="692" y="152" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="174.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.033</text>
+<rect x="804" y="152" width="104" height="32" rx="4" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="856.0" y="174.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >+0.004</text>
+<line x1="40" y1="188" x2="912" y2="188" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="224" y="216.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >sigma 0.1</text>
+<rect x="244" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="214.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.002</text>
+<rect x="356" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="408.0" y="214.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.004</text>
+<rect x="468" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="214.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.009</text>
+<rect x="580" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="214.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.006</text>
+<rect x="692" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="214.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.016</text>
+<rect x="804" y="192" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="214.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.000</text>
+<text x="224" y="256.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >sigma 0.4</text>
+<rect x="244" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="254.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.004</text>
+<rect x="356" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="408.0" y="254.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.006</text>
+<rect x="468" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="254.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.003</text>
+<rect x="580" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="254.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.000</text>
+<rect x="692" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="254.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.032</text>
+<rect x="804" y="232" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="856.0" y="254.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.008</text>
+<line x1="40" y1="268" x2="912" y2="268" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="224" y="296.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >beta 5</text>
+<rect x="244" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="294.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.005</text>
+<rect x="356" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="408.0" y="294.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.003</text>
+<rect x="468" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="294.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.013</text>
+<rect x="580" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="294.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.002</text>
+<rect x="692" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="294.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.023</text>
+<rect x="804" y="272" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="294.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.002</text>
+<text x="224" y="336.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >beta 20</text>
+<rect x="244" y="312" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="334.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.006</text>
+<rect x="356" y="312" width="104" height="32" rx="4" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="408.0" y="334.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >+0.007</text>
+<rect x="468" y="312" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="334.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.024</text>
+<rect x="580" y="312" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="632.0" y="334.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.016</text>
+<rect x="692" y="312" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="744.0" y="334.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.004</text>
+<rect x="804" y="312" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="334.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.001</text>
+<line x1="40" y1="348" x2="912" y2="348" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="224" y="376.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >crossover 0.5</text>
+<rect x="244" y="352" width="104" height="32" rx="4" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="296.0" y="374.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >+0.027</text>
+<rect x="356" y="352" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="408.0" y="374.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.000</text>
+<rect x="468" y="352" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="374.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.014</text>
+<rect x="580" y="352" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="374.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.007</text>
+<rect x="692" y="352" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="744.0" y="374.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.007</text>
+<rect x="804" y="352" width="104" height="32" rx="4" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="856.0" y="374.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >+0.004</text>
+<text x="224" y="416.0" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="500" text-anchor="end" >crossover 1.0</text>
+<rect x="244" y="392" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="296.0" y="414.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.009</text>
+<rect x="356" y="392" width="104" height="32" rx="4" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="408.0" y="414.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >+0.007</text>
+<rect x="468" y="392" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="520.0" y="414.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.007</text>
+<rect x="580" y="392" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="632.0" y="414.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.010</text>
+<rect x="692" y="392" width="104" height="32" rx="4" fill="rgba(45,49,66,0.16)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="744.0" y="414.0" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="500" text-anchor="middle" >-0.017</text>
+<rect x="804" y="392" width="104" height="32" rx="4" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="856.0" y="414.0" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.003</text>
+<line x1="32" y1="452" x2="968" y2="452" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="468" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="458" width="16" height="12" rx="2" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.10)"/>
+<text x="132" y="468" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >tie (inside the fire's E33 sd)</text>
+<rect x="370" y="458" width="16" height="12" rx="2" fill="rgba(45,49,66,0.16)" stroke="#4f5d75"/>
+<text x="390" y="468" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >loss beyond sd</text>
+<rect x="516" y="458" width="16" height="12" rx="2" fill="rgba(235,108,54,0.15)" stroke="#eb6c36"/>
+<text x="536" y="468" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >gain beyond sd</text>
+</svg>

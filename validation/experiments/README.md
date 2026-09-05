@@ -58,5 +58,6 @@ Research notes: [why fires slow down, what wind a fire feels, what suppression d
 | — | **Round 5 — 2026-09-05: the methods themselves** — noise floor, ensemble size, operators, priors, offline GA vs filter, illumination | | | | [round-5.md](round-5.md) |
 | E33 | [noise floor: five seeds of the recommended ensemble](34-e33-noise-floor.md) | finding (the bar for the round) | all six incl. holdout | sd ≤ 0.015 on five fires, 0.039 on Buck (one seed locks in contained) | Round 5 |
 | E32 | [ensemble size 8–128](35-e32-ensemble-size.md) | finding: keep 32; 64–128 for Brier | all six incl. holdout | IoU flat past 32 on five fires; 8 members −0.03…−0.07; Brier keeps improving to 128 | Round 5 |
+| E34 | [operator ablation: immigrants, σ, β, crossover](36-e34-operator-ablation.md) | finding: plateau; keep defaults | all six incl. holdout | 38 of 54 cells ties; all runs end 100 % contained; crossover 0.5 +0.027 Bear (one seed) | Round 5 |
 | E35 | [prior width: narrow / broad / very broad](37-e35-prior-width.md) | finding: never narrow the prior | all six incl. holdout | narrow prior −0.037 on Bear; very broad a tie on five fires, better Brier on four | Round 5 |
 

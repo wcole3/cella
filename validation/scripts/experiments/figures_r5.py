@@ -286,10 +286,101 @@ def e37_illuminate():
     print("wrote e37-illuminate.svg")
 
 
+def e34_operators():
+    rows = load("exp34_operators.json")
+    base = e33_sd()
+    if rows is None or not base:
+        return
+    configs = [("imm0", "immigrants 0"), ("imm0.1", "immigrants 0.1"), ("imm0.4", "immigrants 0.4"),
+               ("sigma0.1", "sigma 0.1"), ("sigma0.4", "sigma 0.4"), ("beta5", "beta 5"), ("beta20", "beta 20"),
+               ("cross0.5", "crossover 0.5"), ("cross1.0", "crossover 1.0")]
+    W, H = 1000, 488
+    left, top, cw, rh = 240, 72, 112, 40
+    body = []
+    for j, f in enumerate(FIRES):
+        body.append(text(left + j * cw + cw / 2, top - 16, SHORT[f] + ("*" if base[f][2]["holdout"] else ""), size=12, fill=INK, font=SANS, anchor="middle", weight=600))
+        body.append(text(left + j * cw + cw / 2, top - 4, f"sd {base[f][1]:.3f}", anchor="middle"))
+    for i, (key, label) in enumerate(configs):
+        y = top + i * rh
+        if i in (3, 5, 7):
+            body.append(f'<line x1="{left - 200}" y1="{y - 4}" x2="{left + 6 * cw}" y2="{y - 4}" stroke="{RULE}" stroke-width="0.8"/>')
+        body.append(text(left - 16, y + rh / 2 + 4, label, size=12, fill=INK, font=SANS, anchor="end", weight=500))
+        for j, f in enumerate(FIRES):
+            r = [x for x in rows if x["fire"] == f and x["config"] == key]
+            if not r:
+                continue
+            d = r[0]["mean_consensus_iou"] - base[f][2]["mean_consensus_iou"]
+            beyond = abs(d) >= base[f][1]
+            # Tone: ties are faint; real deltas carry ink, a real gain the accent.
+            if not beyond:
+                fill, stroke, col = "rgba(45,49,66,0.04)", RULE, SOFT
+            elif d > 0:
+                fill, stroke, col = "rgba(235,108,54,0.15)", ACCENT, INK
+            else:
+                fill, stroke, col = "rgba(45,49,66,0.16)", MUTED, INK
+            body.append(f'<rect x="{left + j * cw + 4}" y="{y}" width="{cw - 8}" height="{rh - 8}" rx="4" fill="{fill}" stroke="{stroke}" stroke-width="0.8"/>')
+            body.append(text(left + j * cw + cw / 2, y + rh / 2 + 2, f"{d:+.3f}", fill=col, anchor="middle", weight=500 if beyond else 400))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" rx="2" fill="rgba(45,49,66,0.04)" stroke="{RULE}"/>', "tie (inside the fire's E33 sd)"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" rx="2" fill="rgba(45,49,66,0.16)" stroke="{MUTED}"/>', "loss beyond sd"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" rx="2" fill="rgba(235,108,54,0.15)" stroke="{ACCENT}"/>', "gain beyond sd"),
+    ]))
+    (FIG / "e34-operators.svg").write_text(svg(
+        "e34", "E34 operator ablation: change in forecast IoU",
+        "Matrix of nine operator settings against six fires showing the change in mean forecast IoU from the recommended "
+        "configuration, with ties inside each fire's noise left faint.", W, H, "\n".join(body)))
+    print("wrote e34-operators.svg")
+
+
+def e38_immreset():
+    rows = load("exp38_immreset.json")
+    noise = load("exp33_noise.json")
+    base = e33_sd()
+    if rows is None or noise is None or not base:
+        return
+    W, H = 1000, 464
+    x0, x1, lo, hi = 200, 920, -0.06, 0.10
+    sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
+    body = []
+    for v in (-0.05, 0.0, 0.05, 0.10):
+        w = 1.2 if v == 0.0 else 0.8
+        body.append(f'<line x1="{sx(v):.0f}" y1="56" x2="{sx(v):.0f}" y2="376" stroke="{INK if v == 0.0 else RULE}" stroke-width="{w}" stroke-opacity="{0.4 if v == 0.0 else 1}"/>')
+        body.append(text(sx(v), 392, f"{v:+.2f}", anchor="middle"))
+    body.append(text(560, 408, "RESET MINUS E33 TWIN, MEAN CONSENSUS IOU, PER SEED", anchor="middle", extra='letter-spacing="0.10em"'))
+    for i, f in enumerate(FIRES):
+        y = 80 + i * 52
+        m, sd, row0 = base[f]
+        body.append(text(184, y + 4, SHORT[f] + ("*" if row0["holdout"] else ""), size=12, fill=INK, font=SANS, anchor="end", weight=600))
+        body.append(f'<rect x="{sx(-sd):.1f}" y="{y - 10}" width="{sx(sd) - sx(-sd):.1f}" height="20" fill="rgba(45,49,66,0.08)"/>')
+        for s_ in range(5):
+            a = [x for x in rows if x["fire"] == f and x["seed"] == s_]
+            b = [x for x in noise if x["fire"] == f and x["seed"] == s_]
+            if not a or not b:
+                continue
+            d = a[0]["mean_consensus_iou"] - b[0]["mean_consensus_iou"]
+            focal = f == "Buck_2017" and s_ == 3
+            stroke, fill = (ACCENT, "rgba(235,108,54,0.15)") if focal else (MUTED, "rgba(79,93,117,0.20)")
+            body.append(f'<circle cx="{sx(d):.1f}" cy="{y}" r="5" fill="{PAPER}"/><circle cx="{sx(d):.1f}" cy="{y}" r="5" fill="{fill}" stroke="{stroke}" stroke-width="{1.2 if focal else 1}"/>')
+            if focal:
+                body.append(text(sx(d), y - 14, f"BUCK SEED 3: {d:+.3f}", anchor="middle", fill=INK))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="5" fill="rgba(79,93,117,0.20)" stroke="{MUTED}"/>', "one seed, reset minus its E33 twin"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "±1 sd (E33)"),
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="5" fill="rgba(235,108,54,0.15)" stroke="{ACCENT}" stroke-width="1.2"/>', "the seed that locked in (E33)"),
+    ]))
+    (FIG / "e38-immreset.svg").write_text(svg(
+        "e38", "E38 immigrant reset: change per seed",
+        "Dot strip per fire of the change in mean forecast IoU when immigrants start with a fresh driver state, "
+        "one dot per matched seed, against the E33 noise band.", W, H, "\n".join(body)))
+    print("wrote e38-immreset.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e33_noise()
     e32_members()
     e35_prior()
+    e34_operators()
     e36_offline()
     e37_illuminate()
+    e38_immreset()
