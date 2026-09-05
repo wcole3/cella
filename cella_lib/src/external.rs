@@ -99,6 +99,10 @@ pub enum ParamValue {
     Int(i64),
     Bool(bool),
     Choice(String),
+    /// A string of bits packed into a `u128` (bit `i` is switch `i`), e.g. a
+    /// 1D Wolfram code. Serialised as a decimal string so 128-bit values
+    /// survive JSON readers that only know 64-bit numbers.
+    Bits(#[serde(with = "crate::rules::serde_u128")] u128),
 }
 
 /// What kind of control a parameter wants, and its valid range.
@@ -123,6 +127,12 @@ pub enum ParamKind {
     /// One of a fixed set of names.
     Choice {
         options: Vec<String>,
+    },
+    /// `len` independent on/off bits (1..=128) packed into a `u128`. A rule
+    /// table is the typical case: a 1D subrule with radius `n` has
+    /// `2^(2n+1)` bits, one per neighbourhood pattern.
+    Bits {
+        len: u32,
     },
 }
 
@@ -306,6 +316,13 @@ fn check_value_against_kind(kind: &ParamKind, value: &ParamValue) -> Result<(), 
                 Ok(())
             } else {
                 reject(format!("'{v}' is not one of: {}", options.join(", ")))
+            }
+        }
+        (ParamKind::Bits { len }, ParamValue::Bits(v)) => {
+            if *len < 128 && (v >> len) != 0 {
+                reject(format!("{v:#x} does not fit in {len} bits"))
+            } else {
+                Ok(())
             }
         }
         // Every other pairing is a value of the wrong shape for this control.
@@ -1083,6 +1100,20 @@ mod tests {
             check_value_against_kind(&ParamKind::Bool, &ParamValue::Choice("x".into())).is_err()
         );
         assert!(check_value_against_kind(&choice, &ParamValue::Bool(false)).is_err());
+
+        // Bits: any value fits in 128 bits; a shorter table rejects high bits.
+        let byte = ParamKind::Bits { len: 8 };
+        assert!(check_value_against_kind(&byte, &ParamValue::Bits(0)).is_ok());
+        assert!(check_value_against_kind(&byte, &ParamValue::Bits(255)).is_ok());
+        let too_wide = check_value_against_kind(&byte, &ParamValue::Bits(256)).unwrap_err();
+        assert!(
+            format!("{too_wide}").contains("does not fit in 8 bits"),
+            "{too_wide}"
+        );
+        let full = ParamKind::Bits { len: 128 };
+        assert!(check_value_against_kind(&full, &ParamValue::Bits(u128::MAX)).is_ok());
+        assert!(check_value_against_kind(&byte, &ParamValue::Int(3)).is_err());
+        assert!(check_value_against_kind(&int, &ParamValue::Bits(3)).is_err());
     }
 
     #[test]

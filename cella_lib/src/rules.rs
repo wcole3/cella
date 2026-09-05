@@ -141,7 +141,10 @@ pub(crate) fn apply_counts(
     }
 }
 
-mod serde_u128 {
+/// Serde helper for `u128` values (Wolfram codes, bit-string parameters):
+/// written as a decimal string so JSON readers that only know 64-bit numbers
+/// still round-trip them; accepts a string or an integer when reading.
+pub(crate) mod serde_u128 {
     use serde::de::{self, Visitor};
     use serde::{Deserializer, Serializer};
     use std::fmt;

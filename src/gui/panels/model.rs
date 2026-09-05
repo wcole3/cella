@@ -256,8 +256,58 @@ fn param_control(ui: &mut egui::Ui, desc: &ParamDesc, value: &ParamValue) -> Opt
             // `sel`, so comparing it with the current value is the change.
             commit_now(desc, &resp, sel != *current).then_some(ParamValue::Choice(sel))
         }
+        (ParamKind::Bits { len }, ParamValue::Bits(current)) => {
+            // The typed text lives in egui's memory while the field has focus,
+            // so a half-typed code is not overwritten by the model's value on
+            // the next redraw. It commits when focus leaves the field (Enter
+            // drops focus too), and only if it parses and fits in `len` bits.
+            let id = ui.make_persistent_id(("bits", &desc.key));
+            let mut text = ui
+                .data_mut(|d| d.get_temp::<String>(id))
+                .unwrap_or_else(|| format!("{current:#x}"));
+            let resp = ui
+                .horizontal(|ui| {
+                    let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(160.0));
+                    ui.label(format!("{} ({len} bits; hex, binary or decimal)", desc.label));
+                    r
+                })
+                .inner;
+            let resp = with_help(resp, desc);
+            let parsed = parse_bits(&text).filter(|v| bits_fit(*v, *len));
+            if resp.has_focus() {
+                ui.data_mut(|d| d.insert_temp(id, text));
+            } else {
+                ui.data_mut(|d| d.remove::<String>(id));
+            }
+            match parsed {
+                Some(v) if v != *current && resp.lost_focus() && !desc.read_only => {
+                    Some(ParamValue::Bits(v))
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
+}
+
+/// Read a bit-string typed by a person: `0x1e`, `0b11110` or `30` all mean
+/// the same thing. Surrounding whitespace and `_` separators are ignored.
+/// Returns `None` for anything that is not a number.
+fn parse_bits(text: &str) -> Option<u128> {
+    let t: String = text.trim().chars().filter(|c| *c != '_').collect();
+    let lower = t.to_ascii_lowercase();
+    if let Some(hex) = lower.strip_prefix("0x") {
+        u128::from_str_radix(hex, 16).ok()
+    } else if let Some(bin) = lower.strip_prefix("0b") {
+        u128::from_str_radix(bin, 2).ok()
+    } else {
+        lower.parse::<u128>().ok()
+    }
+}
+
+/// Whether `v` uses no bit at or above position `len`.
+fn bits_fit(v: u128, len: u32) -> bool {
+    len >= 128 || (v >> len) == 0
 }
 
 /// Attach the descriptor's tooltip to a widget, if it has one.
@@ -276,6 +326,7 @@ fn value_text(value: &ParamValue) -> String {
         ParamValue::Int(v) => v.to_string(),
         ParamValue::Bool(v) => v.to_string(),
         ParamValue::Choice(v) => v.clone(),
+        ParamValue::Bits(v) => format!("{v:#x}"),
     }
 }
 
@@ -429,6 +480,28 @@ mod tests {
         assert_eq!(value_text(&ParamValue::Int(42)), "42");
         assert_eq!(value_text(&ParamValue::Bool(true)), "true");
         assert_eq!(value_text(&ParamValue::Choice("Moore".into())), "Moore");
+        assert_eq!(value_text(&ParamValue::Bits(30)), "0x1e");
+    }
+
+    #[test]
+    fn parse_bits_reads_hex_binary_and_decimal_and_rejects_junk() {
+        assert_eq!(parse_bits("30"), Some(30));
+        assert_eq!(parse_bits(" 0x1E "), Some(30));
+        assert_eq!(parse_bits("0b1_1110"), Some(30));
+        assert_eq!(parse_bits(&u128::MAX.to_string()), Some(u128::MAX));
+        assert_eq!(parse_bits(""), None);
+        assert_eq!(parse_bits("thirty"), None);
+        assert_eq!(parse_bits("0x"), None);
+        assert_eq!(parse_bits("-1"), None);
+    }
+
+    #[test]
+    fn bits_fit_checks_the_table_width() {
+        assert!(bits_fit(255, 8));
+        assert!(!bits_fit(256, 8));
+        assert!(bits_fit(u128::MAX, 128));
+        assert!(bits_fit(0, 1));
+        assert!(!bits_fit(2, 1));
     }
 
     /// Every kind of control the panel knows how to draw, plus a read-only row
@@ -460,6 +533,10 @@ mod tests {
             },
             ..desc("choice", None, false, false)
         };
+        let bits = ParamDesc {
+            kind: ParamKind::Bits { len: 8 },
+            ..desc("bits", None, false, false)
+        };
         let locked = ParamDesc {
             kind: ParamKind::Int { min: 0, max: 10 },
             ..desc("locked", None, false, true)
@@ -473,6 +550,7 @@ mod tests {
             (&int, ParamValue::Int(3)),
             (&boolean, ParamValue::Bool(true)),
             (&choice, ParamValue::Choice("one".into())),
+            (&bits, ParamValue::Bits(30)),
             (&locked, ParamValue::Int(7)),
             mismatched,
         ];
