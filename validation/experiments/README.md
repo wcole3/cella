@@ -55,4 +55,6 @@ Research notes: [why fires slow down, what wind a fire feels, what suppression d
 | E27 | [painted retardant multiplier that dries out](31-e27-painted-retardant-multiplier.md) | REJECTED (tactics, not material) | Bear, Brattain, Buck, Chimney | 0.02 = fence, 0.1 = nothing; recovery time irrelevant | Round 4 |
 | E28 | [containment-probability operator replaces the decay](32-e28-containment-probability-operator.md) | KEPT (recommended over τ) | all six incl. holdout | containment-only: Bear 0.482 vs decay 0.456; others within noise | Round 4 |
 | E31 | [replicate E25/E28 through the generic `explore` engine](33-e31-generic-engine-replication.md) | PASS (replication); E28 Bear gain = noise | all six incl. holdout | containment-only within 0.009 IoU of record on every fire; containment vs decay a tie everywhere | Round 4 |
+| — | **Round 5 — 2026-09-05: the methods themselves** — noise floor, ensemble size, operators, priors, offline GA vs filter, illumination | | | | [round-5.md](round-5.md) |
+| E33 | [noise floor: five seeds of the recommended ensemble](34-e33-noise-floor.md) | finding (the bar for the round) | all six incl. holdout | sd ≤ 0.015 on five fires, 0.039 on Buck (one seed locks in contained) | Round 5 |
 
