@@ -5,8 +5,7 @@ use crate::rules::{Rule2D, Rule2DPlan, TypeCounter, apply_counts};
 use crate::threads::{chunks_for_work, pool};
 use crate::types::{CellState, CellType};
 use lasso2::Spur;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use crate::rng::{STREAM_RULE, cell_rand};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::io::Error;
@@ -66,6 +65,11 @@ pub struct Grid2D {
     pub(crate) history_counts: Vec<u8>,
     /// Current simulation step.
     pub step: u64,
+    /// Seed for every `randomness` draw the subrules make. Two grids with the
+    /// same seed, rule and cells step identically on any thread count; the
+    /// draw is `cell_rand(seed, step, cell, STREAM_RULE + subrule)`.
+    #[serde(default)]
+    pub seed: u64,
     /// Rule used for updates.
     pub rule: Rule2D,
     /// Current count of cells per type name.
@@ -92,6 +96,8 @@ impl<'de> Deserialize<'de> for Grid2D {
             history_limit: usize,
             cell_states: Vec<CellState>,
             step: u64,
+            #[serde(default)]
+            seed: u64,
             rule: Rule2D,
             counts_current: std::collections::HashMap<Spur, u64>,
             peak_counts: std::collections::HashMap<Spur, u64>,
@@ -132,6 +138,7 @@ impl<'de> Deserialize<'de> for Grid2D {
             history_heads,
             history_counts,
             step: intermediate.step,
+            seed: intermediate.seed,
             rule: intermediate.rule,
             counts_current: intermediate.counts_current,
             peak_counts: intermediate.peak_counts,
@@ -214,6 +221,7 @@ impl Grid2D {
             history_heads,
             history_counts,
             step: 0,
+            seed: 0,
             rule,
             counts_current,
             peak_counts,
@@ -221,6 +229,84 @@ impl Grid2D {
             dominant_type: dominant_type.0,
             model: None,
         }
+    }
+
+    /// Same grid, different seed for the subrules' `randomness` draws.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.set_seed(seed);
+        self
+    }
+
+    /// Set the seed for `randomness` draws and hand the same seed to the
+    /// attached model (see [`crate::external::ExternalModel::set_seed`]), so
+    /// one number reseeds the whole simulation.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+        if let Some(m) = self.model.as_deref_mut() {
+            m.set_seed(seed);
+        }
+    }
+
+    /// All current cell types, row-major. Read-only; paint through
+    /// [`Self::transition_state_and_buffer`].
+    #[inline]
+    pub fn cells(&self) -> &[CellType] {
+        &self.cells
+    }
+
+    /// Replace every cell and start over: ages become 0, per-cell history is
+    /// cleared, `step` returns to 0, the population counts are recomputed and
+    /// an attached model is re-attached against the new cells.
+    ///
+    /// The model is validated against the new cells *before* anything
+    /// changes, so an error leaves the grid exactly as it was. `cells.len()`
+    /// must equal `width * height`.
+    pub fn reset_cells(&mut self, cells: Vec<CellType>) -> Result<(), crate::external::ModelError> {
+        let total = self.width * self.height;
+        if cells.len() != total {
+            return Err(crate::external::ModelError::LayerLength {
+                layer: "cells",
+                expected: total,
+                got: cells.len(),
+            });
+        }
+        let model = match &self.model {
+            Some(m) => {
+                let mut fresh = m.boxed_clone();
+                fresh.attach(&crate::external::GridView {
+                    width: self.width,
+                    height: self.height,
+                    cells: &cells,
+                    inactive: self.inactive,
+                })?;
+                Some(fresh)
+            }
+            None => None,
+        };
+        let mut counts_current: std::collections::HashMap<Spur, u64> =
+            std::collections::HashMap::new();
+        let mut dominant: (CellType, u64) = (self.inactive, 0);
+        for c in &cells {
+            let cnt = counts_current.entry(c.0).or_insert(0);
+            *cnt += 1;
+            if *cnt > dominant.1 {
+                dominant = (*c, *cnt);
+            }
+        }
+        self.cells = cells;
+        self.next_cells = vec![self.inactive; total];
+        self.ages = vec![0; total];
+        if self.history_limit > 0 {
+            self.history_data = vec![self.inactive; total * self.history_limit];
+            self.history_heads = vec![0u8; total];
+            self.history_counts = vec![0u8; total];
+        }
+        self.step = 0;
+        self.peak_counts = counts_current.clone();
+        self.counts_current = counts_current;
+        self.dominant_type = dominant.0;
+        self.model = model;
+        Ok(())
     }
 
     /// Transition cell `idx` to `new_type`.
@@ -297,7 +383,8 @@ impl Grid2D {
         plan: &Rule2DPlan,
         inactive: CellType,
         idx: usize,
-        mut rng: Option<&mut SmallRng>,
+        seed: u64,
+        step: u64,
     ) -> CellType {
         let current_type = cells[idx];
         for (i, sr) in rule.subrules.iter().enumerate() {
@@ -323,12 +410,10 @@ impl Grid2D {
                 }
             }
             if sr.eval_condition(neighbors) {
-                if let Some(r) = sr.randomness {
-                    if let Some(rng) = rng.as_deref_mut() {
-                        if rng.r#gen::<f64>() < r {
-                            continue;
-                        }
-                    }
+                if let Some(r) = sr.randomness
+                    && f64::from(cell_rand(seed, step, idx as u64, STREAM_RULE + i as u64)) < r
+                {
+                    continue;
                 }
                 return sr.output_type;
             }
@@ -349,10 +434,11 @@ impl Grid2D {
         x: isize,
         y: isize,
         idx: usize,
-        mut rng: Option<&mut SmallRng>,
+        seed: u64,
+        step: u64,
     ) -> CellType {
         let current_type = cells[idx];
-        for sr in &rule.subrules {
+        for (i, sr) in rule.subrules.iter().enumerate() {
             if current_type != sr.current_type {
                 continue;
             }
@@ -379,12 +465,10 @@ impl Grid2D {
                 }
             }
             if sr.eval_condition(neighbors) {
-                if let Some(r) = sr.randomness {
-                    if let Some(rng) = rng.as_deref_mut() {
-                        if rng.r#gen::<f64>() < r {
-                            continue;
-                        }
-                    }
+                if let Some(r) = sr.randomness
+                    && f64::from(cell_rand(seed, step, idx as u64, STREAM_RULE + i as u64)) < r
+                {
+                    continue;
                 }
                 return sr.output_type;
             }
@@ -409,14 +493,10 @@ impl Grid2D {
         dt: CellType,
         width: usize,
         height: usize,
+        seed: u64,
+        step: u64,
     ) -> TypeCounter {
         let mut count_map = TypeCounter::new();
-        // Only pay for RNG setup when a subrule actually draws from it.
-        let mut rng = if plan.needs_rng {
-            Some(SmallRng::from_entropy())
-        } else {
-            None
-        };
         let start = out.start;
         // Reborrow into locals: indexing through `&mut OutChunk` makes the loop
         // reload each slice's pointer and length from the struct on every access.
@@ -437,18 +517,10 @@ impl Grid2D {
             let idx = start + local;
             let cur = cells[idx];
             let new_type = if row_interior && x >= pad && x < x_hi {
-                Self::next_type_interior(cells, rule, plan, inactive, idx, rng.as_mut())
+                Self::next_type_interior(cells, rule, plan, inactive, idx, seed, step)
             } else {
                 Self::next_type_edge(
-                    cells,
-                    rule,
-                    inactive,
-                    width,
-                    height,
-                    x as isize,
-                    y as isize,
-                    idx,
-                    rng.as_mut(),
+                    cells, rule, inactive, width, height, x as isize, y as isize, idx, seed, step,
                 )
             };
             next_cells[local] = new_type;
@@ -706,6 +778,8 @@ impl Grid2D {
         let rule = &self.rule;
         let inactive = self.inactive;
         let dt = self.dominant_type;
+        let seed = self.seed;
+        let step = self.step;
 
         let count_map = if nchunks <= 1 {
             let mut out = OutChunk {
@@ -717,7 +791,7 @@ impl Grid2D {
                 history_counts: &mut self.history_counts,
             };
             Self::step_chunk(
-                cells, &mut out, hl, rule, &plan, inactive, dt, width, height,
+                cells, &mut out, hl, rule, &plan, inactive, dt, width, height, seed, step,
             )
         } else {
             let chunk = total.div_ceil(nchunks);
@@ -735,7 +809,9 @@ impl Grid2D {
                 chunks
                     .par_iter_mut()
                     .map(|c| {
-                        Self::step_chunk(cells, c, hl, rule, &plan, inactive, dt, width, height)
+                        Self::step_chunk(
+                            cells, c, hl, rule, &plan, inactive, dt, width, height, seed, step,
+                        )
                     })
                     .reduce(TypeCounter::new, |mut a, b| {
                         a.merge(&b);
@@ -896,30 +972,64 @@ mod tests {
     }
 
     #[test]
-    fn rng_none_paths_are_exercised_for_interior_and_edge() {
+    fn seeded_randomness_is_deterministic_and_honours_zero_and_one() {
         let a = CellType::from("A");
         let b = CellType::from("B");
-        let sr = Rule2DSubrule::new(
-            a,
-            a,
-            0,
-            CountOp::Gt,
-            1,
-            Neighborhood2D::Moore,
-            b,
-            Some(0.5),
-            None,
-        );
-        let rule = Rule2D { subrules: vec![sr] };
-
+        let make = |r: Option<f64>| Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                a,
+                a,
+                0,
+                CountOp::Gt,
+                1,
+                Neighborhood2D::Moore,
+                b,
+                r,
+                None,
+            )],
+        };
         let cells = vec![a; 9];
-        let plan = Rule2DPlan::with_inactive(&rule, 3, CellType::inactive());
-        let interior =
-            Grid2D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 4, None);
-        assert_eq!(interior, b);
+        let inactive = CellType::inactive();
 
-        let edge = Grid2D::next_type_edge(&cells, &rule, CellType::inactive(), 3, 3, 0, 0, 0, None);
-        assert_eq!(edge, b);
+        // Same seed and step: same answer, interior and edge alike.
+        let rule = make(Some(0.5));
+        let plan = Rule2DPlan::with_inactive(&rule, 3, inactive);
+        let i1 = Grid2D::next_type_interior(&cells, &rule, &plan, inactive, 4, 5, 2);
+        let i2 = Grid2D::next_type_interior(&cells, &rule, &plan, inactive, 4, 5, 2);
+        assert_eq!(i1, i2);
+        let e1 = Grid2D::next_type_edge(&cells, &rule, inactive, 3, 3, 0, 0, 0, 5, 2);
+        let e2 = Grid2D::next_type_edge(&cells, &rule, inactive, 3, 3, 0, 0, 0, 5, 2);
+        assert_eq!(e1, e2);
+
+        // A fair coin over many seeds lands on both sides.
+        let outcomes: std::collections::HashSet<CellType> = (0..64u64)
+            .map(|seed| Grid2D::next_type_interior(&cells, &rule, &plan, inactive, 4, seed, 0))
+            .collect();
+        assert_eq!(outcomes.len(), 2, "both skip and apply must occur");
+
+        // randomness 0.0 never skips; 1.0 always skips.
+        let never = make(Some(0.0));
+        let plan_never = Rule2DPlan::with_inactive(&never, 3, inactive);
+        let always = make(Some(1.0));
+        let plan_always = Rule2DPlan::with_inactive(&always, 3, inactive);
+        for seed in 0..16u64 {
+            assert_eq!(
+                Grid2D::next_type_interior(&cells, &never, &plan_never, inactive, 4, seed, 0),
+                b
+            );
+            assert_eq!(
+                Grid2D::next_type_edge(&cells, &never, inactive, 3, 3, 0, 0, 0, seed, 0),
+                b
+            );
+            assert_eq!(
+                Grid2D::next_type_interior(&cells, &always, &plan_always, inactive, 4, seed, 0),
+                inactive
+            );
+            assert_eq!(
+                Grid2D::next_type_edge(&cells, &always, inactive, 3, 3, 0, 0, 0, seed, 0),
+                inactive
+            );
+        }
     }
 
     #[test]
@@ -958,15 +1068,14 @@ mod tests {
         let rule = Rule2D { subrules: vec![sr] };
         let cells = vec![a; 9];
         let plan = Rule2DPlan::with_inactive(&rule, 3, CellType::inactive());
-        let mut rng1 = SmallRng::seed_from_u64(7);
-        let mut rng2 = SmallRng::seed_from_u64(9);
         let interior = Grid2D::next_type_interior(
             &cells,
             &rule,
             &plan,
             CellType::inactive(),
             4,
-            Some(&mut rng1),
+            7,
+            0,
         );
         let edge = Grid2D::next_type_edge(
             &cells,
@@ -977,7 +1086,8 @@ mod tests {
             0,
             0,
             0,
-            Some(&mut rng2),
+            9,
+            0,
         );
         assert_eq!(interior, CellType::inactive());
         assert_eq!(edge, CellType::inactive());
@@ -998,15 +1108,14 @@ mod tests {
             subrules: vec![sr_force],
         };
         let plan_force = Rule2DPlan::with_inactive(&rule_force, 3, CellType::inactive());
-        let mut rng3 = SmallRng::seed_from_u64(11);
-        let mut rng4 = SmallRng::seed_from_u64(13);
         let interior2 = Grid2D::next_type_interior(
             &cells,
             &rule_force,
             &plan_force,
             CellType::inactive(),
             4,
-            Some(&mut rng3),
+            11,
+            0,
         );
         let edge2 = Grid2D::next_type_edge(
             &cells,
@@ -1017,7 +1126,8 @@ mod tests {
             0,
             0,
             0,
-            Some(&mut rng4),
+            13,
+            0,
         );
         assert_eq!(interior2, CellType::inactive());
         assert_eq!(edge2, CellType::inactive());

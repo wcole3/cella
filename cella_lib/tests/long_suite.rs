@@ -1167,6 +1167,105 @@ fn wildfire_grid_256(spotting: bool) -> Grid2D {
     g
 }
 
+/// A stochastic 1D rule (Rule 30 with a 20 % chance of skipping each
+/// subrule). Randomness draws are `cell_rand(seed, step, cell, stream)`, so
+/// this is snapshot-testable and must hash the same on 1, 4 and 8 threads.
+fn stress_1d_randomness_512() {
+    let x = CellType::from("X");
+    let inactive = CellType::inactive();
+    let sub_active = Rule1DSubrule {
+        current_type: x,
+        criteria_type: x,
+        wolfram_code: 30,
+        n: 1,
+        randomness: Some(0.2),
+        output_type: x,
+    };
+    let sub_inactive = Rule1DSubrule {
+        current_type: inactive,
+        criteria_type: x,
+        wolfram_code: 30,
+        n: 1,
+        randomness: Some(0.2),
+        output_type: x,
+    };
+    let rule = Rule1D {
+        subrules: vec![sub_active, sub_inactive],
+    };
+    let w = 512usize;
+    let mut init = vec![inactive; w];
+    init[w / 2] = x;
+    let g = Grid1D::new(w, 2, init, rule).with_seed(7);
+    if ascii_enabled() {
+        print_ascii_1d("1d_randomness_512: initial", &g);
+    }
+    if configs_export_enabled() {
+        export_config_1d("1d_randomness_512", &g);
+    }
+    run_benchmark_1d("1d_randomness_512", &g, 500);
+}
+
+/// Life with a 5 % chance that a birth is skipped, on a seeded random soup.
+/// Same determinism contract as the 1D case above.
+fn stress_2d_randomness_128() {
+    let alive = CellType::from("Alive");
+    let inactive = CellType::inactive();
+    let die_crowded = Rule2DSubrule::new(
+        alive,
+        alive,
+        4,
+        CountOp::Gt,
+        1,
+        Neighborhood2D::Moore,
+        inactive,
+        None,
+        None,
+    );
+    let survive = Rule2DSubrule::new(
+        alive,
+        alive,
+        2,
+        CountOp::Gt,
+        1,
+        Neighborhood2D::Moore,
+        alive,
+        None,
+        None,
+    );
+    let birth = Rule2DSubrule::new(
+        inactive,
+        alive,
+        3,
+        CountOp::Eq,
+        1,
+        Neighborhood2D::Moore,
+        alive,
+        Some(0.05),
+        None,
+    );
+    let rule = Rule2D {
+        subrules: vec![die_crowded, survive, birth],
+    };
+    let (w, h) = (128usize, 128usize);
+    let init: Vec<CellType> = (0..w * h)
+        .map(|idx| {
+            if cella_lib::rng::cell_rand(4242, 0, idx as u64, 11) < 0.3 {
+                alive
+            } else {
+                inactive
+            }
+        })
+        .collect();
+    let g = Grid2D::new(w, h, 1, init, rule).with_seed(99);
+    if ascii_enabled() {
+        print_ascii_2d("2d_randomness_128: initial", &g);
+    }
+    if configs_export_enabled() {
+        export_config_2d("2d_randomness_128", &g);
+    }
+    run_benchmark_2d("2d_randomness_128", &g, 200);
+}
+
 fn stress_2d_wildfire() {
     let g = wildfire_grid_256(false);
     if ascii_enabled() {
@@ -1187,6 +1286,50 @@ fn stress_2d_wildfire_spotting() {
         export_config_2d("2d_wildfire_spotting_256", &g);
     }
     run_benchmark_2d("2d_wildfire_spotting_256", &g, 200);
+}
+
+#[test]
+#[ignore]
+fn stress_1d_randomness_512_t1() {
+    set_thread_override(1);
+    stress_1d_randomness_512();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_1d_randomness_512_t4() {
+    set_thread_override(4);
+    stress_1d_randomness_512();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_1d_randomness_512_t8() {
+    set_thread_override(8);
+    stress_1d_randomness_512();
+    clear_thread_override();
+}
+
+#[test]
+#[ignore]
+fn stress_2d_randomness_128_t1() {
+    set_thread_override(1);
+    stress_2d_randomness_128();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_randomness_128_t4() {
+    set_thread_override(4);
+    stress_2d_randomness_128();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_randomness_128_t8() {
+    set_thread_override(8);
+    stress_2d_randomness_128();
+    clear_thread_override();
 }
 
 #[test]

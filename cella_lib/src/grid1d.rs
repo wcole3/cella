@@ -8,8 +8,7 @@ use crate::state::{soa_counts, soa_heads, soa_history};
 use crate::threads::{chunks_for_work, pool};
 use crate::types::{CellState, CellType};
 use lasso2::Spur;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use crate::rng::{STREAM_RULE, cell_rand};
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::io::Error;
@@ -58,6 +57,11 @@ pub struct Grid1D {
     pub(crate) history_counts: Vec<u8>,
     /// Current simulation step.
     pub step: u64,
+    /// Seed for every `randomness` draw the subrules make. Two grids with the
+    /// same seed, rule and cells step identically on any thread count; the
+    /// draw is `cell_rand(seed, step, cell, STREAM_RULE + subrule)`.
+    #[serde(default)]
+    pub seed: u64,
     /// Rule used for updates.
     pub rule: Rule1D,
     /// Current count of cells per type name.
@@ -79,6 +83,8 @@ impl<'de> Deserialize<'de> for Grid1D {
             history_limit: usize,
             cell_states: Vec<CellState>,
             step: u64,
+            #[serde(default)]
+            seed: u64,
             rule: Rule1D,
             counts_current: std::collections::HashMap<Spur, u64>,
             peak_counts: std::collections::HashMap<Spur, u64>,
@@ -107,6 +113,7 @@ impl<'de> Deserialize<'de> for Grid1D {
             history_heads,
             history_counts,
             step: im.step,
+            seed: im.seed,
             rule: im.rule,
             counts_current: im.counts_current,
             peak_counts: im.peak_counts,
@@ -198,12 +205,67 @@ impl Grid1D {
             history_heads,
             history_counts,
             step: 0,
+            seed: 0,
             rule,
             counts_current,
             peak_counts,
             inactive,
             dominant_type,
         }
+    }
+
+    /// Same grid, different seed for the subrules' `randomness` draws.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    /// Set the seed for `randomness` draws.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+    }
+
+    /// All current cell types. Read-only; paint through
+    /// [`Self::transition_state_and_buffer`].
+    #[inline]
+    pub fn cells(&self) -> &[CellType] {
+        &self.cells
+    }
+
+    /// Replace every cell and start over: ages become 0, per-cell history is
+    /// cleared, `step` returns to 0 and the population counts are recomputed.
+    /// `cells.len()` must equal `width`; on error nothing changes.
+    pub fn reset_cells(&mut self, cells: Vec<CellType>) -> Result<(), crate::external::ModelError> {
+        if cells.len() != self.width {
+            return Err(crate::external::ModelError::LayerLength {
+                layer: "cells",
+                expected: self.width,
+                got: cells.len(),
+            });
+        }
+        let mut counts_current: std::collections::HashMap<Spur, u64> =
+            std::collections::HashMap::new();
+        for c in &cells {
+            *counts_current.entry(c.0).or_insert(0) += 1;
+        }
+        let dominant_type = counts_current
+            .iter()
+            .max_by_key(|entry| entry.1)
+            .map(|(spur, _)| CellType(*spur))
+            .unwrap_or(self.inactive);
+        self.cells = cells;
+        self.next_cells = vec![self.inactive; self.width];
+        self.ages = vec![0; self.width];
+        if self.history_limit > 0 {
+            self.history_data = vec![self.inactive; self.width * self.history_limit];
+            self.history_heads = vec![0u8; self.width];
+            self.history_counts = vec![0u8; self.width];
+        }
+        self.step = 0;
+        self.peak_counts = counts_current.clone();
+        self.counts_current = counts_current;
+        self.dominant_type = dominant_type;
+        Ok(())
     }
 
     /// Transitions the given cell to `new_type`.
@@ -306,22 +368,21 @@ impl Grid1D {
         plan: &Rule1DPlan,
         inactive: CellType,
         idx: usize,
-        mut rng: Option<&mut SmallRng>,
+        seed: u64,
+        step: u64,
     ) -> CellType {
         let current_type = cells[idx];
-        for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
+        for (i, (s, ps)) in rule.subrules.iter().zip(&plan.subs).enumerate() {
             if current_type != s.current_type || !ps.valid {
                 continue;
             }
             if !Self::applies_interior(s, ps, cells, idx, current_type) {
                 continue;
             }
-            if let Some(r) = s.randomness {
-                if let Some(rng) = rng.as_deref_mut() {
-                    if rng.r#gen::<f64>() < r {
-                        continue;
-                    }
-                }
+            if let Some(r) = s.randomness
+                && f64::from(cell_rand(seed, step, idx as u64, STREAM_RULE + i as u64)) < r
+            {
+                continue;
             }
             return s.output_type;
         }
@@ -339,22 +400,21 @@ impl Grid1D {
         inactive: CellType,
         width: usize,
         idx: usize,
-        mut rng: Option<&mut SmallRng>,
+        seed: u64,
+        step: u64,
     ) -> CellType {
         let current_type = cells[idx];
-        for (s, ps) in rule.subrules.iter().zip(&plan.subs) {
+        for (i, (s, ps)) in rule.subrules.iter().zip(&plan.subs).enumerate() {
             if current_type != s.current_type || !ps.valid {
                 continue;
             }
             if !Self::applies_edge(s, cells, inactive, width, idx) {
                 continue;
             }
-            if let Some(r) = s.randomness {
-                if let Some(rng) = rng.as_deref_mut() {
-                    if rng.r#gen::<f64>() < r {
-                        continue;
-                    }
-                }
+            if let Some(r) = s.randomness
+                && f64::from(cell_rand(seed, step, idx as u64, STREAM_RULE + i as u64)) < r
+            {
+                continue;
             }
             return s.output_type;
         }
@@ -370,18 +430,13 @@ impl Grid1D {
         rule: &Rule1D,
         plan: &Rule1DPlan,
         pad: usize,
-        needs_rng: bool,
         inactive: CellType,
         dt: CellType,
         width: usize,
+        seed: u64,
+        step: u64,
     ) -> TypeCounter {
         let mut count_map = TypeCounter::new();
-        // Only pay for RNG setup when a subrule actually draws from it.
-        let mut rng = if needs_rng {
-            Some(SmallRng::from_entropy())
-        } else {
-            None
-        };
         let start = out.start;
         // Reborrow into locals: indexing through `&mut OutChunk` makes the loop
         // reload each slice's pointer and length from the struct on every access.
@@ -394,9 +449,9 @@ impl Grid1D {
         for local in 0..next_cells.len() {
             let idx = start + local;
             let new_type = if idx >= pad && idx < hi {
-                Self::next_type_interior(cells, rule, plan, inactive, idx, rng.as_mut())
+                Self::next_type_interior(cells, rule, plan, inactive, idx, seed, step)
             } else {
-                Self::next_type_edge(cells, rule, plan, inactive, width, idx, rng.as_mut())
+                Self::next_type_edge(cells, rule, plan, inactive, width, idx, seed, step)
             };
             next_cells[local] = new_type;
             let cur = cells[idx];
@@ -544,7 +599,8 @@ impl Grid1D {
         let width = self.width;
         let hl = self.history_limit;
         let pad = self.rule.n_max() as usize;
-        let needs_rng = self.rule.needs_rng();
+        let seed = self.seed;
+        let step = self.step;
         // Nominal neighbor visits per cell: one 2n+1 window per subrule.
         let work_per_cell: usize = self
             .rule
@@ -595,7 +651,7 @@ impl Grid1D {
                 history_counts: &mut self.history_counts,
             };
             Self::step_chunk(
-                cells, &mut out, hl, rule, plan, pad, needs_rng, inactive, dt, width,
+                cells, &mut out, hl, rule, plan, pad, inactive, dt, width, seed, step,
             )
         } else {
             let chunk = width.div_ceil(nchunks);
@@ -614,7 +670,7 @@ impl Grid1D {
                     .par_iter_mut()
                     .map(|c| {
                         Self::step_chunk(
-                            cells, c, hl, rule, plan, pad, needs_rng, inactive, dt, width,
+                            cells, c, hl, rule, plan, pad, inactive, dt, width, seed, step,
                         )
                     })
                     .reduce(TypeCounter::new, |mut a, b| {
@@ -792,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_n_and_rng_none_paths_are_exercised() {
+    fn invalid_n_and_randomness_one_paths_are_exercised() {
         let a = CellType::from("A");
         let b = CellType::from("B");
         let cells = vec![a, a, a];
@@ -818,7 +874,8 @@ mod tests {
                 &invalid_plan,
                 CellType::inactive(),
                 1,
-                None
+                0,
+                0
             ),
             CellType::inactive()
         );
@@ -832,20 +889,23 @@ mod tests {
             subrules: vec![random_sub],
         };
         let plan = Rule1DPlan::new(&rule, CellType::inactive());
-        // Call internals directly with rng=None to cover that branch.
-        let got_interior =
-            Grid1D::next_type_interior(&cells, &rule, &plan, CellType::inactive(), 1, None);
-        assert_eq!(got_interior, b);
-        let got_edge = Grid1D::next_type_edge(
-            &cells,
-            &rule,
-            &plan,
-            CellType::inactive(),
-            cells.len(),
-            0,
-            None,
-        );
-        assert_eq!(got_edge, b);
+        // A seeded draw is a function of (seed, step, cell): the same inputs
+        // give the same answer, and over many seeds a fair coin shows both
+        // faces in the interior and the edge path alike.
+        let inactive = CellType::inactive();
+        let first = Grid1D::next_type_interior(&cells, &rule, &plan, inactive, 1, 3, 0);
+        let again = Grid1D::next_type_interior(&cells, &rule, &plan, inactive, 1, 3, 0);
+        assert_eq!(first, again);
+        let interior: std::collections::HashSet<CellType> = (0..64u64)
+            .map(|seed| Grid1D::next_type_interior(&cells, &rule, &plan, inactive, 1, seed, 0))
+            .collect();
+        assert_eq!(interior, [b, inactive].into_iter().collect());
+        let edge: std::collections::HashSet<CellType> = (0..64u64)
+            .map(|seed| {
+                Grid1D::next_type_edge(&cells, &rule, &plan, inactive, cells.len(), 0, seed, 0)
+            })
+            .collect();
+        assert_eq!(edge, [b, inactive].into_iter().collect());
     }
 
     #[test]
@@ -875,8 +935,7 @@ mod tests {
         let bad = serde_json::from_str::<Grid1D>("{\"width\":\"nope\"}");
         assert!(bad.is_err());
 
-        // Force rng<r continue path in next_type_edge with certainty.
-        let mut rng = SmallRng::seed_from_u64(1);
+        // randomness 1.0 always skips, whatever the seed.
         let sub = Rule1DSubrule {
             current_type: CellType::from("A"),
             criteria_type: CellType::from("A"),
@@ -896,7 +955,8 @@ mod tests {
             CellType::inactive(),
             1,
             0,
-            Some(&mut rng),
+            1,
+            0,
         );
         assert_eq!(out, CellType::inactive());
 
@@ -922,7 +982,8 @@ mod tests {
                 CellType::inactive(),
                 1,
                 0,
-                None
+                0,
+                0,
             ),
             CellType::inactive()
         );
@@ -971,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_initial_uses_inactive_dominant_and_rng_continue_interior() {
+    fn empty_initial_uses_inactive_dominant_and_randomness_skips_interior() {
         let g_empty = Grid1D::new(0, 0, vec![], Rule1D { subrules: vec![] });
         assert_eq!(g_empty.dominant_type, CellType::inactive());
 
@@ -990,14 +1051,14 @@ mod tests {
         };
         let plan = Rule1DPlan::new(&rule, CellType::inactive());
         let cells = vec![a, a, a];
-        let mut rng = SmallRng::seed_from_u64(123);
         let out = Grid1D::next_type_interior(
             &cells,
             &rule,
             &plan,
             CellType::inactive(),
             1,
-            Some(&mut rng),
+            123,
+            0,
         );
         assert_eq!(out, CellType::inactive());
 
@@ -1010,14 +1071,14 @@ mod tests {
             subrules: vec![sub_force],
         };
         let force_plan = Rule1DPlan::new(&force_rule, CellType::inactive());
-        let mut rng2 = SmallRng::seed_from_u64(7);
         let out2 = Grid1D::next_type_interior(
             &cells,
             &force_rule,
             &force_plan,
             CellType::inactive(),
             1,
-            Some(&mut rng2),
+            7,
+            0,
         );
         assert_eq!(out2, CellType::inactive());
     }

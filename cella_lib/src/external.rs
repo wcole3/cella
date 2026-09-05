@@ -236,6 +236,15 @@ pub trait ExternalModel: Send + Sync {
         )))
     }
 
+    /// Reseed the model's own randomness. Called by [`crate::Grid2D::set_seed`]
+    /// and by ensembles, which give every member a different seed. A model
+    /// that draws no random numbers can ignore it (the default does nothing);
+    /// a model that does should store the seed and use it from the next step
+    /// on — no re-attach is expected. This is separate from a `seed`
+    /// parameter a model may show read-only in its [`Self::params`] list: the
+    /// panel must not change the seed mid-run, an ensemble must.
+    fn set_seed(&mut self, _seed: u64) {}
+
     /// Clone into a box; enables `Clone` for grids holding a model.
     fn boxed_clone(&self) -> Box<dyn ExternalModel>;
 

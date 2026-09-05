@@ -1146,6 +1146,12 @@ impl ExternalModel for WildfireModel {
         Ok(())
     }
 
+    fn set_seed(&mut self, seed: u64) {
+        // The seed is read at step time (`cell_rand(seed, step, cell, stream)`),
+        // so nothing derived has to be rebuilt.
+        self.params.seed = seed;
+    }
+
     fn boxed_clone(&self) -> Box<dyn ExternalModel> {
         Box::new(self.clone())
     }

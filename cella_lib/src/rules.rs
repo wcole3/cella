@@ -406,10 +406,6 @@ impl Rule1D {
     pub fn n_max(&self) -> u8 {
         self.subrules.iter().map(|s| s.n).max().unwrap_or(1)
     }
-    /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
-    pub(crate) fn needs_rng(&self) -> bool {
-        self.subrules.iter().any(|s| s.randomness.is_some())
-    }
 }
 
 /// Precomputed helper data for **one subrule** during a single 1D step.
@@ -774,10 +770,6 @@ impl Rule2D {
     pub fn range_max(&self) -> u8 {
         self.subrules.iter().map(|s| s.range).max().unwrap_or(1)
     }
-    /// Whether any subrule draws from the RNG. Lets the stepper skip RNG setup entirely.
-    pub(crate) fn needs_rng(&self) -> bool {
-        self.subrules.iter().any(|s| s.randomness.is_some())
-    }
 }
 
 /// Marks a rule that qualifies for the 2D "bit-parallel" fast path, plus the
@@ -876,9 +868,6 @@ pub(crate) struct Rule2DPlan {
     /// are guaranteed in bounds, so they take the fast path with no bounds
     /// checks. Cells closer to a border take the checked "edge" path.
     pub pad: usize,
-    /// Whether any subrule uses `randomness`. When false, the stepper skips
-    /// RNG construction entirely.
-    pub needs_rng: bool,
     /// Rough estimate of work per cell (total neighbor visits across all
     /// subrules). Only used to decide how many parallel chunks a step is worth
     /// splitting into. Deliberately an over-estimate — that direction is safe,
@@ -908,7 +897,6 @@ impl Rule2DPlan {
             lin_flat,
             spans,
             pad: rule.subrules.iter().map(|s| s.pad).max().unwrap_or(0),
-            needs_rng: rule.needs_rng(),
             work_per_cell: rule
                 .subrules
                 .iter()
