@@ -452,6 +452,17 @@ same engine with the fire's weather schedule and observation series wired
 in; its command line and report fields did not change when the engine was
 generalised (experiment E31 checks that).
 
+Two more modes of that runner show what the engines are good for beyond
+forecasting. `wildfire_smc <dir> 32 evolve out.json` fits the genes to
+the first observed days with a GA and then forecasts forward
+(experiment E36: the day-by-day filter beat it on every fire).
+`wildfire_smc <dir> 32 map out.json` runs MAP-Elites with no objective over
+the spread knobs, with growth × elongation as the axes, and plots the real
+fire in the same coordinates (E37): a **reachability test**. If the
+observed fire sits outside the shaded region, no calibration can reach it
+and the model itself has to change. That is a use of illumination worth
+copying for any model: before tuning, ask what the knobs can produce at all.
+
 ## 12. Read results honestly
 
 - **Score forecasts, not fits.** Compare the map made *before* an
