@@ -53,150 +53,168 @@ fn icon_button(ui: &mut egui::Ui, ctx: &Context, glyph: &str, label: &str, actio
 
 impl CellaApp {
     /// Build the top toolbar.
+    ///
+    /// Layout, left to right: the control-panel toggle sits flush left, above
+    /// the panel it hides; then playback, speed, zoom, reset, export and help
+    /// in separated groups; the workbench toggle sits flush right, above the
+    /// workbench. Both toggles therefore line up with the panel edges.
     pub(in crate::gui) fn ui_top_controls(&mut self, ui: &mut egui::Ui, ctx: &Context) {
         let mut pending: Vec<Action> = Vec::new();
         ui.horizontal(|ui| {
-            let (glyph, label) = if self.playback.playing {
-                (ICON_PAUSE, "Pause")
+            let left_label = if self.chrome.left_open {
+                "Hide the control panel"
             } else {
-                (ICON_PLAY, "Play")
+                "Show the control panel"
             };
-            if icon_button(ui, ctx, glyph, label, Action::TogglePlay) {
-                pending.push(Action::TogglePlay);
-            }
-            if icon_button(ui, ctx, ICON_STEP, "Step once", Action::Step) {
-                pending.push(Action::Step);
-            }
-            ui.add(
-                egui::DragValue::new(&mut self.playback.run_to_steps)
-                    .range(1..=1_000_000)
-                    .prefix("+"),
-            )
-            .on_hover_text("How many steps \u{23E9} runs, as fast as possible");
-            if icon_button(
-                ui,
-                ctx,
-                ICON_RUN_TO,
-                "Run ahead by the steps shown",
-                Action::RunTo { steps: 0 },
-            ) {
-                pending.push(Action::RunTo {
-                    steps: self.playback.run_to_steps,
-                });
-            }
-            ui.separator();
-
-            // Speed: a log slider in steps per second, plus Max. The stored
-            // field is still `refresh_ms`; the slider is a view of it.
-            let is_max = self.playback.pacing == Pacing::Unbounded;
-            let mut sps = speed_of(self.playback.refresh_ms);
-            let slider = egui::Slider::new(&mut sps, 1.0..=1000.0)
-                .logarithmic(true)
-                .suffix(" steps/s")
-                .fixed_decimals(0)
-                .text("Speed");
-            let resp = ui.add_enabled(!is_max, slider).on_hover_text(
-                "Paced playback: steps per second. Frame-bound above about 60; \
-                 tick Max to run as fast as the machine allows.",
-            );
-            if resp.changed() {
-                pending.push(Action::SetSpeed { steps_per_s: sps });
-            }
-            let mut max = is_max;
-            if ui
-                .toggle_value(&mut max, "Max")
-                .on_hover_text("Run as many steps per frame as fit in the time budget")
-                .changed()
-            {
-                pending.push(Action::SetMaxSpeed(max));
-            }
-            ui.separator();
-
-            if icon_button(ui, ctx, ICON_ZOOM_OUT, "Zoom out", Action::ZoomOut) {
-                pending.push(Action::ZoomOut);
-            }
-            let mut scale = self.view.scale;
-            if ui
-                .add(egui::DragValue::new(&mut scale).range(1..=64).suffix(" px"))
-                .on_hover_text("Pixels per cell")
-                .changed()
-            {
-                pending.push(Action::SetScale(scale));
-            }
-            if icon_button(ui, ctx, "+", "Zoom in", Action::ZoomIn) {
-                pending.push(Action::ZoomIn);
-            }
-            if icon_button(
-                ui,
-                ctx,
-                ICON_FIT,
-                "Zoom to fit the whole grid",
-                Action::ZoomToFit,
-            ) {
-                pending.push(Action::ZoomToFit);
-            }
-            ui.separator();
-
-            if icon_button(
-                ui,
-                ctx,
-                ICON_RESET,
-                "Reset to the initial state",
-                Action::Reset,
-            ) {
-                pending.push(Action::Reset);
-            }
-            let exporting = self.export.join.is_some();
-            let export_btn = ui
-                .add_enabled(!exporting, egui::Button::new("GIF"))
-                .on_hover_text(tooltip(ctx, "Export an animated GIF", &Action::ExportGif));
-            if export_btn.clicked() {
-                pending.push(Action::ExportGif);
-            }
-            if exporting {
-                ui.label("Exporting\u{2026}");
-            }
-            if icon_button(
-                ui,
-                ctx,
-                ICON_SAVE,
-                "Save the current state as JSON",
-                Action::SaveFinalState,
-            ) {
-                pending.push(Action::SaveFinalState);
-            }
-            ui.separator();
-
-            if icon_button(
-                ui,
-                ctx,
-                ICON_LEFT,
-                "Show or hide the left panel",
-                Action::ToggleLeft,
-            ) {
+            if icon_button(ui, ctx, ICON_LEFT, left_label, Action::ToggleLeft) {
                 pending.push(Action::ToggleLeft);
             }
-            if icon_button(
-                ui,
-                ctx,
-                ICON_RIGHT,
-                "Show or hide the workbench (rule, model, explore)",
-                Action::ToggleRight,
-            ) {
-                pending.push(Action::ToggleRight);
-            }
-            if icon_button(
-                ui,
-                ctx,
-                ICON_HELP,
-                "Keyboard shortcuts",
-                Action::ToggleShortcuts,
-            ) {
-                pending.push(Action::ToggleShortcuts);
-            }
+            ui.separator();
+
+            // The workbench toggle is laid out from the right edge so it
+            // stays above the right panel whatever the window width.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let right_label = if self.chrome.right_open {
+                    "Hide the workbench (rule, model, explore)"
+                } else {
+                    "Show the workbench (rule, model, explore)"
+                };
+                if icon_button(ui, ctx, ICON_RIGHT, right_label, Action::ToggleRight) {
+                    pending.push(Action::ToggleRight);
+                }
+                ui.separator();
+                if icon_button(
+                    ui,
+                    ctx,
+                    ICON_HELP,
+                    "Keyboard shortcuts",
+                    Action::ToggleShortcuts,
+                ) {
+                    pending.push(Action::ToggleShortcuts);
+                }
+                ui.separator();
+
+                // Everything else flows left to right in the remaining space.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.ui_toolbar_groups(ui, ctx, &mut pending);
+                });
+            });
         });
         for a in pending {
             self.push(a);
+        }
+    }
+
+    /// Playback, speed, zoom, reset and export controls, in separated groups.
+    fn ui_toolbar_groups(&mut self, ui: &mut egui::Ui, ctx: &Context, pending: &mut Vec<Action>) {
+        let (glyph, label) = if self.playback.playing {
+            (ICON_PAUSE, "Pause")
+        } else {
+            (ICON_PLAY, "Play")
+        };
+        if icon_button(ui, ctx, glyph, label, Action::TogglePlay) {
+            pending.push(Action::TogglePlay);
+        }
+        if icon_button(ui, ctx, ICON_STEP, "Step once", Action::Step) {
+            pending.push(Action::Step);
+        }
+        ui.add(
+            egui::DragValue::new(&mut self.playback.run_to_steps)
+                .range(1..=1_000_000)
+                .prefix("+"),
+        )
+        .on_hover_text("How many steps \u{23E9} runs, as fast as possible");
+        if icon_button(
+            ui,
+            ctx,
+            ICON_RUN_TO,
+            "Run ahead by the steps shown",
+            Action::RunTo { steps: 0 },
+        ) {
+            pending.push(Action::RunTo {
+                steps: self.playback.run_to_steps,
+            });
+        }
+        ui.separator();
+
+        // Speed: a log slider in steps per second, plus Max. The stored
+        // field is still `refresh_ms`; the slider is a view of it.
+        let is_max = self.playback.pacing == Pacing::Unbounded;
+        let mut sps = speed_of(self.playback.refresh_ms);
+        let slider = egui::Slider::new(&mut sps, 1.0..=1000.0)
+            .logarithmic(true)
+            .suffix(" steps/s")
+            .fixed_decimals(0)
+            .text("Speed");
+        let resp = ui.add_enabled(!is_max, slider).on_hover_text(
+            "Paced playback: steps per second. Frame-bound above about 60; \
+             tick Max to run as fast as the machine allows.",
+        );
+        if resp.changed() {
+            pending.push(Action::SetSpeed { steps_per_s: sps });
+        }
+        let mut max = is_max;
+        if ui
+            .toggle_value(&mut max, "Max")
+            .on_hover_text("Run as many steps per frame as fit in the time budget")
+            .changed()
+        {
+            pending.push(Action::SetMaxSpeed(max));
+        }
+        ui.separator();
+
+        if icon_button(ui, ctx, ICON_ZOOM_OUT, "Zoom out", Action::ZoomOut) {
+            pending.push(Action::ZoomOut);
+        }
+        let mut scale = self.view.scale;
+        if ui
+            .add(egui::DragValue::new(&mut scale).range(1..=64).suffix(" px"))
+            .on_hover_text("Pixels per cell")
+            .changed()
+        {
+            pending.push(Action::SetScale(scale));
+        }
+        if icon_button(ui, ctx, "+", "Zoom in", Action::ZoomIn) {
+            pending.push(Action::ZoomIn);
+        }
+        if icon_button(
+            ui,
+            ctx,
+            ICON_FIT,
+            "Zoom to fit the whole grid",
+            Action::ZoomToFit,
+        ) {
+            pending.push(Action::ZoomToFit);
+        }
+        ui.separator();
+
+        if icon_button(
+            ui,
+            ctx,
+            ICON_RESET,
+            "Reset to the initial state",
+            Action::Reset,
+        ) {
+            pending.push(Action::Reset);
+        }
+        let exporting = self.export.join.is_some();
+        let export_btn = ui
+            .add_enabled(!exporting, egui::Button::new("GIF"))
+            .on_hover_text(tooltip(ctx, "Export an animated GIF", &Action::ExportGif));
+        if export_btn.clicked() {
+            pending.push(Action::ExportGif);
+        }
+        if exporting {
+            ui.label("Exporting\u{2026}");
+        }
+        if icon_button(
+            ui,
+            ctx,
+            ICON_SAVE,
+            "Save the current state as JSON",
+            Action::SaveFinalState,
+        ) {
+            pending.push(Action::SaveFinalState);
         }
     }
 

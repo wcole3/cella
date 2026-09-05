@@ -21,12 +21,12 @@
 
 use super::app::{CellaApp, Dim, DrawMode};
 use super::explore::ExploreAction;
-use super::interact::{GridDims, MAX_SCALE, MIN_SCALE};
+use super::interact::{GridDims, MAX_BRUSH, MAX_SCALE, MIN_SCALE};
 use super::layers::Layer;
 use super::state::{ControlTab, Pacing, WorkbenchTab};
 use super::theme::ThemeChoice;
 use cella_lib::types::interner;
-use cella_lib::{CellType, INACTIVE, ParamValue};
+use cella_lib::{CellType, INACTIVE, Neighborhood2D, ParamValue};
 use egui::Color32;
 
 /// The built-in demo scenarios.
@@ -88,6 +88,11 @@ pub(in crate::gui) enum Action {
     SetDrawType(CellType),
     /// Brush diameter in cells.
     SetBrush(u8),
+    /// Brush footprint shape (a rule neighbourhood).
+    SetBrushShape(Neighborhood2D),
+    /// Brush range one step larger / smaller (`]` / `[`).
+    BrushGrow,
+    BrushShrink,
     /// Which pattern the Stamp tool drops (index into `patterns::PATTERNS`).
     SelectStamp(usize),
     /// Paint the selected type onto these cells as part of the current stroke.
@@ -295,7 +300,10 @@ impl CellaApp {
                 self.edit.draw_mode = mode;
             }
             Action::SetDrawType(ty) => self.edit.selected_draw_type = Some(ty),
-            Action::SetBrush(b) => self.edit.brush = b.clamp(1, 15),
+            Action::SetBrush(b) => self.edit.brush = b.min(MAX_BRUSH),
+            Action::SetBrushShape(shape) => self.edit.brush_shape = shape,
+            Action::BrushGrow => self.edit.brush = (self.edit.brush + 1).min(MAX_BRUSH),
+            Action::BrushShrink => self.edit.brush = self.edit.brush.saturating_sub(1),
             Action::SelectStamp(i) => self.edit.stamp = i.min(super::patterns::PATTERNS.len() - 1),
             Action::PaintCells(cells) => self.paint_cells(&cells),
             Action::EndStroke => self.finish_stroke(),
@@ -944,7 +952,16 @@ mod tests {
         app.apply_action(Action::SetDrawMode(DrawMode::Paint));
         app.apply_action(Action::SetDrawType(alive));
         app.apply_action(Action::SetBrush(99));
-        assert_eq!(app.edit.brush, 15);
+        assert_eq!(app.edit.brush, MAX_BRUSH);
+        app.apply_action(Action::BrushGrow);
+        assert_eq!(app.edit.brush, MAX_BRUSH);
+        app.apply_action(Action::SetBrush(0));
+        app.apply_action(Action::BrushShrink);
+        assert_eq!(app.edit.brush, 0);
+        app.apply_action(Action::BrushGrow);
+        assert_eq!(app.edit.brush, 1);
+        app.apply_action(Action::SetBrushShape(cella_lib::Neighborhood2D::Knight));
+        assert_eq!(app.edit.brush_shape, cella_lib::Neighborhood2D::Knight);
         app.apply_action(Action::SetBrush(3));
         // Two frames of the same stroke, overlapping cells, then release.
         app.apply_action(Action::PaintCells(vec![0, 1, 2]));

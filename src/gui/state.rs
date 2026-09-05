@@ -169,7 +169,11 @@ pub(in crate::gui) struct EditState {
     /// revisits a cell does not re-record it (and the check is not a scan).
     pub(in crate::gui) stroke_touched: HashSet<usize>,
     /// Brush diameter in cells (1 = a single cell).
+    /// Brush range: 0 paints one cell, `n` paints the centre plus the
+    /// `brush_shape` neighbourhood of range `n` (the same tables the rules use).
     pub(in crate::gui) brush: u8,
+    /// Shape of the brush footprint.
+    pub(in crate::gui) brush_shape: Neighborhood2D,
     /// Index into `patterns::PATTERNS` of the stamp to drop.
     pub(in crate::gui) stamp: usize,
     /// Random-fill drafts: share of cells to set, which type, the seed, and
@@ -197,7 +201,8 @@ impl Default for EditState {
             undo_stack: Vec::new(),
             current_paint_batch: None,
             stroke_touched: HashSet::new(),
-            brush: 1,
+            brush: 0,
+            brush_shape: Neighborhood2D::Moore,
             stamp: 0,
             fill_density: 0.3,
             fill_type: None,

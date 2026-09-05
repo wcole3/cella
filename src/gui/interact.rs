@@ -9,6 +9,7 @@ use super::actions::Action;
 use super::app::{CellaApp, Dim, DrawMode};
 use super::patterns::{PATTERNS, stamp_indices};
 use super::shortcuts::shortcuts;
+use cella_lib::rules::neighborhood_offsets;
 use cella_lib::*;
 
 /// Zoom limits, in screen pixels per cell.
@@ -53,50 +54,80 @@ pub(in crate::gui) fn cell_index_at(
     }
 }
 
-/// Every cell a brush of diameter `brush` covers around `center`: a disc on a
-/// 2D grid, a span along the live row on a 1D grid, clipped to the grid.
-/// A brush of 1 (or 0) is the single cell.
-pub(in crate::gui) fn brush_indices(center: usize, brush: u8, dims: GridDims) -> Vec<usize> {
-    let d = i64::from(brush.max(1));
-    // Even diameters sit between cells, so the disc's centre is offset by half
-    // a cell and the span runs one further on the positive side.
-    let even = brush.max(1).is_multiple_of(2);
-    let r = (d - 1) / 2;
-    let hi = if even { r + 1 } else { r };
-    let offset = if even { 0.5 } else { 0.0 };
-    let radius = if even {
-        d as f64 / 2.0
-    } else {
-        (d as f64 - 1.0) / 2.0
-    };
+/// Largest brush range the Edit tab offers.
+pub(in crate::gui) const MAX_BRUSH: u8 = 7;
+
+/// Every cell a brush covers around `center`, clipped to the grid. Range 0 is
+/// the single cell. On a 2D grid the footprint is the centre plus the
+/// `shape` neighbourhood of that range — exactly the cells a rule with that
+/// neighbourhood would count — so a Moore brush of range 1 is a 3×3 square,
+/// Von Neumann a diamond, Knight the eight knight squares. On a 1D grid the
+/// brush is a span of `±range` along the live row.
+pub(in crate::gui) fn brush_indices(
+    center: usize,
+    range: u8,
+    shape: Neighborhood2D,
+    dims: GridDims,
+) -> Vec<usize> {
+    let r = i64::from(range.min(MAX_BRUSH));
     match dims {
         GridDims::D1 { width, .. } => {
             let c = center as i64;
-            (c - r..=c + hi)
+            (c - r..=c + r)
                 .filter(|x| *x >= 0 && (*x as usize) < width)
                 .map(|x| x as usize)
                 .collect()
         }
         GridDims::D2 { width, height } => {
-            if width == 0 {
+            if width == 0 || height == 0 || center >= width * height {
                 return Vec::new();
             }
             let (cx, cy) = ((center % width) as i64, (center / width) as i64);
-            let mut out = Vec::new();
-            for dy in -r..=hi {
-                for dx in -r..=hi {
-                    let (x, y) = (cx + dx, cy + dy);
-                    if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
-                        continue;
-                    }
-                    let (fx, fy) = (dx as f64 - offset, dy as f64 - offset);
-                    if fx * fx + fy * fy <= radius * radius + 1e-9 {
-                        out.push(y as usize * width + x as usize);
-                    }
+            let mut out = vec![center];
+            if r == 0 {
+                return out;
+            }
+            for (dx, dy) in neighborhood_offsets(shape, r as i32) {
+                let (x, y) = (cx + i64::from(dx), cy + i64::from(dy));
+                if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
+                    continue;
+                }
+                let idx = y as usize * width + x as usize;
+                if idx != center {
+                    out.push(idx);
                 }
             }
+            out.sort_unstable();
+            out.dedup();
             out
         }
+    }
+}
+
+/// Stroke a one-pixel outline around each listed cell of the viewport at
+/// `rect`. On a 1D grid the cells sit on the live row below the history.
+pub(in crate::gui) fn outline_cells(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    scale: usize,
+    dims: GridDims,
+    cells: &[usize],
+    color: egui::Color32,
+) {
+    let scale = scale.max(1) as f32;
+    let stroke = egui::Stroke::new(1.0, color);
+    for &cell in cells {
+        let (x, y) = match dims {
+            GridDims::D1 { history_rows, .. } => (cell as f32, history_rows as f32),
+            GridDims::D2 { width, .. } => ((cell % width) as f32, (cell / width) as f32),
+        };
+        let min = rect.min + egui::vec2(x * scale, y * scale);
+        ui.painter().rect_stroke(
+            egui::Rect::from_min_size(min, egui::vec2(scale, scale)),
+            0.0,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
@@ -216,7 +247,7 @@ impl CellaApp {
         let Some(idx) = cell_index_at(pos, response.rect, self.view.scale, dims) else {
             return;
         };
-        let cells = brush_indices(idx, self.edit.brush, dims);
+        let cells = brush_indices(idx, self.edit.brush, self.edit.brush_shape, dims);
         self.push(Action::PaintCells(cells));
     }
 
@@ -254,40 +285,41 @@ impl CellaApp {
         cell_index_at(pos, response.rect, self.view.scale, dims)
     }
 
-    /// In Stamp mode, outline where the pattern would land.
-    pub(in crate::gui) fn draw_stamp_ghost(&self, ui: &egui::Ui, response: &egui::Response) {
-        if !matches!(self.edit.draw_mode, DrawMode::Stamp) || !response.hovered() {
+    /// Outline the cells a Paint stroke or a Stamp would touch at the hover
+    /// position, so the footprint is visible before the button goes down.
+    pub(in crate::gui) fn draw_tool_ghost(&self, ui: &egui::Ui, response: &egui::Response) {
+        if self.playback.playing || !response.hovered() {
             return;
         }
         let Some(pos) = response.hover_pos() else {
             return;
         };
-        let Some(GridDims::D2 { width, height }) = self.grid_dims() else {
+        let Some(dims) = self.grid_dims() else {
             return;
         };
-        let Some(idx) = cell_index_at(
-            pos,
+        let Some(idx) = cell_index_at(pos, response.rect, self.view.scale, dims) else {
+            return;
+        };
+        let cells = match (self.edit.draw_mode, dims) {
+            (DrawMode::Paint, _) => {
+                brush_indices(idx, self.edit.brush, self.edit.brush_shape, dims)
+            }
+            (DrawMode::Stamp, GridDims::D2 { width, height }) => {
+                match PATTERNS.get(self.edit.stamp) {
+                    Some(p) => stamp_indices(p, (idx % width, idx / width), width, height),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        outline_cells(
+            ui,
             response.rect,
             self.view.scale,
-            GridDims::D2 { width, height },
-        ) else {
-            return;
-        };
-        let Some(pattern) = PATTERNS.get(self.edit.stamp) else {
-            return;
-        };
-        let scale = self.view.scale.max(1) as f32;
-        let stroke = egui::Stroke::new(1.0, self.chrome.theme.accent());
-        for cell in stamp_indices(pattern, (idx % width, idx / width), width, height) {
-            let (x, y) = ((cell % width) as f32, (cell / width) as f32);
-            let min = response.rect.min + egui::vec2(x * scale, y * scale);
-            ui.painter().rect_stroke(
-                egui::Rect::from_min_size(min, egui::vec2(scale, scale)),
-                0.0,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
+            dims,
+            &cells,
+            self.chrome.theme.accent(),
+        );
     }
 
     /// The hover inspector: a tooltip naming the cell under the mouse.
@@ -433,47 +465,55 @@ mod tests {
     }
 
     #[test]
-    fn brush_indices_cover_a_disc_and_clip_to_the_grid() {
+    fn brush_indices_follow_the_neighbourhood_tables_and_clip() {
+        use Neighborhood2D::*;
         let dims = GridDims::D2 {
             width: 10,
             height: 10,
         };
-        assert_eq!(brush_indices(55, 1, dims), vec![55]);
-        assert_eq!(brush_indices(55, 0, dims), vec![55], "0 behaves like 1");
-        let three = brush_indices(55, 3, dims);
-        assert_eq!(three.len(), 5, "diameter 3 is a plus shape: {three:?}");
-        assert!(
-            three.contains(&45)
-                && three.contains(&65)
-                && three.contains(&54)
-                && three.contains(&56)
+        assert_eq!(brush_indices(55, 0, Moore, dims), vec![55]);
+        assert_eq!(brush_indices(55, 1, Moore, dims).len(), 9, "3x3 square");
+        assert_eq!(brush_indices(55, 1, VonNeumann, dims).len(), 5, "plus");
+        assert_eq!(brush_indices(55, 1, Langton, dims).len(), 5, "X");
+        assert_eq!(brush_indices(55, 1, StraightLine, dims).len(), 5);
+        assert_eq!(
+            brush_indices(55, 1, Knight, dims).len(),
+            9,
+            "centre + 8 knight squares"
         );
-        let five = brush_indices(55, 5, dims);
-        assert!(five.len() >= 13 && five.len() <= 21, "{}", five.len());
-        assert!(
-            !five.contains(&33),
-            "corners of the 5x5 square are outside the disc"
+        assert_eq!(brush_indices(55, 2, Moore, dims).len(), 25);
+        // Sorted, no duplicates, centre always present.
+        let k = brush_indices(55, 2, Knight, dims);
+        assert!(k.windows(2).all(|w| w[0] < w[1]) && k.contains(&55));
+        // Clipped at the corner: only in-bounds cells; range capped.
+        let corner = brush_indices(0, 99, Moore, dims);
+        assert_eq!(
+            corner.len(),
+            8 * 8,
+            "range capped at {MAX_BRUSH}: 8x8 from the corner"
         );
-        // Clipped at the corner: only in-bounds cells.
-        let corner = brush_indices(0, 15, dims);
-        assert!(corner.iter().all(|&i| i % 10 < 8 && i / 10 < 8));
         assert!(corner.contains(&0));
         let row = GridDims::D1 {
             width: 10,
             history_rows: 0,
         };
-        assert_eq!(brush_indices(0, 5, row), vec![0, 1, 2]);
-        assert_eq!(brush_indices(9, 3, row), vec![8, 9]);
+        assert_eq!(brush_indices(0, 2, Moore, row), vec![0, 1, 2]);
+        assert_eq!(brush_indices(9, 1, Knight, row), vec![8, 9]);
         assert!(
             brush_indices(
                 0,
-                3,
+                1,
+                Moore,
                 GridDims::D2 {
                     width: 0,
                     height: 0
                 }
             )
             .is_empty()
+        );
+        assert!(
+            brush_indices(200, 1, Moore, dims).is_empty(),
+            "out-of-range centre"
         );
     }
 

@@ -96,6 +96,18 @@ pub(in crate::gui) fn shortcuts() -> Vec<Shortcut> {
             action: Action::MutateRuleDraft,
             while_playing: false,
         },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::NONE, Key::CloseBracket),
+            label: "Bigger brush",
+            action: Action::BrushGrow,
+            while_playing: false,
+        },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::NONE, Key::OpenBracket),
+            label: "Smaller brush",
+            action: Action::BrushShrink,
+            while_playing: false,
+        },
     ]
 }
 

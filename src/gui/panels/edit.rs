@@ -2,10 +2,31 @@
 
 use crate::gui::actions::Action;
 use crate::gui::app::{CellaApp, Dim, DrawMode};
+use crate::gui::interact::MAX_BRUSH;
 use crate::gui::layers::Layer;
 use crate::gui::patterns::PATTERNS;
 use crate::gui::theme::section;
-use cella_lib::{CellType, INACTIVE};
+use cella_lib::{CellType, INACTIVE, Neighborhood2D};
+
+/// Brush shapes, in the order the Edit tab lists them.
+const BRUSH_SHAPES: [Neighborhood2D; 5] = [
+    Neighborhood2D::Moore,
+    Neighborhood2D::VonNeumann,
+    Neighborhood2D::Langton,
+    Neighborhood2D::StraightLine,
+    Neighborhood2D::Knight,
+];
+
+/// Display name of a neighbourhood shape.
+pub(in crate::gui) fn neighborhood_name(nb: Neighborhood2D) -> &'static str {
+    match nb {
+        Neighborhood2D::Moore => "Moore (square)",
+        Neighborhood2D::VonNeumann => "Von Neumann (diamond)",
+        Neighborhood2D::Langton => "Langton (diagonals)",
+        Neighborhood2D::StraightLine => "Straight lines (cross)",
+        Neighborhood2D::Knight => "Knight (chess moves)",
+    }
+}
 use std::sync::atomic::Ordering;
 
 impl CellaApp {
@@ -44,12 +65,32 @@ impl CellaApp {
                 }
             });
             if self.edit.draw_mode == DrawMode::Paint {
-                let mut brush = self.edit.brush;
-                if ui
-                    .add(egui::Slider::new(&mut brush, 1..=15).text("Brush (cells)"))
-                    .changed()
-                {
-                    pending.push(Action::SetBrush(brush));
+                ui.horizontal(|ui| {
+                    let mut brush = self.edit.brush;
+                    if ui
+                        .add(egui::Slider::new(&mut brush, 0..=MAX_BRUSH).text("Brush range"))
+                        .on_hover_text("0 paints one cell; the outline under the mouse shows the footprint ([ and ] resize)")
+                        .changed()
+                    {
+                        pending.push(Action::SetBrush(brush));
+                    }
+                });
+                if is_2d {
+                    ui.horizontal(|ui| {
+                        ui.label("Shape");
+                        let mut shape = self.edit.brush_shape;
+                        egui::ComboBox::from_id_salt("brush_shape")
+                            .selected_text(neighborhood_name(shape))
+                            .show_ui(ui, |ui| {
+                                for nb in BRUSH_SHAPES {
+                                    ui.selectable_value(&mut shape, nb, neighborhood_name(nb));
+                                }
+                            });
+                        if shape != self.edit.brush_shape {
+                            pending.push(Action::SetBrushShape(shape));
+                        }
+                        ui.small("same footprints the rules count");
+                    });
                 }
             }
             if self.edit.draw_mode == DrawMode::Stamp && is_2d {
@@ -171,7 +212,9 @@ impl CellaApp {
                         paused && !self.edit.rule_undo.is_empty(),
                         egui::Button::new("Undo rule"),
                     )
-                    .on_hover_text("Put the knobs back the way they were before the last change (Ctrl+U)")
+                    .on_hover_text(
+                        "Put the knobs back the way they were before the last change (Ctrl+U)",
+                    )
                     .clicked()
                 {
                     pending.push(Action::UndoRule);

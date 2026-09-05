@@ -225,7 +225,7 @@ impl CellaApp {
                         self.handle_paint(ui, &response);
                         self.handle_cycle_click(&response);
                         self.handle_stamp_click(&response);
-                        self.draw_stamp_ghost(ui, &response);
+                        self.draw_tool_ghost(ui, &response);
                         self.show_hover_inspector(ui, &response);
                     }
                     None => {

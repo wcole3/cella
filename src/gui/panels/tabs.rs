@@ -131,12 +131,12 @@ impl CellaApp {
             );
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::app::DrawMode;
     use crate::gui::sim::tests::test_app;
 
     #[test]
@@ -183,6 +183,11 @@ mod tests {
                     WorkbenchTab::Model => app.ui_model_tab(ui),
                     WorkbenchTab::Explore => app.ui_explore_tab(ui),
                 });
+            }
+            // The Edit tab has extra rows per tool: brush range + shape, stamp picker.
+            for mode in [DrawMode::Paint, DrawMode::Stamp, DrawMode::Cycle] {
+                app.edit.draw_mode = mode;
+                egui::__run_test_ui(|ui| app.ui_edit_tab(ui));
             }
             assert!(app.actions.is_empty(), "drawing queues nothing");
         }

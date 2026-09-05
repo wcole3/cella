@@ -90,7 +90,7 @@ see more detail from `rfd`, run with `RUST_LOG=rfd=debug`.
 
 ```
 ┌───────────────────────── toolbar ───────────────────────────┐
-│ ▶ ⏭ ⏩+N  Speed ──●── Max   − 8 + ⤢   ↺   🎞 💾   ◧ ◨   ? │
+│ ◧ │ ▶ ⏭ +N ⏩ │ Speed ──●── Max │ − 8 + ⛶ │ ↺ │ GIF 💾 │ ? │ ◨ │
 ├─────────────┬───────────────────────────────┬───────────────┤
 │ control     │                               │ workbench     │
 │ Scenario    │                               │ Rule          │
@@ -106,8 +106,10 @@ The **control** panel on the left is what you *do* to a simulation (load
 it, edit cells, style the view, watch statistics). The **workbench** on the
 right is what you *build* (the rule, the model's parameters, the Explore
 tools). Each is a strip of tabs, one visible at a time, so neither becomes
-a long scroll of collapsed headers. Both collapse from the toolbar (◧ ◨, or
-`L` / `W`) or by dragging their edge shut.
+a long scroll of collapsed headers. Both collapse from the toolbar or by
+dragging their edge shut: the ◧ button sits at the toolbar's left end,
+above the panel it hides, and ◨ at the right end above the workbench
+(`L` / `W` do the same).
 
 ### Toolbar and keyboard shortcuts
 
@@ -133,6 +135,7 @@ disagree. Press `?` in the app for the same list.
 | | Undo the last paint stroke *(paused only)* | `Ctrl+Z` |
 | | Undo the last rule change *(paused only)* | `Ctrl+U` |
 | | Random fill / Surprise me / Mutate rule with the Edit tab's settings *(paused only)* | `R` / `Shift+R` / `M` |
+| | Smaller / bigger brush *(paused only)* | `[` / `]` |
 
 Keys are ignored while a text box has focus, so typing `30` into the
 Wolfram code box never steps the simulation. The editing keys are ignored
@@ -158,9 +161,16 @@ radius), grid size + *Resize*, and the 1D history row count.
 
 **Edit.**
 - *Tool*: **Cycle** (click a cell to step it to the next type), **Paint**
-  (drag to paint the chosen type; brush size 1–15), **Stamp** (2D: place a
-  Glider, lightweight spaceship, R-pentomino or Acorn at the click; a ghost
-  outline shows where). One undo entry per stroke or stamp.
+  (drag to paint the chosen type), **Stamp** (2D: place a Glider,
+  lightweight spaceship, R-pentomino or Acorn at the click). In Paint and
+  Stamp mode an outline follows the mouse showing exactly which cells the
+  next click will touch. One undo entry per stroke or stamp.
+- *Brush*: a **range** 0–7 (0 = one cell) and, on 2D grids, a **shape**:
+  Moore (square), Von Neumann (diamond), Langton (diagonals), straight
+  lines (cross) or Knight (chess moves). The footprint is the centre plus
+  that neighbourhood at that range, built from the same offset tables the
+  rules use, so a Von Neumann brush of range 2 paints exactly the cells a
+  Von Neumann range-2 subrule would count. `[` and `]` resize it.
 - *Random fill*: density, type, a visible **seed** (↻ moves it on), and
   *Clear first*. The same seed always paints the same picture. With *Clear
   first* the result becomes the new starting state Reset returns to.
