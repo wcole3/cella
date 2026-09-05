@@ -60,4 +60,5 @@ Research notes: [why fires slow down, what wind a fire feels, what suppression d
 | E32 | [ensemble size 8–128](35-e32-ensemble-size.md) | finding: keep 32; 64–128 for Brier | all six incl. holdout | IoU flat past 32 on five fires; 8 members −0.03…−0.07; Brier keeps improving to 128 | Round 5 |
 | E34 | [operator ablation: immigrants, σ, β, crossover](36-e34-operator-ablation.md) | finding: plateau; keep defaults | all six incl. holdout | 38 of 54 cells ties; all runs end 100 % contained; crossover 0.5 +0.027 Bear (one seed) | Round 5 |
 | E35 | [prior width: narrow / broad / very broad](37-e35-prior-width.md) | finding: never narrow the prior | all six incl. holdout | narrow prior −0.037 on Bear; very broad a tie on five fires, better Brier on four | Round 5 |
+| E36 | [fit the first three days with a GA, then forecast](38-e36-offline-fit-versus-filter.md) | finding: the filter wins everywhere | all six incl. holdout | filter beats the fitted genome by 0.025–0.104 on forecast days; fits hit the box edges | Round 5 |
 
