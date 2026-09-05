@@ -313,7 +313,7 @@ fn with_help(resp: egui::Response, desc: &ParamDesc) -> egui::Response {
 
 /// A parameter value written out for a read-only row, without the `Debug`
 /// wrapper a reader would have to look past.
-fn value_text(value: &ParamValue) -> String {
+pub(in crate::gui) fn value_text(value: &ParamValue) -> String {
     match value {
         ParamValue::Float(v) => v.to_string(),
         ParamValue::Int(v) => v.to_string(),

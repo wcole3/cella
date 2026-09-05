@@ -4,6 +4,7 @@
 
 mod actions;
 mod app;
+mod explore;
 mod export;
 mod interact;
 mod layers;

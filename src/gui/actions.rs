@@ -20,6 +20,7 @@
 //! `view`, the undo stack or a worker goes through an action.
 
 use super::app::{CellaApp, Dim, DrawMode};
+use super::explore::ExploreAction;
 use super::interact::{GridDims, MAX_SCALE, MIN_SCALE};
 use super::layers::Layer;
 use super::state::{ControlTab, Pacing, WorkbenchTab};
@@ -134,6 +135,8 @@ pub(in crate::gui) enum Action {
     ToggleShortcuts,
     ExportGif,
     SaveFinalState,
+    /// Anything that touches the Explore worker or applies a found genome.
+    Explore(ExploreAction),
 }
 
 /// Most actions applied in one frame before the drain gives up; a reducer arm
@@ -312,6 +315,7 @@ impl CellaApp {
             Action::ToggleShortcuts => self.chrome.show_shortcuts = !self.chrome.show_shortcuts,
             Action::ExportGif => self.export_gif_dialog(),
             Action::SaveFinalState => self.save_final_state(),
+            Action::Explore(a) => self.apply_explore_action(a),
         }
     }
 

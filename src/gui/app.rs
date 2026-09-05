@@ -86,6 +86,8 @@ pub(in crate::gui) struct CellaApp {
     pub(in crate::gui) stats: StatsState,
     /// The rule editor's working copy.
     pub(in crate::gui) editor: EditorState,
+    /// The Explore tab: ensemble / evolution settings and its worker thread.
+    pub(in crate::gui) explore: crate::gui::explore::ExploreState,
     /// Text scaling and the status line.
     pub(in crate::gui) chrome: Chrome,
     /// Pending values typed into form fields.
@@ -111,6 +113,7 @@ impl CellaApp {
             chrome: Chrome::new(&cc.egui_ctx),
             inputs: Inputs::default(),
             actions: VecDeque::new(),
+            explore: crate::gui::explore::ExploreState::default(),
         };
         app.apply_startup_config(config);
         app
@@ -285,6 +288,10 @@ impl CellaApp {
         } else if self.export.join.is_some() {
             // Poll the export thread's progress a few times a second.
             ctx.request_repaint_after(Duration::from_millis(100));
+        } else if self.explore.worker.as_ref().is_some_and(|w| w.busy) {
+            // The Explore worker wakes us itself after each message; this is
+            // the safety net in case it is between messages for a while.
+            ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
 }
@@ -308,6 +315,7 @@ impl eframe::App for CellaApp {
         // Everything the panels asked for lands here, after they were drawn.
         self.drain_actions();
         self.poll_export();
+        self.poll_explore();
         let stepped = self.tick_play();
         self.request_next_repaint(ctx, stepped);
     }

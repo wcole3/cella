@@ -3,6 +3,7 @@
 //! chart cannot disturb the rule editor.
 
 pub(in crate::gui) mod edit;
+pub(in crate::gui) mod explore;
 pub(in crate::gui) mod model;
 pub(in crate::gui) mod rule_edit_model;
 pub(in crate::gui) mod rule_editor;

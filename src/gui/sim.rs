@@ -313,6 +313,8 @@ impl CellaApp {
     /// replaced, so it means nothing on the new one).
     pub(in crate::gui) fn stats_clear_and_init(&mut self) {
         self.cancel_run_to();
+        // A new or replaced grid invalidates any ensemble built from the old one.
+        self.explore_on_grid_replaced();
         self.playback.elapsed = Duration::ZERO;
         self.playback.timed_steps = 0;
         self.playback.play_start = None;
@@ -431,6 +433,7 @@ pub(in crate::gui) mod tests {
             chrome: Chrome::new(&ctx),
             inputs: Inputs::default(),
             actions: std::collections::VecDeque::new(),
+            explore: crate::gui::explore::ExploreState::default(),
         }
     }
 

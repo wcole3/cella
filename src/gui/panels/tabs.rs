@@ -132,16 +132,6 @@ impl CellaApp {
         }
     }
 
-    /// The Explore tab. Its controls arrive with the explore worker; until
-    /// then it says what it will be.
-    fn ui_explore_tab(&mut self, ui: &mut egui::Ui) {
-        ui.label("Explore: ensembles and evolution.");
-        ui.small(
-            "Run the loaded simulation as an ensemble (a probability map that can learn from \
-             the grid you paint) or evolve its rule and model knobs. Coming in the next step; \
-             the command-line `explore` example runs both today.",
-        );
-    }
 }
 
 #[cfg(test)]
