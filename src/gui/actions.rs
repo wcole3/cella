@@ -73,6 +73,26 @@ pub(in crate::gui) enum Action {
     Undo,
     SetDrawMode(DrawMode),
     SetDrawType(CellType),
+    /// Brush diameter in cells.
+    SetBrush(u8),
+    /// Which pattern the Stamp tool drops (index into `patterns::PATTERNS`).
+    SelectStamp(usize),
+    /// Paint the selected type onto these cells as part of the current stroke.
+    PaintCells(Vec<usize>),
+    /// The stroke ended: close it into one undo entry.
+    EndStroke,
+    /// Advance one cell to the next declared type.
+    CycleAt(usize),
+    /// Drop the selected pattern with its corner on this cell.
+    StampAt(usize),
+    /// Set a random share of cells to `ty`, reproducibly from `seed`.
+    RandomFill {
+        density: f32,
+        ty: CellType,
+        seed: u64,
+        clear_first: bool,
+    },
+    ToggleInspector,
     // ── scenario / rule / model ──
     LoadDemo(Demo),
     LoadConfigDialog,
@@ -212,8 +232,24 @@ impl CellaApp {
             Action::SetTypeColor(ty, c) => self.set_color_for(&ty, c),
             Action::SetHistoryLimit1D(n) => self.view.history_limit_1d = n.clamp(1, 10_000),
             Action::Undo => self.undo_last_batch(),
-            Action::SetDrawMode(mode) => self.edit.draw_mode = mode,
+            Action::SetDrawMode(mode) => {
+                self.finish_stroke();
+                self.edit.draw_mode = mode;
+            }
             Action::SetDrawType(ty) => self.edit.selected_draw_type = Some(ty),
+            Action::SetBrush(b) => self.edit.brush = b.clamp(1, 15),
+            Action::SelectStamp(i) => self.edit.stamp = i.min(super::patterns::PATTERNS.len() - 1),
+            Action::PaintCells(cells) => self.paint_cells(&cells),
+            Action::EndStroke => self.finish_stroke(),
+            Action::CycleAt(idx) => self.cycle_cell(idx),
+            Action::StampAt(idx) => self.stamp_at(idx),
+            Action::RandomFill {
+                density,
+                ty,
+                seed,
+                clear_first,
+            } => self.random_fill(density, ty, seed, clear_first),
+            Action::ToggleInspector => self.view.inspector = !self.view.inspector,
             Action::LoadDemo(demo) => match demo {
                 Demo::Life => self.load_demo_life(),
                 Demo::Rule30 => self.load_demo_1d_rule30(),
@@ -288,6 +324,191 @@ impl CellaApp {
             }
             None => {}
         }
+    }
+
+    /// Paint the selected type onto `cells` as part of the current stroke.
+    /// A cell is recorded for undo the first time the stroke touches it.
+    fn paint_cells(&mut self, cells: &[usize]) {
+        if self.playback.playing {
+            return;
+        }
+        let paint_ty = self
+            .edit
+            .selected_draw_type
+            .unwrap_or_else(CellType::inactive);
+        for &idx in cells {
+            if !self.edit.stroke_touched.insert(idx) {
+                continue;
+            }
+            let Some(prev) = self.cell_type_at(idx) else {
+                continue;
+            };
+            if prev == paint_ty {
+                continue;
+            }
+            self.edit
+                .current_paint_batch
+                .get_or_insert_with(Vec::new)
+                .push((idx, prev));
+            self.set_cell(idx, paint_ty, "Paint");
+        }
+    }
+
+    /// Close the current stroke into one undo entry.
+    fn finish_stroke(&mut self) {
+        self.edit.stroke_touched.clear();
+        if let Some(batch) = self.edit.current_paint_batch.take()
+            && !batch.is_empty()
+        {
+            self.edit.undo_stack.push(batch);
+        }
+    }
+
+    /// Advance one cell to the next declared type (every *declared* type, not
+    /// just the ones on the grid, so a state that died out can come back).
+    fn cycle_cell(&mut self, idx: usize) {
+        if self.playback.playing {
+            return;
+        }
+        let types = self.declared_types();
+        let Some(current) = self.cell_type_at(idx) else {
+            return;
+        };
+        let next = super::types::next_in_cycle(&types, current);
+        self.edit.undo_stack.push(vec![(idx, current)]);
+        self.set_cell(idx, next, "Cycle edit");
+    }
+
+    /// Drop the selected pattern with its top-left corner on `idx` (2D only),
+    /// as one undo entry.
+    fn stamp_at(&mut self, idx: usize) {
+        if self.playback.playing {
+            return;
+        }
+        let Some(GridDims::D2 { width, height }) = self.grid_dims() else {
+            return;
+        };
+        let Some(pattern) = super::patterns::PATTERNS.get(self.edit.stamp) else {
+            return;
+        };
+        let ty = self
+            .edit
+            .selected_draw_type
+            .unwrap_or_else(CellType::inactive);
+        let cells =
+            super::patterns::stamp_indices(pattern, (idx % width, idx / width), width, height);
+        let mut batch = Vec::new();
+        for c in cells {
+            if let Some(prev) = self.cell_type_at(c)
+                && prev != ty
+            {
+                batch.push((c, prev));
+                self.set_cell(c, ty, "Stamp");
+            }
+        }
+        if !batch.is_empty() {
+            self.edit.undo_stack.push(batch);
+        }
+        self.set_status(format!("Stamped {}", pattern.name));
+    }
+
+    /// Fill a random `density` share of cells with `ty`. Each cell draws
+    /// `cell_rand(seed, 0, index, STREAM_FILL)`, so the same seed always paints
+    /// the same picture. With `clear_first` the rest of the grid becomes
+    /// Inactive and the result is the new starting state (Reset returns to
+    /// it); otherwise only the chosen cells change, as one undo entry.
+    fn random_fill(&mut self, density: f32, ty: CellType, seed: u64, clear_first: bool) {
+        use cella_lib::rng::{STREAM_FILL, cell_rand};
+        if self.playback.playing {
+            self.set_status("Pause before filling the grid");
+            return;
+        }
+        if !self.declared_types().contains(&ty) {
+            self.set_status(format!(
+                "'{}' is not a type this scenario declares",
+                ty.as_str()
+            ));
+            return;
+        }
+        let Some(dims) = self.grid_dims() else {
+            return;
+        };
+        let total = match dims {
+            GridDims::D1 { width, .. } => width,
+            GridDims::D2 { width, height } => width * height,
+        };
+        let inactive = CellType::inactive();
+        let density = density.clamp(0.0, 1.0);
+        let new_cells: Vec<CellType> = (0..total)
+            .map(|i| {
+                if cell_rand(seed, 0, i as u64, STREAM_FILL) < density {
+                    ty
+                } else if clear_first {
+                    inactive
+                } else {
+                    self.cell_type_at(i).unwrap_or(inactive)
+                }
+            })
+            .collect();
+        let changed: Vec<(usize, CellType)> = (0..total)
+            .filter_map(|i| {
+                let prev = self.cell_type_at(i)?;
+                (prev != new_cells[i]).then_some((i, prev))
+            })
+            .collect();
+        let n = changed.len();
+        if clear_first {
+            let result = match self.scenario.dim {
+                Some(Dim::D1) => self.scenario.d1.as_mut().map(|g| {
+                    let r = g.reset_cells(new_cells.clone());
+                    g.set_seed(seed);
+                    r
+                }),
+                Some(Dim::D2) => self.scenario.d2.as_mut().map(|g| {
+                    let r = g.reset_cells(new_cells.clone());
+                    g.set_seed(seed);
+                    r
+                }),
+                None => None,
+            };
+            if let Some(Err(e)) = result {
+                self.set_status(format!("Fill error: {e}"));
+                return;
+            }
+            self.view.history_1d.clear();
+            self.scenario.initial_state = match self.scenario.dim {
+                Some(Dim::D1) => self
+                    .scenario
+                    .d1
+                    .as_ref()
+                    .map(cella_lib::GridState::from_grid1d),
+                Some(Dim::D2) => self
+                    .scenario
+                    .d2
+                    .as_ref()
+                    .map(cella_lib::GridState::from_grid2d),
+                None => None,
+            };
+            self.edit.undo_stack.clear();
+            self.edit.current_paint_batch = None;
+            self.stats_clear_and_init();
+        } else {
+            for &(i, _) in &changed {
+                self.set_cell(i, new_cells[i], "Fill");
+            }
+            if !changed.is_empty() {
+                self.edit.undo_stack.push(changed);
+            }
+        }
+        self.set_status(format!(
+            "Filled {n} cells with {} (seed {seed}{})",
+            ty.as_str(),
+            if clear_first {
+                ", grid cleared first"
+            } else {
+                ""
+            }
+        ));
     }
 
     /// Undo the most recent edit batch, while paused.
@@ -567,6 +788,186 @@ mod tests {
             app.cell_type_at(0),
             Some(inactive),
             "an empty stack is a no-op"
+        );
+    }
+
+    #[test]
+    fn strokes_stamps_and_cycles_are_single_undo_entries() {
+        let mut app = test_app();
+        app.load_demo_life();
+        let alive = CellType::from("Alive");
+        let inactive = CellType::inactive();
+        app.apply_action(Action::SetDrawMode(DrawMode::Paint));
+        app.apply_action(Action::SetDrawType(alive));
+        app.apply_action(Action::SetBrush(99));
+        assert_eq!(app.edit.brush, 15);
+        app.apply_action(Action::SetBrush(3));
+        // Two frames of the same stroke, overlapping cells, then release.
+        app.apply_action(Action::PaintCells(vec![0, 1, 2]));
+        app.apply_action(Action::PaintCells(vec![2, 3]));
+        assert_eq!(app.edit.stroke_touched.len(), 4);
+        assert_eq!(app.edit.undo_stack.len(), 0, "the stroke is still open");
+        app.apply_action(Action::EndStroke);
+        assert_eq!(app.edit.undo_stack.len(), 1);
+        assert_eq!(app.edit.undo_stack[0].len(), 4, "each cell recorded once");
+        assert!(app.edit.stroke_touched.is_empty());
+        for i in 0..4 {
+            assert_eq!(app.cell_type_at(i), Some(alive));
+        }
+        app.apply_action(Action::Undo);
+        for i in 0..4 {
+            assert_eq!(app.cell_type_at(i), Some(inactive));
+        }
+        // Switching tool mid-stroke closes it.
+        app.apply_action(Action::PaintCells(vec![7]));
+        app.apply_action(Action::SetDrawMode(DrawMode::Stamp));
+        assert_eq!(app.edit.undo_stack.len(), 1);
+        // A stamp is one entry too, and undoes as a whole.
+        app.apply_action(Action::SelectStamp(0));
+        app.apply_action(Action::StampAt(10 * 50 + 10));
+        assert_eq!(app.edit.undo_stack.len(), 2);
+        assert_eq!(
+            app.cell_type_at(12 * 50 + 12),
+            Some(alive),
+            "glider cell (2,2)"
+        );
+        app.apply_action(Action::Undo);
+        assert_eq!(app.cell_type_at(12 * 50 + 12), Some(inactive));
+        app.apply_action(Action::SelectStamp(999));
+        assert_eq!(app.edit.stamp, super::super::patterns::PATTERNS.len() - 1);
+        // Cycle advances Inactive -> Alive on the Life demo.
+        app.apply_action(Action::SetDrawMode(DrawMode::Cycle));
+        app.apply_action(Action::CycleAt(5));
+        assert_eq!(app.cell_type_at(5), Some(alive));
+        app.apply_action(Action::CycleAt(5));
+        assert_eq!(app.cell_type_at(5), Some(inactive), "wraps around");
+        // Nothing paints while playing.
+        app.playback.playing = true;
+        app.apply_action(Action::CycleAt(6));
+        assert_eq!(app.cell_type_at(6), Some(inactive));
+        app.apply_action(Action::PaintCells(vec![6]));
+        assert_eq!(app.cell_type_at(6), Some(inactive));
+        app.playback.playing = false;
+        // Stamping a 1D grid does nothing.
+        app.apply_action(Action::LoadDemo(Demo::Rule30));
+        app.apply_action(Action::StampAt(3));
+        assert!(app.edit.undo_stack.is_empty());
+        app.apply_action(Action::ToggleInspector);
+        assert!(!app.view.inspector);
+    }
+
+    #[test]
+    fn random_fill_is_reproducible_and_resets_or_records_undo() {
+        let mut app = test_app();
+        app.load_demo_life();
+        let alive = CellType::from("Alive");
+        app.apply_action(Action::RandomFill {
+            density: 0.3,
+            ty: alive,
+            seed: 42,
+            clear_first: true,
+        });
+        let cells: Vec<CellType> = (0..1500).map(|i| app.cell_type_at(i).unwrap()).collect();
+        let n = cells.iter().filter(|c| **c == alive).count();
+        assert!((350..=550).contains(&n), "about 30 % of 1500: {n}");
+        assert_eq!(app.current_step(), 0);
+        assert_eq!(
+            app.scenario.d2.as_ref().unwrap().seed,
+            42,
+            "the grid seed follows the fill"
+        );
+        assert_eq!(
+            *app.scenario
+                .d2
+                .as_ref()
+                .unwrap()
+                .counts_current
+                .get(&alive.0)
+                .unwrap(),
+            n as u64
+        );
+        assert!(
+            app.edit.undo_stack.is_empty(),
+            "a cleared fill is a new start, not an edit"
+        );
+        // Reset returns to the fill, not the demo.
+        app.apply_action(Action::Step);
+        app.apply_action(Action::Reset);
+        let again: Vec<CellType> = (0..1500).map(|i| app.cell_type_at(i).unwrap()).collect();
+        assert_eq!(again, cells);
+        // Same seed, same picture; a different seed differs.
+        let mut other = test_app();
+        other.load_demo_life();
+        other.apply_action(Action::RandomFill {
+            density: 0.3,
+            ty: alive,
+            seed: 42,
+            clear_first: true,
+        });
+        assert_eq!(
+            (0..1500)
+                .map(|i| other.cell_type_at(i).unwrap())
+                .collect::<Vec<_>>(),
+            cells
+        );
+        other.apply_action(Action::RandomFill {
+            density: 0.3,
+            ty: alive,
+            seed: 43,
+            clear_first: true,
+        });
+        assert_ne!(
+            (0..1500)
+                .map(|i| other.cell_type_at(i).unwrap())
+                .collect::<Vec<_>>(),
+            cells
+        );
+        // Without clearing, the fill is one undo entry over the existing cells.
+        app.apply_action(Action::RandomFill {
+            density: 0.2,
+            ty: alive,
+            seed: 7,
+            clear_first: false,
+        });
+        assert_eq!(app.edit.undo_stack.len(), 1);
+        let more = (0..1500)
+            .filter(|i| app.cell_type_at(*i) == Some(alive))
+            .count();
+        assert!(more >= n, "adding cells never removes any");
+        app.apply_action(Action::Undo);
+        assert_eq!(
+            (0..1500)
+                .map(|i| app.cell_type_at(i).unwrap())
+                .collect::<Vec<_>>(),
+            cells
+        );
+        // Unknown types and playing are refused with a message.
+        app.apply_action(Action::RandomFill {
+            density: 0.5,
+            ty: CellType::from("Ghost"),
+            seed: 1,
+            clear_first: true,
+        });
+        assert!(
+            app.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Ghost")
+        );
+        app.playback.playing = true;
+        app.apply_action(Action::RandomFill {
+            density: 0.5,
+            ty: alive,
+            seed: 1,
+            clear_first: true,
+        });
+        assert!(
+            app.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Pause")
         );
     }
 

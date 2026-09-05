@@ -1,7 +1,8 @@
 //! The Edit tab: which tool the mouse is, what it paints, and GIF export.
 
 use crate::gui::actions::Action;
-use crate::gui::app::{CellaApp, DrawMode};
+use crate::gui::app::{CellaApp, Dim, DrawMode};
+use crate::gui::patterns::PATTERNS;
 use crate::gui::theme::section;
 use cella_lib::{CellType, INACTIVE};
 use std::sync::atomic::Ordering;
@@ -9,9 +10,10 @@ use std::sync::atomic::Ordering;
 impl CellaApp {
     pub(in crate::gui) fn ui_edit_tab(&mut self, ui: &mut egui::Ui) {
         let mut pending: Vec<Action> = Vec::new();
+        let is_2d = matches!(self.scenario.dim, Some(Dim::D2));
         section(ui, "Tool", |ui| {
             ui.horizontal(|ui| {
-                for (mode, label, help) in [
+                let mut tools = vec![
                     (
                         DrawMode::Cycle,
                         "Cycle",
@@ -22,7 +24,15 @@ impl CellaApp {
                         "Paint",
                         "Hold the left button and drag to paint the chosen type",
                     ),
-                ] {
+                ];
+                if is_2d {
+                    tools.push((
+                        DrawMode::Stamp,
+                        "Stamp",
+                        "Click to drop a pattern (its top-left corner lands on the cell)",
+                    ));
+                }
+                for (mode, label, help) in tools {
                     if ui
                         .selectable_label(self.edit.draw_mode == mode, label)
                         .on_hover_text(help)
@@ -32,6 +42,29 @@ impl CellaApp {
                     }
                 }
             });
+            if self.edit.draw_mode == DrawMode::Paint {
+                let mut brush = self.edit.brush;
+                if ui
+                    .add(egui::Slider::new(&mut brush, 1..=15).text("Brush (cells)"))
+                    .changed()
+                {
+                    pending.push(Action::SetBrush(brush));
+                }
+            }
+            if self.edit.draw_mode == DrawMode::Stamp && is_2d {
+                let current = PATTERNS.get(self.edit.stamp).map_or("", |p| p.name);
+                let mut sel = self.edit.stamp;
+                egui::ComboBox::from_id_salt("stamp_pattern")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (i, p) in PATTERNS.iter().enumerate() {
+                            ui.selectable_value(&mut sel, i, p.name);
+                        }
+                    });
+                if sel != self.edit.stamp {
+                    pending.push(Action::SelectStamp(sel));
+                }
+            }
             ui.horizontal(|ui| {
                 ui.label("Paint type");
                 // Every declared type, not just the ones on the grid, so a
@@ -61,6 +94,55 @@ impl CellaApp {
                 }
             });
             ui.small("Editing works while paused. Ctrl+Z undoes the last stroke.");
+        });
+        section(ui, "Random fill", |ui| {
+            ui.add(
+                egui::Slider::new(&mut self.edit.fill_density, 0.0..=1.0).text("Share of cells"),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Type");
+                let types: Vec<CellType> = self
+                    .declared_types()
+                    .into_iter()
+                    .filter(|t| *t != CellType::inactive())
+                    .collect();
+                if self.edit.fill_type.is_none_or(|t| !types.contains(&t)) {
+                    self.edit.fill_type = types.first().copied();
+                }
+                let current = self.edit.fill_type.map_or(INACTIVE, |t| t.as_str());
+                egui::ComboBox::from_id_salt("fill_type")
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for t in &types {
+                            ui.selectable_value(&mut self.edit.fill_type, Some(*t), t.as_str());
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Seed");
+                ui.add(egui::DragValue::new(&mut self.edit.fill_seed));
+                if ui.button("\u{21BB}").on_hover_text("Next seed").clicked() {
+                    self.edit.fill_seed = self.edit.fill_seed.wrapping_add(1);
+                }
+                ui.checkbox(&mut self.edit.fill_clear, "Clear first")
+                    .on_hover_text(
+                        "Empty the grid before filling and make the result the new starting state",
+                    );
+            });
+            let can_fill = self.edit.fill_type.is_some() && !self.playback.playing;
+            if ui
+                .add_enabled(can_fill, egui::Button::new("Fill"))
+                .on_hover_text("Reproducible: the same seed always paints the same picture")
+                .clicked()
+                && let Some(ty) = self.edit.fill_type
+            {
+                pending.push(Action::RandomFill {
+                    density: self.edit.fill_density,
+                    ty,
+                    seed: self.edit.fill_seed,
+                    clear_first: self.edit.fill_clear,
+                });
+            }
         });
         section(ui, "Export GIF", |ui| {
             ui.horizontal(|ui| {

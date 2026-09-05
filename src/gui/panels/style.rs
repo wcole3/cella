@@ -49,6 +49,14 @@ impl CellaApp {
                     pending.push(Action::SetGridLineColor(col));
                 }
             });
+            let mut inspector = self.view.inspector;
+            if ui
+                .checkbox(&mut inspector, "Hover inspector")
+                .on_hover_text("Show the cell under the mouse: position, type and age")
+                .changed()
+            {
+                pending.push(Action::ToggleInspector);
+            }
         });
         section(ui, "Colours", |ui| {
             let mut inactive = self.view.inactive_color;

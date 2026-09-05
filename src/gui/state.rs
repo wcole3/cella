@@ -9,7 +9,7 @@
 //! impl, so `CellaApp::new` reads as a list of deliberate overrides rather
 //! than fifty assignments.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
@@ -123,6 +123,8 @@ pub(in crate::gui) struct ViewSettings {
     /// viewport, so "zoom to fit" reads last frame's value; one frame of lag
     /// is invisible.
     pub(in crate::gui) last_viewport_size: Option<egui::Vec2>,
+    /// Show a tooltip with the cell under the mouse (position, type, age).
+    pub(in crate::gui) inspector: bool,
 }
 
 impl Default for ViewSettings {
@@ -139,6 +141,7 @@ impl Default for ViewSettings {
             history_limit_1d: 100,
             min_view_rows_1d: 3,
             last_viewport_size: None,
+            inspector: true,
         }
     }
 }
@@ -151,6 +154,19 @@ pub(in crate::gui) struct EditState {
     pub(in crate::gui) undo_stack: Vec<Vec<(usize, CellType)>>,
     /// The batch currently being accumulated by a click-and-drag.
     pub(in crate::gui) current_paint_batch: Option<Vec<(usize, CellType)>>,
+    /// Cells already written during the current stroke, so a brush that
+    /// revisits a cell does not re-record it (and the check is not a scan).
+    pub(in crate::gui) stroke_touched: HashSet<usize>,
+    /// Brush diameter in cells (1 = a single cell).
+    pub(in crate::gui) brush: u8,
+    /// Index into `patterns::PATTERNS` of the stamp to drop.
+    pub(in crate::gui) stamp: usize,
+    /// Random-fill drafts: share of cells to set, which type, the seed, and
+    /// whether to clear the grid first.
+    pub(in crate::gui) fill_density: f32,
+    pub(in crate::gui) fill_type: Option<CellType>,
+    pub(in crate::gui) fill_seed: u64,
+    pub(in crate::gui) fill_clear: bool,
 }
 
 impl Default for EditState {
@@ -160,6 +176,13 @@ impl Default for EditState {
             selected_draw_type: Some(CellType::inactive()),
             undo_stack: Vec::new(),
             current_paint_batch: None,
+            stroke_touched: HashSet::new(),
+            brush: 1,
+            stamp: 0,
+            fill_density: 0.3,
+            fill_type: None,
+            fill_seed: 1,
+            fill_clear: true,
         }
     }
 }

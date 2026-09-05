@@ -8,6 +8,7 @@ mod export;
 mod interact;
 mod painter;
 mod panels;
+mod patterns;
 mod render;
 mod scenarios;
 mod shortcuts;

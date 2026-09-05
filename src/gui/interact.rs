@@ -5,9 +5,10 @@
 //! usefully — lets the fiddly "which cell did they click on?" arithmetic become
 //! a plain function that tests can call directly.
 
+use super::actions::Action;
 use super::app::{CellaApp, Dim, DrawMode};
+use super::patterns::{PATTERNS, stamp_indices};
 use super::shortcuts::shortcuts;
-use super::types::next_in_cycle;
 use cella_lib::*;
 
 /// Zoom limits, in screen pixels per cell.
@@ -48,6 +49,53 @@ pub(in crate::gui) fn cell_index_at(
         }
         GridDims::D2 { width, height } => {
             (cell_x < width && cell_y < height).then_some(cell_y * width + cell_x)
+        }
+    }
+}
+
+/// Every cell a brush of diameter `brush` covers around `center`: a disc on a
+/// 2D grid, a span along the live row on a 1D grid, clipped to the grid.
+/// A brush of 1 (or 0) is the single cell.
+pub(in crate::gui) fn brush_indices(center: usize, brush: u8, dims: GridDims) -> Vec<usize> {
+    let d = i64::from(brush.max(1));
+    // Even diameters sit between cells, so the disc's centre is offset by half
+    // a cell and the span runs one further on the positive side.
+    let even = brush.max(1).is_multiple_of(2);
+    let r = (d - 1) / 2;
+    let hi = if even { r + 1 } else { r };
+    let offset = if even { 0.5 } else { 0.0 };
+    let radius = if even {
+        d as f64 / 2.0
+    } else {
+        (d as f64 - 1.0) / 2.0
+    };
+    match dims {
+        GridDims::D1 { width, .. } => {
+            let c = center as i64;
+            (c - r..=c + hi)
+                .filter(|x| *x >= 0 && (*x as usize) < width)
+                .map(|x| x as usize)
+                .collect()
+        }
+        GridDims::D2 { width, height } => {
+            if width == 0 {
+                return Vec::new();
+            }
+            let (cx, cy) = ((center % width) as i64, (center / width) as i64);
+            let mut out = Vec::new();
+            for dy in -r..=hi {
+                for dx in -r..=hi {
+                    let (x, y) = (cx + dx, cy + dy);
+                    if x < 0 || y < 0 || x as usize >= width || y as usize >= height {
+                        continue;
+                    }
+                    let (fx, fy) = (dx as f64 - offset, dy as f64 - offset);
+                    if fx * fx + fy * fy <= radius * radius + 1e-9 {
+                        out.push(y as usize * width + x as usize);
+                    }
+                }
+            }
+            out
         }
     }
 }
@@ -147,17 +195,15 @@ impl CellaApp {
     }
 
     /// Paint mode: hold the left button and drag to set cells to the selected
-    /// type. The whole drag becomes one undo entry.
+    /// type, `brush` cells wide. Each frame of the drag pushes the cells under
+    /// the brush; releasing the button closes the stroke into one undo entry.
     pub(in crate::gui) fn handle_paint(&mut self, ui: &egui::Ui, response: &egui::Response) {
         if self.playback.playing || !matches!(self.edit.draw_mode, DrawMode::Paint) {
             return;
         }
         if !ui.input(|i| i.pointer.primary_down()) {
-            // Button released: close the batch so Ctrl+Z undoes the whole stroke.
-            if let Some(batch) = self.edit.current_paint_batch.take()
-                && !batch.is_empty()
-            {
-                self.edit.undo_stack.push(batch);
+            if self.edit.current_paint_batch.is_some() {
+                self.push(Action::EndStroke);
             }
             return;
         }
@@ -170,21 +216,8 @@ impl CellaApp {
         let Some(idx) = cell_index_at(pos, response.rect, self.view.scale, dims) else {
             return;
         };
-        let paint_ty = self
-            .edit
-            .selected_draw_type
-            .unwrap_or_else(CellType::inactive);
-        let Some(prev) = self.cell_type_at(idx) else {
-            return;
-        };
-        if prev == paint_ty {
-            return;
-        }
-        let batch = self.edit.current_paint_batch.get_or_insert_with(Vec::new);
-        if !batch.iter().any(|(j, _)| *j == idx) {
-            batch.push((idx, prev));
-        }
-        self.set_cell(idx, paint_ty, "Paint");
+        let cells = brush_indices(idx, self.edit.brush, dims);
+        self.push(Action::PaintCells(cells));
     }
 
     /// Cycle mode: click a cell to advance it to the next declared type.
@@ -195,7 +228,74 @@ impl CellaApp {
         {
             return;
         }
-        let Some(pos) = response.interact_pointer_pos() else {
+        if let Some(idx) = self.clicked_cell(response) {
+            self.push(Action::CycleAt(idx));
+        }
+    }
+
+    /// Stamp mode: click to drop the chosen pattern with its top-left corner
+    /// on the clicked cell (2D only).
+    pub(in crate::gui) fn handle_stamp_click(&mut self, response: &egui::Response) {
+        if !response.clicked()
+            || self.playback.playing
+            || !matches!(self.edit.draw_mode, DrawMode::Stamp)
+        {
+            return;
+        }
+        if let Some(idx) = self.clicked_cell(response) {
+            self.push(Action::StampAt(idx));
+        }
+    }
+
+    /// The cell under the pointer for a click on the viewport.
+    fn clicked_cell(&self, response: &egui::Response) -> Option<usize> {
+        let pos = response.interact_pointer_pos()?;
+        let dims = self.grid_dims()?;
+        cell_index_at(pos, response.rect, self.view.scale, dims)
+    }
+
+    /// In Stamp mode, outline where the pattern would land.
+    pub(in crate::gui) fn draw_stamp_ghost(&self, ui: &egui::Ui, response: &egui::Response) {
+        if !matches!(self.edit.draw_mode, DrawMode::Stamp) || !response.hovered() {
+            return;
+        }
+        let Some(pos) = response.hover_pos() else {
+            return;
+        };
+        let Some(GridDims::D2 { width, height }) = self.grid_dims() else {
+            return;
+        };
+        let Some(idx) = cell_index_at(
+            pos,
+            response.rect,
+            self.view.scale,
+            GridDims::D2 { width, height },
+        ) else {
+            return;
+        };
+        let Some(pattern) = PATTERNS.get(self.edit.stamp) else {
+            return;
+        };
+        let scale = self.view.scale.max(1) as f32;
+        let stroke = egui::Stroke::new(1.0, self.chrome.theme.accent());
+        for cell in stamp_indices(pattern, (idx % width, idx / width), width, height) {
+            let (x, y) = ((cell % width) as f32, (cell / width) as f32);
+            let min = response.rect.min + egui::vec2(x * scale, y * scale);
+            ui.painter().rect_stroke(
+                egui::Rect::from_min_size(min, egui::vec2(scale, scale)),
+                0.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// The hover inspector: a tooltip naming the cell under the mouse.
+    pub(in crate::gui) fn show_hover_inspector(&self, ui: &egui::Ui, response: &egui::Response) {
+        if !self.view.inspector || !response.hovered() || response.dragged() {
+            return;
+        }
+        let Some(pos) = response.hover_pos() else {
             return;
         };
         let Some(dims) = self.grid_dims() else {
@@ -204,16 +304,32 @@ impl CellaApp {
         let Some(idx) = cell_index_at(pos, response.rect, self.view.scale, dims) else {
             return;
         };
-        // Cycle through every *declared* type, not just the ones on the grid
-        // right now — otherwise a state that has died out could never be
-        // painted back in.
-        let cycle_types = self.declared_types();
-        let Some(current) = self.cell_type_at(idx) else {
+        let Some(ty) = self.cell_type_at(idx) else {
             return;
         };
-        let next = next_in_cycle(&cycle_types, current);
-        self.edit.undo_stack.push(vec![(idx, current)]);
-        self.set_cell(idx, next, "Cycle edit");
+        let age = match self.scenario.dim {
+            Some(Dim::D1) => self.scenario.d1.as_ref().map(|g| g.cell_age(idx)),
+            Some(Dim::D2) => self.scenario.d2.as_ref().map(|g| g.cell_age(idx)),
+            None => None,
+        };
+        let (x, y) = match dims {
+            GridDims::D1 { .. } => (idx, 0),
+            GridDims::D2 { width, .. } => (idx % width, idx / width),
+        };
+        let color = self.color_of(&ty);
+        let _ = ui;
+        response.clone().on_hover_ui_at_pointer(|ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, color);
+                ui.strong(ty.as_str());
+            });
+            ui.small(format!("x {x}  y {y}  index {idx}"));
+            if let Some(a) = age {
+                ui.small(format!("age {a} step{}", if a == 1 { "" } else { "s" }));
+            }
+        });
     }
 
     /// Turn key presses into actions, from the one table in
@@ -314,6 +430,51 @@ mod tests {
         };
         assert_eq!(cell_index_at(at(15.0, 25.0), RECT, 10, dims), Some(0));
         assert_eq!(cell_index_at(at(15.0, 35.0), RECT, 10, dims), None);
+    }
+
+    #[test]
+    fn brush_indices_cover_a_disc_and_clip_to_the_grid() {
+        let dims = GridDims::D2 {
+            width: 10,
+            height: 10,
+        };
+        assert_eq!(brush_indices(55, 1, dims), vec![55]);
+        assert_eq!(brush_indices(55, 0, dims), vec![55], "0 behaves like 1");
+        let three = brush_indices(55, 3, dims);
+        assert_eq!(three.len(), 5, "diameter 3 is a plus shape: {three:?}");
+        assert!(
+            three.contains(&45)
+                && three.contains(&65)
+                && three.contains(&54)
+                && three.contains(&56)
+        );
+        let five = brush_indices(55, 5, dims);
+        assert!(five.len() >= 13 && five.len() <= 21, "{}", five.len());
+        assert!(
+            !five.contains(&33),
+            "corners of the 5x5 square are outside the disc"
+        );
+        // Clipped at the corner: only in-bounds cells.
+        let corner = brush_indices(0, 15, dims);
+        assert!(corner.iter().all(|&i| i % 10 < 8 && i / 10 < 8));
+        assert!(corner.contains(&0));
+        let row = GridDims::D1 {
+            width: 10,
+            history_rows: 0,
+        };
+        assert_eq!(brush_indices(0, 5, row), vec![0, 1, 2]);
+        assert_eq!(brush_indices(9, 3, row), vec![8, 9]);
+        assert!(
+            brush_indices(
+                0,
+                3,
+                GridDims::D2 {
+                    width: 0,
+                    height: 0
+                }
+            )
+            .is_empty()
+        );
     }
 
     #[test]

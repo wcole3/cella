@@ -28,6 +28,8 @@ pub(in crate::gui) enum Dim {
 pub(in crate::gui) enum DrawMode {
     Cycle,
     Paint,
+    /// Click to drop the selected pattern (2D only).
+    Stamp,
 }
 
 /// Run the native GUI application. `config` is an optional config file to
@@ -219,6 +221,9 @@ impl CellaApp {
                         self.handle_pan(ui, &response);
                         self.handle_paint(ui, &response);
                         self.handle_cycle_click(&response);
+                        self.handle_stamp_click(&response);
+                        self.draw_stamp_ghost(ui, &response);
+                        self.show_hover_inspector(ui, &response);
                     }
                     None => {
                         ui.label("No grid loaded.");
