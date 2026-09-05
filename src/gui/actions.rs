@@ -273,11 +273,21 @@ impl CellaApp {
                 self.view.palette = super::theme::PALETTES[i].colors.to_vec();
                 self.view.palette_index = i;
                 self.reslot_colors();
+                self.explore.thumbs.clear();
             }
-            Action::ReslotColors => self.reslot_colors(),
+            Action::ReslotColors => {
+                self.reslot_colors();
+                self.explore.thumbs.clear();
+            }
             Action::SetGridLineColor(c) => self.view.grid_line_color = c,
-            Action::SetInactiveColor(c) => self.view.inactive_color = c,
-            Action::SetTypeColor(ty, c) => self.set_color_for(&ty, c),
+            Action::SetInactiveColor(c) => {
+                self.view.inactive_color = c;
+                self.explore.thumbs.clear();
+            }
+            Action::SetTypeColor(ty, c) => {
+                self.set_color_for(&ty, c);
+                self.explore.thumbs.clear();
+            }
             Action::SetHistoryLimit1D(n) => self.view.history_limit_1d = n.clamp(1, 10_000),
             Action::Undo => self.undo_last_batch(),
             Action::SetDrawMode(mode) => {

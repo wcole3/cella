@@ -6,6 +6,7 @@ mod actions;
 mod app;
 mod explore;
 mod export;
+mod gallery;
 mod interact;
 mod layers;
 mod painter;

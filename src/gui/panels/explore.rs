@@ -13,7 +13,11 @@ use crate::gui::explore::{
     DescriptorRow, ExploreAction, ExploreMode, GoalChoice, MetricChoice, SearchChoice, can_apply,
     can_start, clamp_range, objective_error, steps_behind_main,
 };
+use crate::gui::gallery::{
+    STRIP_MAX, THUMB_SIDE, cell_tooltip, fitness_t, heat_grid, thumbnail_image, top_elites,
+};
 use crate::gui::panels::model::value_text;
+use crate::gui::render::heat_color;
 use crate::gui::theme::{self, SPACE_SM};
 use cella_lib::ParamKind;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
@@ -613,15 +617,21 @@ impl CellaApp {
         }
     }
 
-    /// Archive readouts; the gallery itself arrives with the next step.
+    /// The MAP-Elites archive: readouts, a heat map of the first two
+    /// behaviour axes (click a cell to apply its genome), and a strip of the
+    /// fittest elites' thumbnails.
     fn ui_explore_archive(&mut self, ui: &mut egui::Ui) {
         let busy = self.explore.worker.as_ref().is_some_and(|w| w.busy);
         let apply_ok = can_apply(true, self.playback.playing, busy);
         let mut actions = Vec::new();
-        let Some(snap) = &self.explore.archive else {
+        // Taken out while drawing so the thumbnail cache (also in `explore`)
+        // and the colour lookup on `self` can be used alongside it.
+        let Some(owned) = self.explore.archive.take() else {
             return;
         };
+        let snap = &owned;
         let cells = snap.cells.len();
+        let generation = snap.generation;
         theme::section(ui, "Archive", |ui| {
             ui.label(format!(
                 "{} / {cells} cells filled ({:.0} %), QD score {:.2}, best {:.3}, mean {:.3}",
@@ -631,26 +641,110 @@ impl CellaApp {
                 snap.stats.obj_max,
                 snap.stats.obj_mean
             ));
-            ui.small(format!("axes: {}", snap.labels.join(" × ")));
-            // The best cell is a one-click apply until the gallery lands.
-            let best_cell = snap
-                .cells
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.fitness)))
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(i, _)| i);
-            if let Some(i) = best_cell
-                && ui
-                    .add_enabled(apply_ok, egui::Button::new("Apply best elite"))
-                    .on_hover_text(
-                        "write the highest-scoring archive cell's genome into the main grid",
+            ui.small(if apply_ok {
+                "Click a cell or thumbnail to write its genome into the grid."
+            } else {
+                "Pause (and let the worker finish) to apply a genome."
+            });
+
+            // Heat map.
+            let grid = heat_grid(snap);
+            let width = ui.available_width().max(THUMB_SIDE);
+            let cell_side = (width / grid.cols as f32).clamp(4.0, 28.0);
+            let size = egui::vec2(cell_side * grid.cols as f32, cell_side * grid.rows as f32);
+            let (response, painter) = ui.allocate_painter(size, egui::Sense::click());
+            let origin = response.rect.min;
+            let empty = ui.visuals().faint_bg_color;
+            for row in 0..grid.rows {
+                for col in 0..grid.cols {
+                    let rect = egui::Rect::from_min_size(
+                        origin
+                            + egui::vec2(
+                                col as f32 * cell_side,
+                                (grid.rows - 1 - row) as f32 * cell_side,
+                            ),
+                        egui::vec2(cell_side, cell_side),
                     )
-                    .clicked()
-            {
-                actions.push(ExploreAction::ApplyElite(i));
+                    .shrink(0.5);
+                    let color = match grid.slot(col, row) {
+                        Some((_, f)) => heat_color(fitness_t(snap, f)),
+                        None => empty,
+                    };
+                    painter.rect_filled(rect, 0.0, color);
+                }
+            }
+            let hovered = response.hover_pos().and_then(|p| {
+                let col = ((p.x - origin.x) / cell_side).floor();
+                let row = grid.rows as f32 - 1.0 - ((p.y - origin.y) / cell_side).floor();
+                (col >= 0.0 && row >= 0.0)
+                    .then(|| grid.slot(col as usize, row as usize))
+                    .flatten()
+            });
+            if let Some((i, _)) = hovered {
+                let tip = cell_tooltip(snap, i, value_text);
+                response.clone().on_hover_ui_at_pointer(|ui| {
+                    ui.monospace(tip);
+                });
+                if response.clicked() && apply_ok {
+                    actions.push(ExploreAction::ApplyElite(i));
+                }
+            }
+            ui.small(format!(
+                "→ {}   ↑ {}",
+                snap.labels.first().map_or("", String::as_str),
+                snap.labels.get(1).map_or("", String::as_str)
+            ));
+
+            // Thumbnail strip.
+            let top = top_elites(snap, STRIP_MAX);
+            if !top.is_empty() {
+                egui::ScrollArea::horizontal()
+                    .id_salt("explore_thumbs")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for i in top {
+                                let Some(Some(cell)) = snap.cells.get(i) else {
+                                    continue;
+                                };
+                                let key = (i, generation);
+                                if !self.explore.thumbs.contains_key(&key)
+                                    && let Some(t) = &cell.thumbnail
+                                {
+                                    let img = thumbnail_image(t, |c| self.color_of(c));
+                                    let tex = ui.ctx().load_texture(
+                                        format!("elite_{i}_{generation}"),
+                                        img,
+                                        egui::TextureOptions::NEAREST,
+                                    );
+                                    self.explore.thumbs.insert(key, tex);
+                                }
+                                ui.vertical(|ui| {
+                                    let resp = match self.explore.thumbs.get(&key) {
+                                        Some(tex) => ui.add(
+                                            egui::Image::new((
+                                                tex.id(),
+                                                egui::vec2(THUMB_SIDE, THUMB_SIDE),
+                                            ))
+                                            .sense(egui::Sense::click()),
+                                        ),
+                                        None => ui.add_sized(
+                                            [THUMB_SIDE, THUMB_SIDE],
+                                            egui::Button::new(format!("#{i}")),
+                                        ),
+                                    };
+                                    let resp =
+                                        resp.on_hover_text(cell_tooltip(snap, i, value_text));
+                                    if resp.clicked() && apply_ok {
+                                        actions.push(ExploreAction::ApplyElite(i));
+                                    }
+                                    ui.small(format!("{:.3}", cell.fitness));
+                                });
+                            }
+                        });
+                    });
             }
         });
+        self.explore.archive = Some(owned);
         for a in actions {
             self.push(Action::Explore(a));
         }
@@ -713,7 +807,11 @@ mod tests {
             )]
             .into_iter()
             .collect(),
-            thumbnail: None,
+            thumbnail: Some(cella_lib::explore::Thumbnail {
+                width: 2,
+                height: 2,
+                cells: vec![cella_lib::CellType::from("Alive"); 4],
+            }),
         };
         app.explore.archive = Some(ArchiveSnapshot {
             dims: vec![2, 2],
@@ -739,6 +837,37 @@ mod tests {
             generation: 3,
         });
         egui::__run_test_ui(|ui| app.ui_explore_tab(ui));
+        // Drawing built one texture per elite, keyed by cell and generation.
+        let mut keys: Vec<_> = app.explore.thumbs.keys().copied().collect();
+        keys.sort();
+        assert_eq!(keys, vec![(1, 3), (3, 3)]);
+        // A colour change and a new snapshot both drop the cache.
+        app.apply_action(Action::SetPalette(1));
+        assert!(app.explore.thumbs.is_empty());
+        egui::__run_test_ui(|ui| app.ui_explore_tab(ui));
+        assert_eq!(app.explore.thumbs.len(), 2);
+        let (tx, _rx_cmd) = std::sync::mpsc::channel();
+        let (_tx_msg, rx) = std::sync::mpsc::channel();
+        app.explore.worker = Some(crate::gui::explore::ExploreWorker {
+            tx,
+            rx,
+            join: None,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            mode: ExploreMode::Evolve,
+            busy: false,
+            sig: (crate::gui::app::Dim::D2, 50, 30),
+        });
+        let mut again = app.explore.archive.clone().unwrap();
+        again.generation = 4;
+        crate::gui::explore::handle_worker_msg(
+            &mut app.explore,
+            &mut app.view.layers,
+            crate::gui::explore::WorkerMsg::Archive(again),
+        );
+        assert!(app.explore.thumbs.is_empty());
+        egui::__run_test_ui(|ui| app.ui_explore_tab(ui));
+        assert!(app.explore.thumbs.contains_key(&(3, 4)));
+        app.explore.worker = None;
         // Applying the best elite (cell 3) lands its genome; an empty cell is refused.
         app.apply_action(Action::Explore(ExploreAction::ApplyElite(3)));
         assert_eq!(app.scenario.d2.as_ref().unwrap().rule.subrules[0].count, 6);
