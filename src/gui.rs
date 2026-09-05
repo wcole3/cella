@@ -6,6 +6,7 @@ mod actions;
 mod app;
 mod export;
 mod interact;
+mod layers;
 mod painter;
 mod panels;
 mod patterns;

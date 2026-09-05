@@ -89,6 +89,45 @@ pub fn color_for(
     palette.get(idx).copied().unwrap_or(Color32::LIGHT_BLUE)
 }
 
+/// Linear blend between two colours (`t` in `0..=1`).
+fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Color32::from_rgb(ch(a.r(), b.r()), ch(a.g(), b.g()), ch(a.b(), b.b()))
+}
+
+/// Colour ramp for a probability or other `0..=1` weight: cool blue at 0,
+/// yellow at 0.5, red at 1.
+pub fn heat_color(t: f32) -> Color32 {
+    let blue = Color32::from_rgb(0x2B, 0x83, 0xBA);
+    let yellow = Color32::from_rgb(0xFF, 0xD7, 0x00);
+    let red = Color32::from_rgb(0xD7, 0x19, 0x1C);
+    if t < 0.5 {
+        lerp(blue, yellow, t * 2.0)
+    } else {
+        lerp(yellow, red, (t - 0.5) * 2.0)
+    }
+}
+
+/// Colour ramp for cell age, `t = 1` meaning "changed just now" (bright
+/// yellow), fading through orange to deep violet at `t = 0`.
+pub fn age_color(t: f32) -> Color32 {
+    let cold = Color32::from_rgb(0x3B, 0x0F, 0x70);
+    let warm = Color32::from_rgb(0xFF, 0x45, 0x00);
+    let hot = Color32::from_rgb(0xFD, 0xE7, 0x25);
+    if t < 0.5 {
+        lerp(cold, warm, t * 2.0)
+    } else {
+        lerp(warm, hot, (t - 0.5) * 2.0)
+    }
+}
+
+/// The same colour at `alpha` opacity (`0..=1`).
+pub fn with_opacity(c: Color32, alpha: f32) -> Color32 {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +172,18 @@ mod tests {
             palette_index_for("T8", 8),
             "9th falls back to the hash"
         );
+    }
+
+    #[test]
+    fn ramps_run_the_documented_way_and_opacity_sets_alpha() {
+        assert!(heat_color(0.0).b() > heat_color(1.0).b(), "blue fades out");
+        assert!(heat_color(1.0).r() > heat_color(0.0).r(), "red comes in");
+        assert_eq!(heat_color(0.5), Color32::from_rgb(0xFF, 0xD7, 0x00));
+        assert!(age_color(1.0).g() > age_color(0.0).g(), "hot is bright");
+        assert_eq!(age_color(0.0), Color32::from_rgb(0x3B, 0x0F, 0x70));
+        assert_eq!(age_color(2.0), age_color(1.0), "clamped");
+        let c = with_opacity(Color32::WHITE, 0.5);
+        assert_eq!(c.a(), 128);
+        assert_eq!(with_opacity(Color32::WHITE, 7.0).a(), 255);
     }
 }

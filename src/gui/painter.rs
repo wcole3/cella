@@ -206,6 +206,16 @@ impl CellaApp {
             None => {}
         }
 
+        // Overlay layers (age heat, ensemble probability) sit between the
+        // cells and the grid lines, so lines stay crisp on top.
+        self.emit_layers(
+            &mut shapes,
+            full_rect.min,
+            scale,
+            cell_x_start..cell_x_end,
+            cell_y_start..cell_y_end,
+        );
+
         // Grid lines (only for visible cells; skip when scale < 3 as lines would dominate)
         if self.view.show_grid_lines && scale >= 3.0 {
             let stroke = egui::Stroke::new(1.0, self.view.grid_line_color);

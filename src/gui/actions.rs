@@ -21,6 +21,7 @@
 
 use super::app::{CellaApp, Dim, DrawMode};
 use super::interact::{GridDims, MAX_SCALE, MIN_SCALE};
+use super::layers::Layer;
 use super::state::{ControlTab, Pacing, WorkbenchTab};
 use super::theme::ThemeChoice;
 use cella_lib::types::interner;
@@ -61,6 +62,12 @@ pub(in crate::gui) enum Action {
     ZoomToFit,
     SetScale(usize),
     ToggleGridLines,
+    /// Switch an overlay layer on or off (Grid means the grid lines).
+    ToggleLayer(Layer),
+    /// Opacity of the overlay layers, `0..=1`.
+    SetLayerOpacity(f32),
+    /// Ages at or above this are not tinted by the age layer.
+    SetAgeCap(u32),
     SetFontScale(f32),
     /// Switch the theme. Background and grid-line colours still at the old
     /// theme's defaults follow it; colours the user picked stay.
@@ -221,6 +228,13 @@ impl CellaApp {
             }
             Action::SetScale(s) => self.view.scale = s.clamp(MIN_SCALE, MAX_SCALE),
             Action::ToggleGridLines => self.view.show_grid_lines = !self.view.show_grid_lines,
+            Action::ToggleLayer(layer) => match layer {
+                Layer::Grid => self.view.show_grid_lines = !self.view.show_grid_lines,
+                Layer::Age => self.view.layers.age = !self.view.layers.age,
+                Layer::Probability => self.view.layers.probability = !self.view.layers.probability,
+            },
+            Action::SetLayerOpacity(a) => self.view.layers.opacity = a.clamp(0.0, 1.0),
+            Action::SetAgeCap(n) => self.view.layers.age_cap = n.clamp(1, 100_000),
             Action::SetFontScale(f) => self.chrome.font_scale = f.clamp(0.5, 3.0),
             Action::SetTheme(theme) => {
                 let old = self.chrome.theme;
@@ -665,6 +679,16 @@ mod tests {
         let lines = app.view.show_grid_lines;
         app.apply_action(Action::ToggleGridLines);
         assert_eq!(app.view.show_grid_lines, !lines);
+        app.apply_action(Action::ToggleLayer(Layer::Grid));
+        assert_eq!(app.view.show_grid_lines, lines);
+        app.apply_action(Action::ToggleLayer(Layer::Age));
+        assert!(app.view.layers.age);
+        app.apply_action(Action::ToggleLayer(Layer::Probability));
+        assert!(!app.view.layers.probability);
+        app.apply_action(Action::SetLayerOpacity(4.0));
+        assert_eq!(app.view.layers.opacity, 1.0);
+        app.apply_action(Action::SetAgeCap(0));
+        assert_eq!(app.view.layers.age_cap, 1);
         app.apply_action(Action::SetFontScale(9.0));
         assert_eq!(app.chrome.font_scale, 3.0);
         app.apply_action(Action::ToggleLeft);

@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
 
 use super::app::{Dim, DrawMode};
+use super::layers::LayerState;
 use super::panels::rule_edit_model::{Rule1DEdit, Rule2DEdit};
 use super::render::default_palette;
 use super::theme::ThemeChoice;
@@ -130,6 +131,8 @@ pub(in crate::gui) struct ViewSettings {
     pub(in crate::gui) last_viewport_size: Option<egui::Vec2>,
     /// Show a tooltip with the cell under the mouse (position, type, age).
     pub(in crate::gui) inspector: bool,
+    /// Overlay layers drawn over the cells.
+    pub(in crate::gui) layers: LayerState,
 }
 
 impl Default for ViewSettings {
@@ -149,6 +152,7 @@ impl Default for ViewSettings {
             min_view_rows_1d: 3,
             last_viewport_size: None,
             inspector: true,
+            layers: LayerState::default(),
         }
     }
 }

@@ -7,6 +7,7 @@
 use egui::{Key, KeyboardShortcut, Modifiers};
 
 use super::actions::Action;
+use super::layers::Layer;
 
 /// One key binding.
 pub(in crate::gui) struct Shortcut {
@@ -50,6 +51,16 @@ pub(in crate::gui) fn shortcuts() -> Vec<Shortcut> {
         key(Key::Minus, "Zoom out", Action::ZoomOut),
         key(Key::F, "Zoom to fit", Action::ZoomToFit),
         key(Key::G, "Toggle grid lines", Action::ToggleGridLines),
+        key(
+            Key::A,
+            "Toggle the age heat layer",
+            Action::ToggleLayer(Layer::Age),
+        ),
+        key(
+            Key::P,
+            "Toggle the probability layer",
+            Action::ToggleLayer(Layer::Probability),
+        ),
         key(Key::L, "Show / hide the left panel", Action::ToggleLeft),
         key(Key::W, "Show / hide the right panel", Action::ToggleRight),
         key(Key::Questionmark, "Show this list", Action::ToggleShortcuts),

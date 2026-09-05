@@ -2,6 +2,7 @@
 
 use crate::gui::actions::Action;
 use crate::gui::app::{CellaApp, Dim, DrawMode};
+use crate::gui::layers::Layer;
 use crate::gui::patterns::PATTERNS;
 use crate::gui::theme::section;
 use cella_lib::{CellType, INACTIVE};
@@ -142,6 +143,51 @@ impl CellaApp {
                     seed: self.edit.fill_seed,
                     clear_first: self.edit.fill_clear,
                 });
+            }
+        });
+        section(ui, "Layers", |ui| {
+            let mut lines = self.view.show_grid_lines;
+            if ui.checkbox(&mut lines, "Grid lines").changed() {
+                pending.push(Action::ToggleLayer(Layer::Grid));
+            }
+            let mut age = self.view.layers.age;
+            if ui
+                .checkbox(&mut age, "Age heat")
+                .on_hover_text("Tint cells by how recently they changed: fronts glow")
+                .changed()
+            {
+                pending.push(Action::ToggleLayer(Layer::Age));
+            }
+            if self.view.layers.age {
+                let mut cap = self.view.layers.age_cap;
+                ui.horizontal(|ui| {
+                    ui.label("Fade after");
+                    if ui
+                        .add(egui::DragValue::new(&mut cap).range(1..=100_000))
+                        .changed()
+                    {
+                        pending.push(Action::SetAgeCap(cap));
+                    }
+                    ui.label("steps");
+                });
+            }
+            let has_map = self.view.layers.probability_map.is_some();
+            let mut prob = self.view.layers.probability;
+            if ui
+                .add_enabled(has_map, egui::Checkbox::new(&mut prob, "Probability map"))
+                .on_hover_text(
+                    "The Explore ensemble's per-cell probability (needs a running ensemble)",
+                )
+                .changed()
+            {
+                pending.push(Action::ToggleLayer(Layer::Probability));
+            }
+            let mut opacity = self.view.layers.opacity;
+            if ui
+                .add(egui::Slider::new(&mut opacity, 0.0..=1.0).text("Opacity"))
+                .changed()
+            {
+                pending.push(Action::SetLayerOpacity(opacity));
             }
         });
         section(ui, "Export GIF", |ui| {
