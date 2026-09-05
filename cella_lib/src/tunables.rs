@@ -189,8 +189,12 @@ pub fn set_rule1d_param(rule: &mut Rule1D, key: &str, value: ParamValue) -> Resu
         .subrules
         .get(i)
         .ok_or_else(|| invalid(key, format!("rule has {n} subrules")))?;
-    let kind = kind_1d(sub, field)
-        .ok_or_else(|| invalid(key, format!("unknown field '{field}' (fields: {FIELDS_1D})")))?;
+    let kind = kind_1d(sub, field).ok_or_else(|| {
+        invalid(
+            key,
+            format!("unknown field '{field}' (fields: {FIELDS_1D})"),
+        )
+    })?;
     check_value_against_kind(&kind, &value).map_err(|e| match e {
         ModelError::InvalidParam(why) => invalid(key, why),
         other => other,
@@ -328,8 +332,12 @@ pub fn set_rule2d_param(rule: &mut Rule2D, key: &str, value: ParamValue) -> Resu
         .subrules
         .get(i)
         .ok_or_else(|| invalid(key, format!("rule has {n} subrules")))?;
-    let kind = kind_2d(sub, field)
-        .ok_or_else(|| invalid(key, format!("unknown field '{field}' (fields: {FIELDS_2D})")))?;
+    let kind = kind_2d(sub, field).ok_or_else(|| {
+        invalid(
+            key,
+            format!("unknown field '{field}' (fields: {FIELDS_2D})"),
+        )
+    })?;
     check_value_against_kind(&kind, &value).map_err(|e| match e {
         ModelError::InvalidParam(why) => invalid(key, why),
         other => other,
@@ -434,7 +442,17 @@ mod tests {
         let alive = CellType::from("Alive");
         let dead = CellType::inactive();
         let sub = |cur, count, op, limit, out| {
-            Rule2DSubrule::new(cur, alive, count, op, 1, Neighborhood2D::Moore, out, None, limit)
+            Rule2DSubrule::new(
+                cur,
+                alive,
+                count,
+                op,
+                1,
+                Neighborhood2D::Moore,
+                out,
+                None,
+                limit,
+            )
         };
         Rule2D {
             subrules: vec![
@@ -464,7 +482,10 @@ mod tests {
     fn keys_round_trip_and_bad_shapes_are_rejected() {
         assert_eq!(rule_key(2, "count"), "rule.subrules[2].count");
         assert_eq!(parse_rule_key("rule.subrules[2].count"), Some((2, "count")));
-        assert_eq!(parse_rule_key("rule.subrules[0].wolfram_code"), Some((0, "wolfram_code")));
+        assert_eq!(
+            parse_rule_key("rule.subrules[0].wolfram_code"),
+            Some((0, "wolfram_code"))
+        );
         for bad in [
             "rule.subrules[x].count",
             "rule.subrules[0]",
@@ -501,29 +522,70 @@ mod tests {
             Some(ParamValue::Float(0.25))
         );
         assert_eq!(get_rule1d_param(&rule, "rule.subrules[0].randomness"), None);
-        assert_eq!(get_rule1d_param(&rule, "rule.subrules[7].wolfram_code"), None);
+        assert_eq!(
+            get_rule1d_param(&rule, "rule.subrules[7].wolfram_code"),
+            None
+        );
         assert_eq!(get_rule1d_param(&rule, "rule.subrules[0].nope"), None);
     }
 
     #[test]
     fn rule1d_writes_are_validated_and_all_or_nothing() {
         let mut rule = rule30();
-        set_rule1d_param(&mut rule, "rule.subrules[0].wolfram_code", ParamValue::Bits(110)).unwrap();
+        set_rule1d_param(
+            &mut rule,
+            "rule.subrules[0].wolfram_code",
+            ParamValue::Bits(110),
+        )
+        .unwrap();
         assert_eq!(rule.subrules[0].wolfram_code, 110);
         // 256 needs 9 bits; an n=1 table has 8.
-        let err = set_rule1d_param(&mut rule, "rule.subrules[0].wolfram_code", ParamValue::Bits(256))
-            .unwrap_err();
+        let err = set_rule1d_param(
+            &mut rule,
+            "rule.subrules[0].wolfram_code",
+            ParamValue::Bits(256),
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("does not fit in 8 bits"), "{err}");
-        assert_eq!(rule.subrules[0].wolfram_code, 110, "refused write changed nothing");
+        assert_eq!(
+            rule.subrules[0].wolfram_code, 110,
+            "refused write changed nothing"
+        );
         // Randomness can be switched on by a write even though it was not listed.
-        set_rule1d_param(&mut rule, "rule.subrules[0].randomness", ParamValue::Float(0.5)).unwrap();
+        set_rule1d_param(
+            &mut rule,
+            "rule.subrules[0].randomness",
+            ParamValue::Float(0.5),
+        )
+        .unwrap();
         assert_eq!(rule.subrules[0].randomness, Some(0.5));
-        assert!(set_rule1d_param(&mut rule, "rule.subrules[0].randomness", ParamValue::Float(1.5)).is_err());
-        assert!(set_rule1d_param(&mut rule, "rule.subrules[9].wolfram_code", ParamValue::Bits(1)).is_err());
+        assert!(
+            set_rule1d_param(
+                &mut rule,
+                "rule.subrules[0].randomness",
+                ParamValue::Float(1.5)
+            )
+            .is_err()
+        );
+        assert!(
+            set_rule1d_param(
+                &mut rule,
+                "rule.subrules[9].wolfram_code",
+                ParamValue::Bits(1)
+            )
+            .is_err()
+        );
         assert!(set_rule1d_param(&mut rule, "rule.subrules[0].count", ParamValue::Int(1)).is_err());
         assert!(set_rule1d_param(&mut rule, "model.p0", ParamValue::Float(0.1)).is_err());
         // Wrong value shape for a known field.
-        assert!(set_rule1d_param(&mut rule, "rule.subrules[0].wolfram_code", ParamValue::Int(3)).is_err());
+        assert!(
+            set_rule1d_param(
+                &mut rule,
+                "rule.subrules[0].wolfram_code",
+                ParamValue::Int(3)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -599,15 +661,29 @@ mod tests {
         assert_eq!(got.early_exit, fresh.early_exit);
         // gt without a limit is the early-exit shape; switching op changes it.
         assert!(rule.subrules[0].early_exit);
-        set_rule2d_param(&mut rule, "rule.subrules[0].op", ParamValue::Choice("lt".into())).unwrap();
+        set_rule2d_param(
+            &mut rule,
+            "rule.subrules[0].op",
+            ParamValue::Choice("lt".into()),
+        )
+        .unwrap();
         assert!(!rule.subrules[0].early_exit);
         assert_eq!((rule.subrules[0].cond_lo, rule.subrules[0].cond_hi), (0, 4));
         // A limit can be switched on, and randomness too.
         set_rule2d_param(&mut rule, "rule.subrules[0].limit", ParamValue::Int(2)).unwrap();
         assert_eq!(rule.subrules[0].limit, Some(2));
-        set_rule2d_param(&mut rule, "rule.subrules[0].randomness", ParamValue::Float(0.1)).unwrap();
+        set_rule2d_param(
+            &mut rule,
+            "rule.subrules[0].randomness",
+            ParamValue::Float(0.1),
+        )
+        .unwrap();
         assert_eq!(rule.subrules[0].randomness, Some(0.1));
-        assert!(rule2d_params(&rule).iter().any(|d| d.key == "rule.subrules[0].randomness"));
+        assert!(
+            rule2d_params(&rule)
+                .iter()
+                .any(|d| d.key == "rule.subrules[0].randomness")
+        );
     }
 
     #[test]
@@ -615,17 +691,45 @@ mod tests {
         let mut rule = life();
         let before = rule.clone();
         // eq + limit is a combination the engine rejects.
-        let err = set_rule2d_param(&mut rule, "rule.subrules[2].limit", ParamValue::Int(4)).unwrap_err();
-        assert!(format!("{err}").contains("range must be >= 1") || format!("{err}").contains("subrules[2]"), "{err}");
+        let err =
+            set_rule2d_param(&mut rule, "rule.subrules[2].limit", ParamValue::Int(4)).unwrap_err();
+        assert!(
+            format!("{err}").contains("range must be >= 1")
+                || format!("{err}").contains("subrules[2]"),
+            "{err}"
+        );
         // count above what the shape can see.
         assert!(set_rule2d_param(&mut rule, "rule.subrules[0].count", ParamValue::Int(9)).is_err());
         // limit below count for gt.
         assert!(set_rule2d_param(&mut rule, "rule.subrules[1].limit", ParamValue::Int(1)).is_err());
         // unknown op / neighborhood names, wrong shapes, unknown fields, bad index.
-        assert!(set_rule2d_param(&mut rule, "rule.subrules[0].op", ParamValue::Choice("ge".into())).is_err());
-        assert!(set_rule2d_param(&mut rule, "rule.subrules[0].neighborhood", ParamValue::Choice("Hex".into())).is_err());
-        assert!(set_rule2d_param(&mut rule, "rule.subrules[0].count", ParamValue::Float(1.0)).is_err());
-        assert!(set_rule2d_param(&mut rule, "rule.subrules[0].wolfram_code", ParamValue::Bits(1)).is_err());
+        assert!(
+            set_rule2d_param(
+                &mut rule,
+                "rule.subrules[0].op",
+                ParamValue::Choice("ge".into())
+            )
+            .is_err()
+        );
+        assert!(
+            set_rule2d_param(
+                &mut rule,
+                "rule.subrules[0].neighborhood",
+                ParamValue::Choice("Hex".into())
+            )
+            .is_err()
+        );
+        assert!(
+            set_rule2d_param(&mut rule, "rule.subrules[0].count", ParamValue::Float(1.0)).is_err()
+        );
+        assert!(
+            set_rule2d_param(
+                &mut rule,
+                "rule.subrules[0].wolfram_code",
+                ParamValue::Bits(1)
+            )
+            .is_err()
+        );
         assert!(set_rule2d_param(&mut rule, "rule.subrules[3].count", ParamValue::Int(1)).is_err());
         assert!(set_rule2d_param(&mut rule, "nonsense", ParamValue::Int(1)).is_err());
         assert_eq!(rule.subrules, before.subrules);
@@ -636,8 +740,12 @@ mod tests {
         let x = CellType::from("X");
         let mut g1 = Grid1D::new(5, 0, vec![x; 5], rule30());
         assert_eq!(g1.params().len(), 3);
-        g1.set_param("rule.subrules[0].wolfram_code", ParamValue::Bits(90)).unwrap();
-        assert_eq!(g1.get_param("rule.subrules[0].wolfram_code"), Some(ParamValue::Bits(90)));
+        g1.set_param("rule.subrules[0].wolfram_code", ParamValue::Bits(90))
+            .unwrap();
+        assert_eq!(
+            g1.get_param("rule.subrules[0].wolfram_code"),
+            Some(ParamValue::Bits(90))
+        );
         assert!(g1.set_param("model.p0", ParamValue::Float(0.1)).is_err());
 
         let alive = CellType::from("Alive");
@@ -645,8 +753,12 @@ mod tests {
         assert_eq!(g2.params().len(), 13, "no model: rule fields only");
         assert_eq!(g2.get_param("model.p0"), None);
         assert!(g2.set_param("model.p0", ParamValue::Float(0.2)).is_err());
-        g2.set_param("rule.subrules[0].count", ParamValue::Int(3)).unwrap();
-        assert_eq!(g2.get_param("rule.subrules[0].count"), Some(ParamValue::Int(3)));
+        g2.set_param("rule.subrules[0].count", ParamValue::Int(3))
+            .unwrap();
+        assert_eq!(
+            g2.get_param("rule.subrules[0].count"),
+            Some(ParamValue::Int(3))
+        );
 
         // With a model attached its parameters appear under `model.` and are
         // written through the validating, rolling-back model path.
@@ -676,12 +788,25 @@ mod tests {
         g3.attach_model(Box::new(model)).unwrap();
         let descs = g3.params();
         assert!(descs.iter().any(|d| d.key == "model.p0"));
-        assert!(descs.iter().all(|d| d.key.starts_with("model.")), "empty rule, only model keys");
+        assert!(
+            descs.iter().all(|d| d.key.starts_with("model.")),
+            "empty rule, only model keys"
+        );
         assert_eq!(g3.get_param("model.p0"), Some(ParamValue::Float(0.3)));
         g3.set_param("model.p0", ParamValue::Float(0.4)).unwrap();
         assert_eq!(g3.get_param("model.p0"), Some(ParamValue::Float(0.4)));
-        assert!(g3.set_param("model.p0", ParamValue::Float(7.0)).is_err(), "out of the model's bounds");
-        assert_eq!(g3.get_param("model.p0"), Some(ParamValue::Float(0.4)), "refused write rolled back");
-        assert!(g3.set_param("model.seed", ParamValue::Int(5)).is_err(), "read-only model key");
+        assert!(
+            g3.set_param("model.p0", ParamValue::Float(7.0)).is_err(),
+            "out of the model's bounds"
+        );
+        assert_eq!(
+            g3.get_param("model.p0"),
+            Some(ParamValue::Float(0.4)),
+            "refused write rolled back"
+        );
+        assert!(
+            g3.set_param("model.seed", ParamValue::Int(5)).is_err(),
+            "read-only model key"
+        );
     }
 }

@@ -20,6 +20,7 @@
 mod chunking;
 pub mod config;
 pub mod ensemble;
+pub mod explore;
 pub mod external;
 pub mod grid1d;
 pub mod grid2d;
