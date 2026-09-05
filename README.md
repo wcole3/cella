@@ -249,6 +249,8 @@ The egui GUI (launched with `--gui`) provides:
 | [Library Documentation](docs/lib.md) | Architecture, module reference, rule system, serialisation, threading |
 | [Application Documentation](docs/app.md) | CLI usage, GUI workbench tour, editing, layers, Explore tab, configuration guide |
 | [Explore Guide](docs/explore.md) | Ensembles, evolution and MAP-Elites for any rule or model; genes, metrics, drivers, CLI, honest reading of results |
+| [Primer: Monte Carlo](docs/primer-monte-carlo.md) | Plain-language: why run a simulation many times, probability maps, Brier score, particle filters, seeds |
+| [Primer: Genetic Algorithms](docs/primer-genetic-algorithms.md) | Plain-language: populations, selection, crossover, mutation, what goes wrong, novelty search and MAP-Elites |
 | [Performance Review](docs/performance.md) | Engine internals, optimizations, known issues, recommendations, Hashlife notes |
 
 ### Generating Rust API Docs
@@ -278,6 +280,8 @@ cella/
 │   ├── lib.md              # Library reference
 │   ├── app.md              # Application guide
 │   ├── explore.md          # Ensembles / evolution / illumination guide
+│   ├── primer-monte-carlo.md          # Beginner primer
+│   ├── primer-genetic-algorithms.md   # Beginner primer
 │   └── performance.md      # Performance review & roadmap
 ├── src/                    # Binary crate
 │   ├── main.rs             # Entry point (CLI menu / --gui)

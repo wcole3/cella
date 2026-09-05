@@ -17,3 +17,4 @@ validation/.venv/
 .superpowers/
 .mcp.json
 __pycache__/
+.firecrawl/

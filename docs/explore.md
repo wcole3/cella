@@ -11,6 +11,11 @@ wildfire model. Nothing in the `explore` module knows a model by name. The
 wildfire model is used as the worked example because it is the one shipped
 with the repo and the one with real data behind it (`validation/`).
 
+New to the words *Monte Carlo*, *particle filter*, *genetic algorithm* or
+*MAP-Elites*? Two short primers explain them from scratch:
+[primer-monte-carlo.md](primer-monte-carlo.md) and
+[primer-genetic-algorithms.md](primer-genetic-algorithms.md).
+
 ## 1. Why one run is not enough
 
 A single run is one roll of the dice with one guess at the knobs. Change

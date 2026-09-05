@@ -22,7 +22,7 @@ The library is designed with a focus on:
 | `external` | `ExternalModel` plugin trait, `ChunkCtx`, `ModelEvent`, `GridView`, `ParamDesc`/`ParamKind`/`ParamValue` — pluggable transition models |
 | `rng` | `Rng` (SplitMix64), `mix`, `cell_rand(seed, step, idx, stream)`, `STREAM_RULE`, `STREAM_FILL` — the one source of randomness |
 | `tunables` | one key grammar over every knob: `rule.subrules[i].field` and `model.key` as `ParamDesc`s, `Grid*::{params, get_param, set_param}` |
-| `explore` | ensembles, evolution and illumination for any grid: `sim` (`Sim`), `metrics`, `genome`, `driver`, `ensemble`, `evolve`, `archive` — guide in [explore.md](explore.md) |
+| `explore` | ensembles, evolution and illumination for any grid: `sim` (`Sim`), `metrics`, `genome`, `driver`, `ensemble`, `evolve`, `archive` — guide in [explore.md](explore.md); primers: [primer-monte-carlo.md](primer-monte-carlo.md), [primer-genetic-algorithms.md](primer-genetic-algorithms.md) |
 | `wildfire` | `WildfireModel` — stochastic Alexandridis-style wildfire spread, the first `ExternalModel`; `wildfire::driver::WildfireDriver`, the worked example of a `MemberDriver` |
 | `wind_field` | `mass_consistent` terrain wind downscaling for the wildfire model |
 | `chunking` (private) | `split_chunks` — carves the output buffers into disjoint per-worker slices |
