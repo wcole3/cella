@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 464" role="img" aria-labelledby="e35-title e35-desc">
+<title id="e35-title">E35 prior width: narrow, broad and very broad</title>
+<desc id="e35-desc">Dot strip per fire of mean forecast IoU under a narrow, the standard broad, and a very broad prior, against the E33 noise band and the Circle null.</desc>
+<defs><style>@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<line x1="200" y1="56" x2="200" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="200.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.3</text>
+<line x1="380" y1="56" x2="380" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="380.0000000000001" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.4</text>
+<line x1="560" y1="56" x2="560" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="560.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.5</text>
+<line x1="740" y1="56" x2="740" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="740.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.6</text>
+<line x1="920" y1="56" x2="920" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="920.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.7</text>
+<text x="560" y="408" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" letter-spacing="0.10em">MEAN ONE-WINDOW-AHEAD CONSENSUS IOU</text>
+<text x="184" y="84" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Bear</text>
+<rect x="495.6" y="70" width="53.2" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="522.2" y1="68" x2="522.2" y2="92" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="633.5,73 640.5,80 633.5,87 626.5,80" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="454.0" cy="80" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="543.5" y="75" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="136" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Brattain</text>
+<rect x="401.1" y="122" width="13.8" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="408.0" y1="120" x2="408.0" y2="144" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="469.2,125 476.2,132 469.2,139 462.2,132" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="394.1" cy="132" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="401.2" y="127" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="188" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Buck</text>
+<rect x="652.3" y="174" width="140.3" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="722.4" y1="172" x2="722.4" y2="196" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="866.5,177 873.5,184 866.5,191 859.5,184" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="773.9" cy="184" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="760.8" y="179" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="240" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Chimney</text>
+<rect x="420.6" y="226" width="42.2" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="441.7" y1="224" x2="441.7" y2="248" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="329.1,229 336.1,236 329.1,243 322.1,236" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="434.6" cy="236" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="434.3" y="231" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="292" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Ferguson*</text>
+<rect x="265.1" y="278" width="26.8" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="278.5" y1="276" x2="278.5" y2="300" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="330.7,281 337.7,288 330.7,295 323.7,288" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="277.3" cy="288" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="285.7" y="283" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="344" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Pier*</text>
+<rect x="617.2" y="330" width="11.0" height="20" fill="rgba(45,49,66,0.08)"/>
+<line x1="622.7" y1="328" x2="622.7" y2="352" stroke="#2d3142" stroke-width="1.2"/>
+<polygon points="665.8,333 672.8,340 665.8,347 658.8,340" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+<circle cx="624.7" cy="340" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<rect x="597.9" y="335" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<line x1="32" y1="428" x2="968" y2="428" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+<line x1="118" y1="432" x2="118" y2="448" stroke="#2d3142" stroke-width="1.2"/><rect x="110" y="434" width="16" height="12" fill="rgba(45,49,66,0.08)"/>
+<text x="132" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >broad prior: E33 mean ±1 sd</text>
+<circle cx="355" cy="440" r="5" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1.2"/>
+<text x="369" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >narrow prior</text>
+<rect x="482" y="435" width="10" height="10" fill="rgba(79,93,117,0.20)" stroke="#4f5d75"/>
+<text x="501" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >very broad prior</text>
+<polygon points="647,433 654,440 647,447 640,440" fill="#f5f5f5" stroke="#2d3142"/>
+<text x="661" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >Circle null</text>
+</svg>
