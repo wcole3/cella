@@ -54,29 +54,9 @@ const STREAM_DIST_B: u64 = 3;
 /// RNG stream for the landing-angle jitter.
 const STREAM_ANGLE: u64 = 4;
 
-#[inline]
-fn mix(mut z: u64) -> u64 {
-    // SplitMix64 finalizer (Steele et al.); full-avalanche integer mixer.
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
-/// Stateless counter-based uniform draw in `[0, 1)`.
-///
-/// The value depends only on the four inputs, never on call order, thread
-/// count, or chunk layout — the property that makes stochastic runs
-/// snapshot-testable. Distinct `stream` values give independent draws for the
-/// same cell and step.
-#[inline]
-pub fn cell_rand(seed: u64, step: u64, idx: u64, stream: u64) -> f32 {
-    let z = mix(seed
-        ^ mix(step.wrapping_mul(0x9E37_79B9_7F4A_7C15))
-        ^ mix(idx.wrapping_mul(0xC2B2_AE3D_27D4_EB4F))
-        ^ stream.wrapping_mul(0x1656_67B1_9E37_79F9));
-    // Top 24 bits -> f32 in [0, 1) with a full mantissa.
-    ((z >> 40) as f32) * (1.0 / (1u64 << 24) as f32)
-}
+/// Stateless counter-based uniform draw in `[0, 1)`; lives in [`crate::rng`] and is
+/// re-exported here because the wildfire model was its first user.
+pub use crate::rng::cell_rand;
 
 /// One fuel class: a cell type name plus its flammability multiplier.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

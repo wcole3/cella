@@ -23,6 +23,7 @@ pub mod ensemble;
 pub mod external;
 pub mod grid1d;
 pub mod grid2d;
+pub mod rng;
 pub mod rules;
 pub mod state;
 pub mod threads;
