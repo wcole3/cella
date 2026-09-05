@@ -61,4 +61,5 @@ Research notes: [why fires slow down, what wind a fire feels, what suppression d
 | E34 | [operator ablation: immigrants, σ, β, crossover](36-e34-operator-ablation.md) | finding: plateau; keep defaults | all six incl. holdout | 38 of 54 cells ties; all runs end 100 % contained; crossover 0.5 +0.027 Bear (one seed) | Round 5 |
 | E35 | [prior width: narrow / broad / very broad](37-e35-prior-width.md) | finding: never narrow the prior | all six incl. holdout | narrow prior −0.037 on Bear; very broad a tie on five fires, better Brier on four | Round 5 |
 | E36 | [fit the first three days with a GA, then forecast](38-e36-offline-fit-versus-filter.md) | finding: the filter wins everywhere | all six incl. holdout | filter beats the fitted genome by 0.025–0.104 on forecast days; fits hit the box edges | Round 5 |
+| E37 | [illuminate the fire model: growth × elongation reachability](39-e37-illuminate-the-fire-model.md) | finding: wedge; 3 fires unreachable | all six incl. holdout | model elongated only while small; Brattain/Ferguson/Pier shapes outside the reachable set; wind = speed knob not shape knob | Round 5 |
 
