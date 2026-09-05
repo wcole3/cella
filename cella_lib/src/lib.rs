@@ -47,7 +47,10 @@ pub use state::{GridState, grid2d_to_json};
 pub use wind_field::{MassConsistentOptions, WindField, mass_consistent};
 // Re-exports for ergonomic public API
 pub use types::{CellState, CellType, INACTIVE};
-pub use wildfire::{FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams};
+pub use wildfire::{
+    FuelClass, SpottingParams, WeatherWindow, WildfireDriver, WildfireEnv, WildfireModel,
+    WildfireParams,
+};
 
 #[cfg(test)]
 mod tests {

@@ -54,6 +54,9 @@ const STREAM_DIST_B: u64 = 3;
 /// RNG stream for the landing-angle jitter.
 const STREAM_ANGLE: u64 = 4;
 
+pub mod driver;
+pub use driver::{WeatherWindow, WildfireDriver};
+
 /// Stateless counter-based uniform draw in `[0, 1)`; lives in [`crate::rng`] and is
 /// re-exported here because the wildfire model was its first user.
 pub use crate::rng::cell_rand;
@@ -235,6 +238,16 @@ impl WildfireModel {
 
     fn burned_name(&self) -> &str {
         self.params.burned_name.as_deref().unwrap_or("BurnedOut")
+    }
+
+    /// The cell type of a cell that is on fire (`burning_name`, default "Burning").
+    pub fn burning_type(&self) -> CellType {
+        CellType::new(self.burning_name())
+    }
+
+    /// The cell type of a cell that has burned out (`burned_name`, default "BurnedOut").
+    pub fn burned_type(&self) -> CellType {
+        CellType::new(self.burned_name())
     }
 
     /// `p_base` for a cell of type `t` at `idx` (0.0 for non-fuel).

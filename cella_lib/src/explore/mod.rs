@@ -27,10 +27,14 @@
 //! [`genome`] for how knobs become genes, [`metrics`] for how a run is
 //! scored, and the two engines.
 
+pub mod driver;
+pub mod ensemble;
 pub mod genome;
 pub mod metrics;
 pub mod sim;
 
+pub use driver::{Forcing, MemberDriver, MemberState};
+pub use ensemble::{AssimilationReport, Ensemble, EnsembleConfig, Member};
 pub use genome::{Gene, GeneKind, GeneSpace, GeneSpec, Genome, Scale};
 pub use metrics::{Fitness, Goal, MaskScore, Metric, Objective, When};
 pub use sim::Sim;
