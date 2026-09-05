@@ -339,7 +339,7 @@ def e38_immreset():
     if rows is None or noise is None or not base:
         return
     W, H = 1000, 464
-    x0, x1, lo, hi = 200, 920, -0.06, 0.10
+    x0, x1, lo, hi = 200, 920, -0.06, 0.12
     sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
     body = []
     for v in (-0.05, 0.0, 0.05, 0.10):

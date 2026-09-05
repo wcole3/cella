@@ -39,4 +39,45 @@ experiment.
 
 ## Round 5 conclusions → what to do next
 
-_(filled in as the experiments land)_
+1. **The noise floor is small and now known** (E33): sd ≤ 0.015 on five
+   fires, 0.039 on Buck. Round 4's single-run comparisons were mostly
+   safe; E28's Bear gain was not (E31), and this round's bar catches that
+   class of claim.
+2. **32 members is the knee** (E32). Eight is clearly too few; past 32
+   only Buck's IoU and everyone's Brier keep improving. Use 64–128 when
+   the probability map is the product.
+3. **The filter is on an operator plateau** (E34). Immigrants, σ, β and
+   crossover within a factor of two are ties on most fires; only Ferguson,
+   whose answer sits at the prior's edge, punishes added genome noise.
+   Crossover 0.5 is the one setting worth replicating. Keep the defaults.
+4. **Never narrow the prior** (E35). An "informed" ±25 % prior lost 0.037
+   on Bear; a very broad prior was a tie with better calibration. The
+   filter recovers from wide, not from narrow.
+5. **Learning as it burns beats fitting the start** (E36), on every fire
+   by 0.025–0.104. Three-day fits drive knobs to the box edges. Offline
+   fitting is retired as a forecaster; a fitted *start* for the filter is
+   the one hybrid worth a test (Ferguson's first week).
+6. **Three of six fires are outside what the model can draw** (E37). The
+   reachable growth × elongation region is a wedge: elongated only while
+   small. Brattain, Ferguson and Pier are big and elongated; wind in this
+   kernel changes speed, not shape. This converts E12/E19 into an
+   acceptance test for the E30 kernel refit: after it, the observed dots
+   must fall inside the shaded region.
+7. **The filter's one real failure mode is lock-in** (E33, E34, E38):
+   every run ends with the population contained and a flat tail, and one
+   seed in ~30 freezes early enough to lose 0.06–0.10. `immigrant_reset`
+   repairs it (+0.105 on the locked seed, ties elsewhere) at a small Brier
+   cost where the fire really stopped. Kept as an option; **E39** should
+   gate the reset on the area ratio so it fires only when the population
+   has stopped and the fire has not.
+
+**Method lessons for `cella_lib::explore` users.** Measure the noise floor
+first (five seeds is enough). Judge every delta against it. Put the prior
+wide. Prefer the filter to an offline fit when observations arrive over
+time. Use MAP-Elites with no objective as a reachability test before
+tuning anything. Watch for state the population cannot leave.
+
+**Next**, in order: E30 kernel wind-rate refit with E37's map as the
+acceptance test; E39 area-ratio-gated immigrant reset; replicate crossover
+0.5 over five seeds; the ICS-209 containment check and a fuel term in the
+containment operator (from Round 4).

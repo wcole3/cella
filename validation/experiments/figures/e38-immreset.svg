@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 464" role="img" aria-labelledby="e38-title e38-desc">
+<title id="e38-title">E38 immigrant reset: change per seed</title>
+<desc id="e38-desc">Dot strip per fire of the change in mean forecast IoU when immigrants start with a fresh driver state, one dot per matched seed, against the E33 noise band.</desc>
+<defs><style>@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<line x1="240" y1="56" x2="240" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8" stroke-opacity="1"/>
+<text x="240.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >-0.05</text>
+<line x1="440" y1="56" x2="440" y2="376" stroke="#2d3142" stroke-width="1.2" stroke-opacity="0.4"/>
+<text x="440.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.00</text>
+<line x1="640" y1="56" x2="640" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8" stroke-opacity="1"/>
+<text x="640.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.05</text>
+<line x1="840" y1="56" x2="840" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8" stroke-opacity="1"/>
+<text x="840.0" y="392" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >+0.10</text>
+<text x="560" y="408" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" letter-spacing="0.10em">RESET MINUS E33 TWIN, MEAN CONSENSUS IOU, PER SEED</text>
+<text x="184" y="84" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Bear</text>
+<rect x="380.9" y="70" width="118.3" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="443.0" cy="80" r="5" fill="#f5f5f5"/><circle cx="443.0" cy="80" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="511.5" cy="80" r="5" fill="#f5f5f5"/><circle cx="511.5" cy="80" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="321.2" cy="80" r="5" fill="#f5f5f5"/><circle cx="321.2" cy="80" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="608.7" cy="80" r="5" fill="#f5f5f5"/><circle cx="608.7" cy="80" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="416.2" cy="80" r="5" fill="#f5f5f5"/><circle cx="416.2" cy="80" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="136" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Brattain</text>
+<rect x="424.7" y="122" width="30.6" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="458.6" cy="132" r="5" fill="#f5f5f5"/><circle cx="458.6" cy="132" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="442.4" cy="132" r="5" fill="#f5f5f5"/><circle cx="442.4" cy="132" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="392.6" cy="132" r="5" fill="#f5f5f5"/><circle cx="392.6" cy="132" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="438.8" cy="132" r="5" fill="#f5f5f5"/><circle cx="438.8" cy="132" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="413.7" cy="132" r="5" fill="#f5f5f5"/><circle cx="413.7" cy="132" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="188" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Buck</text>
+<rect x="284.1" y="174" width="311.7" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="334.7" cy="184" r="5" fill="#f5f5f5"/><circle cx="334.7" cy="184" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="525.8" cy="184" r="5" fill="#f5f5f5"/><circle cx="525.8" cy="184" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="417.0" cy="184" r="5" fill="#f5f5f5"/><circle cx="417.0" cy="184" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="860.8" cy="184" r="5" fill="#f5f5f5"/><circle cx="860.8" cy="184" r="5" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="860.7600257822088" y="170" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >BUCK SEED 3: +0.105</text>
+<circle cx="368.4" cy="184" r="5" fill="#f5f5f5"/><circle cx="368.4" cy="184" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="240" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Chimney</text>
+<rect x="393.2" y="226" width="93.7" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="397.3" cy="236" r="5" fill="#f5f5f5"/><circle cx="397.3" cy="236" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="428.4" cy="236" r="5" fill="#f5f5f5"/><circle cx="428.4" cy="236" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="457.2" cy="236" r="5" fill="#f5f5f5"/><circle cx="457.2" cy="236" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="470.3" cy="236" r="5" fill="#f5f5f5"/><circle cx="470.3" cy="236" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="511.0" cy="236" r="5" fill="#f5f5f5"/><circle cx="511.0" cy="236" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="292" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Ferguson*</text>
+<rect x="410.2" y="278" width="59.6" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="400.5" cy="288" r="5" fill="#f5f5f5"/><circle cx="400.5" cy="288" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="444.1" cy="288" r="5" fill="#f5f5f5"/><circle cx="444.1" cy="288" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="351.3" cy="288" r="5" fill="#f5f5f5"/><circle cx="351.3" cy="288" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="481.1" cy="288" r="5" fill="#f5f5f5"/><circle cx="481.1" cy="288" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="416.0" cy="288" r="5" fill="#f5f5f5"/><circle cx="416.0" cy="288" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<text x="184" y="344" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="end" >Pier*</text>
+<rect x="427.8" y="330" width="24.5" height="20" fill="rgba(45,49,66,0.08)"/>
+<circle cx="380.2" cy="340" r="5" fill="#f5f5f5"/><circle cx="380.2" cy="340" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="417.8" cy="340" r="5" fill="#f5f5f5"/><circle cx="417.8" cy="340" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="385.8" cy="340" r="5" fill="#f5f5f5"/><circle cx="385.8" cy="340" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="409.6" cy="340" r="5" fill="#f5f5f5"/><circle cx="409.6" cy="340" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<circle cx="454.4" cy="340" r="5" fill="#f5f5f5"/><circle cx="454.4" cy="340" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75" stroke-width="1"/>
+<line x1="32" y1="428" x2="968" y2="428" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+<circle cx="118" cy="440" r="5" fill="rgba(79,93,117,0.20)" stroke="#4f5d75"/>
+<text x="132" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >one seed, reset minus its E33 twin</text>
+<rect x="398" y="434" width="16" height="12" fill="rgba(45,49,66,0.08)"/>
+<text x="418" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >±1 sd (E33)</text>
+<circle cx="529" cy="440" r="5" fill="rgba(235,108,54,0.15)" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="543" y="444" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >the seed that locked in (E33)</text>
+</svg>
