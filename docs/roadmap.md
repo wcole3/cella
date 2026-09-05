@@ -875,7 +875,9 @@ engine (`validation/experiments/33-e31-generic-engine-replication.md`).
 open a window; see §6):
 
 1. Every shortcut in `?`, once with a `TextEdit` focused (nothing should
-   fire) and once without.
+   fire) and once without. Every toolbar icon draws as a symbol, not an
+   empty box (the fit and panel icons were boxes in the first build; a test
+   now checks each icon against egui's bundled fonts).
 2. **Max** speed: the status bar's steps/s climbs well above the slider's
    1000 and Pause still responds.
 3. `F` on `configs/2d_large_moore_256.json`: the whole grid fits.

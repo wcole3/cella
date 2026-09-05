@@ -123,7 +123,7 @@ disagree. Press `?` in the app for the same list.
 | Speed slider | Steps per second, 1–1000 on a log scale | — |
 | Max | Ignore the slider; as many steps per frame as fit the time budget | — |
 | − / value / + | Zoom out / set pixels per cell / zoom in | `−`, `+` or `=` |
-| ⤢ | Zoom to fit the grid in the viewport | `F` |
+| ⛶ | Zoom to fit the grid in the viewport | `F` |
 | ↺ | Reset to the initial state | `Ctrl+R` |
 | 🎞 | Export a GIF (opens the Edit tab's Export section) | `Ctrl+E` |
 | 💾 | Save the current state as JSON | `Ctrl+S` |

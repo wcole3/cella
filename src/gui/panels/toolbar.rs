@@ -12,9 +12,41 @@ use crate::gui::shortcuts::tooltip;
 use crate::gui::state::Pacing;
 use egui::Context;
 
+/// The toolbar's icons. The proportional font family egui ships with (Ubuntu,
+/// Noto Emoji, emoji-icon-font) lacks many box and arrow symbols, and a glyph
+/// it cannot draw shows as an empty rectangle; icon buttons therefore render
+/// in the monospace family, whose Hack font fills most of the gaps. A test
+/// checks every icon here against those fonts.
+const ICON_PAUSE: &str = "\u{23F8}";
+const ICON_PLAY: &str = "\u{25B6}";
+const ICON_STEP: &str = "\u{23ED}";
+const ICON_RUN_TO: &str = "\u{23E9}";
+const ICON_ZOOM_OUT: &str = "\u{2212}";
+const ICON_FIT: &str = "\u{26F6}";
+const ICON_RESET: &str = "\u{21BA}";
+const ICON_SAVE: &str = "\u{1F4BE}";
+const ICON_LEFT: &str = "\u{25E7}";
+const ICON_RIGHT: &str = "\u{25E8}";
+const ICON_HELP: &str = "?";
+
+#[cfg(test)]
+const ICONS: [&str; 11] = [
+    ICON_PAUSE,
+    ICON_PLAY,
+    ICON_STEP,
+    ICON_RUN_TO,
+    ICON_ZOOM_OUT,
+    ICON_FIT,
+    ICON_RESET,
+    ICON_SAVE,
+    ICON_LEFT,
+    ICON_RIGHT,
+    ICON_HELP,
+];
+
 /// A toolbar button: an icon glyph, a tooltip with its shortcut, one action.
 fn icon_button(ui: &mut egui::Ui, ctx: &Context, glyph: &str, label: &str, action: Action) -> bool {
-    ui.button(glyph)
+    ui.button(egui::RichText::new(glyph).monospace())
         .on_hover_text(tooltip(ctx, label, &action))
         .clicked()
 }
@@ -25,14 +57,14 @@ impl CellaApp {
         let mut pending: Vec<Action> = Vec::new();
         ui.horizontal(|ui| {
             let (glyph, label) = if self.playback.playing {
-                ("\u{23F8}", "Pause")
+                (ICON_PAUSE, "Pause")
             } else {
-                ("\u{25B6}", "Play")
+                (ICON_PLAY, "Play")
             };
             if icon_button(ui, ctx, glyph, label, Action::TogglePlay) {
                 pending.push(Action::TogglePlay);
             }
-            if icon_button(ui, ctx, "\u{23ED}", "Step once", Action::Step) {
+            if icon_button(ui, ctx, ICON_STEP, "Step once", Action::Step) {
                 pending.push(Action::Step);
             }
             ui.add(
@@ -44,7 +76,7 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{23E9}",
+                ICON_RUN_TO,
                 "Run ahead by the steps shown",
                 Action::RunTo { steps: 0 },
             ) {
@@ -80,7 +112,7 @@ impl CellaApp {
             }
             ui.separator();
 
-            if icon_button(ui, ctx, "\u{2212}", "Zoom out", Action::ZoomOut) {
+            if icon_button(ui, ctx, ICON_ZOOM_OUT, "Zoom out", Action::ZoomOut) {
                 pending.push(Action::ZoomOut);
             }
             let mut scale = self.view.scale;
@@ -97,7 +129,7 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{2922}",
+                ICON_FIT,
                 "Zoom to fit the whole grid",
                 Action::ZoomToFit,
             ) {
@@ -108,7 +140,7 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{21BA}",
+                ICON_RESET,
                 "Reset to the initial state",
                 Action::Reset,
             ) {
@@ -127,7 +159,7 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{1F4BE}",
+                ICON_SAVE,
                 "Save the current state as JSON",
                 Action::SaveFinalState,
             ) {
@@ -138,7 +170,7 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{25E7}",
+                ICON_LEFT,
                 "Show or hide the left panel",
                 Action::ToggleLeft,
             ) {
@@ -147,13 +179,19 @@ impl CellaApp {
             if icon_button(
                 ui,
                 ctx,
-                "\u{25E8}",
+                ICON_RIGHT,
                 "Show or hide the workbench (rule, model, explore)",
                 Action::ToggleRight,
             ) {
                 pending.push(Action::ToggleRight);
             }
-            if icon_button(ui, ctx, "?", "Keyboard shortcuts", Action::ToggleShortcuts) {
+            if icon_button(
+                ui,
+                ctx,
+                ICON_HELP,
+                "Keyboard shortcuts",
+                Action::ToggleShortcuts,
+            ) {
                 pending.push(Action::ToggleShortcuts);
             }
         });
@@ -199,7 +237,41 @@ impl CellaApp {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::gui::sim::tests::test_app;
+
+    /// Every toolbar icon must exist in the monospace family egui ships with
+    /// (Hack + Ubuntu + Noto Emoji + emoji-icon-font), or it draws as a box.
+    /// `glyph_width` is used rather than `has_glyph`, which in egui 0.35
+    /// reports `false` for any character the family's *first* font owns.
+    #[test]
+    fn every_toolbar_icon_is_in_the_default_fonts() {
+        use egui::epaint::text::{FontDefinitions, Fonts, FontsView, TextOptions};
+        let mut all = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let mut fonts = all.with_pixels_per_point(1.0);
+        let drawable = |fonts: &mut FontsView<'_>, family: egui::FontFamily, s: &str| {
+            let id = egui::FontId::new(14.0, family);
+            s.chars().all(|c| fonts.glyph_width(&id, c) > 0.0)
+        };
+        let mono = egui::FontFamily::Monospace;
+        let prop = egui::FontFamily::Proportional;
+        assert!(
+            drawable(&mut fonts, mono.clone(), "A?"),
+            "sanity: letters draw"
+        );
+        for icon in ICONS {
+            assert!(
+                drawable(&mut fonts, mono.clone(), icon),
+                "toolbar icon {icon:?} has no glyph"
+            );
+        }
+        // The old fit glyph is the reason this test exists.
+        assert!(!drawable(&mut fonts, mono, "\u{2922}"));
+        // The "remove axis" glyph in the Explore tab is drawn proportionally.
+        assert!(drawable(&mut fonts, prop.clone(), "\u{2716}"));
+        // The panel glyphs exist only in Hack, so they need the monospace family.
+        assert!(!drawable(&mut fonts, prop, "\u{25E7}"));
+    }
 
     #[test]
     fn the_toolbar_draws_headless_and_only_queues_actions() {

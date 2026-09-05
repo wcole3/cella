@@ -499,7 +499,7 @@ impl CellaApp {
                                     .range(2..=32)
                                     .prefix("bins "),
                             );
-                            if n_axes > 1 && ui.small_button("✕").clicked() {
+                            if n_axes > 1 && ui.small_button("\u{2716}").clicked() {
                                 remove = Some(i);
                             }
                         });
@@ -690,7 +690,7 @@ impl CellaApp {
                 }
             }
             ui.small(format!(
-                "→ {}   ↑ {}",
+                "x: {}   y: {}",
                 snap.labels.first().map_or("", String::as_str),
                 snap.labels.get(1).map_or("", String::as_str)
             ));
