@@ -21,14 +21,16 @@ use std::time::{Duration, Instant};
 
 use cella_lib::explore::{
     ArchiveSnapshot, AssimilationReport, DescriptorSpec, Ensemble, EnsembleConfig, Evolution,
-    EvolveConfig, GeneSpec, GenerationReport, Goal, MaskScore, Metric, Objective, Scale, Search,
-    Sim, When,
+    EvolveConfig, GeneSpace, GeneSpec, GenerationReport, Genome, Goal, MaskScore, Metric,
+    Objective, Scale, Search, Sim, When,
 };
+use cella_lib::rng::Rng;
 use cella_lib::{CellType, GridState, ParamDesc, ParamKind, ParamValue};
 use lasso2::Spur;
 
 use super::app::{CellaApp, Dim};
 use super::layers::ProbabilityMap;
+use super::state::RULE_UNDO_CAP;
 
 /// Which engine the tab is set up for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -889,6 +891,7 @@ impl CellaApp {
             sim.set_param(k, v.clone())
                 .map_err(|e| format!("'{k}': {e}"))?;
         }
+        self.push_rule_undo(pairs.iter().map(|(k, _)| k.as_str()));
         match sim {
             Sim::D1(g) => self.scenario.d1 = Some(g),
             Sim::D2(g) => self.scenario.d2 = Some(g),
@@ -896,6 +899,187 @@ impl CellaApp {
         self.mirror_params_into_snapshot(pairs);
         self.refresh_rule_editor_from_current();
         Ok(())
+    }
+
+    /// Remember the current value of each key so Undo rule can restore it.
+    /// Keys the grid does not know are skipped.
+    fn push_rule_undo<'a>(&mut self, keys: impl Iterator<Item = &'a str>) {
+        let Some((sim, _)) = self.template_sim() else {
+            return;
+        };
+        let before: Vec<(String, ParamValue)> = keys
+            .filter_map(|k| sim.get_param(k).map(|v| (k.to_string(), v)))
+            .collect();
+        if before.is_empty() {
+            return;
+        }
+        self.edit.rule_undo.push(before);
+        if self.edit.rule_undo.len() > RULE_UNDO_CAP {
+            self.edit.rule_undo.remove(0);
+        }
+    }
+
+    /// Every knob the grid lets us write, as genes with their declared bounds.
+    fn all_knob_space(&self, sim: &Sim) -> Result<GeneSpace, String> {
+        let specs: Vec<GeneSpec> = sim
+            .params()
+            .into_iter()
+            .filter(|d| !d.read_only)
+            .map(|d| GeneSpec::new(d.key))
+            .collect();
+        if specs.is_empty() {
+            return Err("this simulation has no adjustable knobs".into());
+        }
+        GeneSpace::resolve(&specs, sim, &[], &[]).map_err(|e| e.to_string())
+    }
+
+    /// Write a whole genome through the gene space (which repairs `limit`
+    /// against `count`), all or nothing, and record the undo.
+    fn apply_space_genome(
+        &mut self,
+        space: &GeneSpace,
+        genome: &Genome,
+    ) -> Result<Vec<(String, ParamValue)>, String> {
+        let Some((mut sim, _)) = self.template_sim() else {
+            return Err("no grid loaded".into());
+        };
+        space.apply(&mut sim, genome).map_err(|e| e.to_string())?;
+        // Read back what actually landed (after repair) for the snapshot.
+        let landed: Vec<(String, ParamValue)> = space
+            .genes()
+            .iter()
+            .filter_map(|g| sim.get_param(&g.key).map(|v| (g.key.clone(), v)))
+            .collect();
+        self.push_rule_undo(landed.iter().map(|(k, _)| k.as_str()));
+        match sim {
+            Sim::D1(g) => self.scenario.d1 = Some(g),
+            Sim::D2(g) => self.scenario.d2 = Some(g),
+        }
+        self.mirror_params_into_snapshot(&landed);
+        self.refresh_rule_editor_from_current();
+        Ok(landed)
+    }
+
+    /// Surprise me: random knobs, then a random fill with the same seed.
+    pub(in crate::gui) fn surprise_me(&mut self, seed: u64) {
+        if self.playback.playing {
+            self.set_status("Pause before a surprise");
+            return;
+        }
+        let Some((sim, _)) = self.template_sim() else {
+            self.set_status("Load a simulation first");
+            return;
+        };
+        let space = match self.all_knob_space(&sim) {
+            Ok(s) => s,
+            Err(e) => {
+                self.set_status(format!("Surprise me: {e}"));
+                return;
+            }
+        };
+        let genome = space.sample(&mut Rng::new(seed));
+        match self.apply_space_genome(&space, &genome) {
+            Ok(landed) => {
+                let fill_type = self
+                    .declared_types()
+                    .into_iter()
+                    .find(|t| *t != CellType::inactive());
+                if let Some(ty) = fill_type {
+                    self.push(super::actions::Action::RandomFill {
+                        density: 0.3,
+                        ty,
+                        seed,
+                        clear_first: true,
+                    });
+                }
+                self.set_status(format!("Surprise (seed {seed}): {}", pairs_text(&landed)));
+            }
+            Err(e) => self.set_status(format!("Surprise me failed: {e}")),
+        }
+    }
+
+    /// Mutate rule: nudge every knob from where it is now.
+    pub(in crate::gui) fn mutate_rule(&mut self, seed: u64, sigma: f64) {
+        if self.playback.playing {
+            self.set_status("Pause before mutating the rule");
+            return;
+        }
+        let Some((sim, _)) = self.template_sim() else {
+            self.set_status("Load a simulation first");
+            return;
+        };
+        let space = match self.all_knob_space(&sim) {
+            Ok(s) => s,
+            Err(e) => {
+                self.set_status(format!("Mutate rule: {e}"));
+                return;
+            }
+        };
+        let mut genome = space.from_sim(&sim);
+        let before = genome.clone();
+        space.mutate(&mut Rng::new(seed), &mut genome, sigma.clamp(0.0, 1.0));
+        if genome == before {
+            self.set_status("Mutation left every knob unchanged; try a larger sigma");
+            return;
+        }
+        match self.apply_space_genome(&space, &genome) {
+            Ok(landed) => {
+                let changed: Vec<(String, ParamValue)> = landed
+                    .into_iter()
+                    .filter(|(k, v)| sim.get_param(k).as_ref() != Some(v))
+                    .collect();
+                self.set_status(format!("Mutated (seed {seed}): {}", pairs_text(&changed)));
+            }
+            Err(e) => self.set_status(format!("Mutate rule failed: {e}")),
+        }
+    }
+
+    /// Undo rule: restore the knob values recorded before the last change.
+    pub(in crate::gui) fn undo_rule(&mut self) {
+        if self.playback.playing {
+            self.set_status("Pause before undoing a rule change");
+            return;
+        }
+        let Some(pairs) = self.edit.rule_undo.pop() else {
+            self.set_status("Nothing to undo in the rule");
+            return;
+        };
+        let Some((mut sim, _)) = self.template_sim() else {
+            return;
+        };
+        for (k, v) in &pairs {
+            if let Err(e) = sim.set_param(k, v.clone()) {
+                self.set_status(format!("Undo rule failed at '{k}': {e}"));
+                return;
+            }
+        }
+        match sim {
+            Sim::D1(g) => self.scenario.d1 = Some(g),
+            Sim::D2(g) => self.scenario.d2 = Some(g),
+        }
+        self.mirror_params_into_snapshot(&pairs);
+        self.refresh_rule_editor_from_current();
+        self.set_status(format!("Rule restored: {}", pairs_text(&pairs)));
+    }
+
+    /// The Edit tab's fill type, or the first non-background type.
+    pub(in crate::gui) fn fill_type_or_default(&self) -> Option<CellType> {
+        let types: Vec<CellType> = self
+            .declared_types()
+            .into_iter()
+            .filter(|t| *t != CellType::inactive())
+            .collect();
+        match self.edit.fill_type {
+            Some(t) if types.contains(&t) => Some(t),
+            _ => types.first().copied(),
+        }
+    }
+
+    /// The Edit tab's seed, then bump it so the next keypress differs.
+    pub(in crate::gui) fn next_fill_seed(&mut self) -> u64 {
+        let seed = self.edit.fill_seed;
+        self.edit.fill_seed = seed.wrapping_add(1);
+        seed
     }
 
     /// Copy accepted knob values into the Reset snapshot, whichever side of
@@ -1000,6 +1184,15 @@ impl CellaApp {
             driver: None,
         }
     }
+}
+
+/// `key = value, key = value` for status lines.
+pub(in crate::gui) fn pairs_text(pairs: &[(String, ParamValue)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{k} = {}", super::panels::model::value_text(v)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The Explore tab's requests that touch the worker or the main grid.
@@ -1136,13 +1329,7 @@ impl CellaApp {
             return;
         }
         match self.apply_genome(pairs) {
-            Ok(()) => {
-                let text: Vec<String> = pairs
-                    .iter()
-                    .map(|(k, v)| format!("{k} = {}", super::panels::model::value_text(v)))
-                    .collect();
-                self.set_status(format!("Applied {what}: {}", text.join(", ")));
-            }
+            Ok(()) => self.set_status(format!("Applied {what}: {}", pairs_text(pairs))),
             Err(e) => self.set_status(format!("Could not apply {what}: {e}")),
         }
     }
@@ -1618,6 +1805,144 @@ mod tests {
         assert!(archives >= 1);
         worker.tx.send(WorkerCmd::Stop).unwrap();
         worker.join.unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn surprise_mutate_and_undo_rule_round_trip() {
+        use crate::gui::actions::Action;
+        let mut app = life_app();
+        let before: Vec<(String, ParamValue)> = app.grid_knobs().1.into_iter().collect();
+        // Surprise me changes at least one knob, leaves a valid grid, queues a fill.
+        app.apply_action(Action::SurpriseMe { seed: 7 });
+        let after = app.grid_knobs().1;
+        assert!(
+            before.iter().any(|(k, v)| after.get(k) != Some(v)),
+            "no knob changed"
+        );
+        assert_eq!(app.edit.rule_undo.len(), 1);
+        assert!(
+            app.actions
+                .iter()
+                .any(|a| matches!(a, Action::RandomFill { seed: 7, .. }))
+        );
+        app.drain_actions();
+        assert!(
+            app.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Filled")
+        );
+        // Same seed, same surprise.
+        let mut twin = life_app();
+        twin.apply_action(Action::SurpriseMe { seed: 7 });
+        twin.drain_actions();
+        assert_eq!(twin.grid_knobs().1, app.grid_knobs().1);
+        assert_eq!(
+            twin.scenario.d2.as_ref().unwrap().cells(),
+            app.scenario.d2.as_ref().unwrap().cells()
+        );
+        // Mutate nudges from the current values and stacks another undo.
+        let mid = app.grid_knobs().1;
+        app.apply_action(Action::MutateRule {
+            seed: 3,
+            sigma: 0.5,
+        });
+        assert_eq!(app.edit.rule_undo.len(), 2);
+        assert_ne!(app.grid_knobs().1, mid);
+        // Sigma 0 on a grid whose knobs sit inside their bounds changes nothing
+        // and records nothing. (After a surprise a count can sit above its
+        // neighbourhood's new size; a mutation then clamps it, which counts as
+        // a change.)
+        let mut calm = life_app();
+        calm.apply_action(Action::MutateRule {
+            seed: 3,
+            sigma: 0.0,
+        });
+        assert!(calm.edit.rule_undo.is_empty());
+        assert!(
+            calm.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("unchanged")
+        );
+        // Undo walks back: first to the surprise, then to the original.
+        app.apply_action(Action::UndoRule);
+        assert_eq!(app.grid_knobs().1, mid);
+        app.apply_action(Action::UndoRule);
+        let restored = app.grid_knobs().1;
+        for (k, v) in &before {
+            assert_eq!(restored.get(k), Some(v), "{k}");
+        }
+        // The Reset snapshot mirrors the restored knobs.
+        app.reset_to_initial();
+        for (k, v) in &before {
+            assert_eq!(app.grid_knobs().1.get(k), Some(v), "{k} after reset");
+        }
+        app.apply_action(Action::UndoRule);
+        assert!(
+            app.chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Nothing")
+        );
+        // Playing refuses all three.
+        app.playback.playing = true;
+        app.apply_action(Action::SurpriseMe { seed: 1 });
+        app.apply_action(Action::MutateRule {
+            seed: 1,
+            sigma: 0.5,
+        });
+        app.apply_action(Action::UndoRule);
+        assert!(app.edit.rule_undo.is_empty() && app.actions.is_empty());
+        app.playback.playing = false;
+        // The stack is capped.
+        for i in 0..(RULE_UNDO_CAP as u64 + 5) {
+            app.apply_action(Action::MutateRule {
+                seed: 100 + i,
+                sigma: 0.9,
+            });
+        }
+        assert!(app.edit.rule_undo.len() <= RULE_UNDO_CAP);
+        // Keyboard forms read and advance the Edit tab's seed.
+        app.edit.fill_seed = 40;
+        app.apply_action(Action::RandomFillDraft);
+        app.apply_action(Action::SurpriseMeDraft);
+        app.apply_action(Action::MutateRuleDraft);
+        assert_eq!(app.edit.fill_seed, 43);
+        assert!(
+            app.actions
+                .iter()
+                .any(|a| matches!(a, Action::SurpriseMe { seed: 41 }))
+        );
+        app.drain_actions();
+        // No grid: everything degrades to a status.
+        let mut empty = test_app();
+        empty.apply_action(Action::SurpriseMe { seed: 1 });
+        empty.apply_action(Action::MutateRule {
+            seed: 1,
+            sigma: 0.5,
+        });
+        assert!(
+            empty
+                .chrome
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Load")
+        );
+        assert!(empty.fill_type_or_default().is_none());
+        // 1D: the Wolfram code is a knob too.
+        let mut one = test_app();
+        one.load_demo_1d_rule30();
+        let code_before = one.grid_knobs().1;
+        one.apply_action(Action::SurpriseMe { seed: 9 });
+        one.drain_actions();
+        assert_ne!(one.grid_knobs().1, code_before);
+        one.apply_action(Action::UndoRule);
+        assert_eq!(one.grid_knobs().1, code_before);
     }
 
     #[test]

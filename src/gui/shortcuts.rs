@@ -72,6 +72,30 @@ pub(in crate::gui) fn shortcuts() -> Vec<Shortcut> {
             action: Action::Undo,
             while_playing: false,
         },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::COMMAND, Key::U),
+            label: "Undo the last rule change",
+            action: Action::UndoRule,
+            while_playing: false,
+        },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::NONE, Key::R),
+            label: "Random fill with the Edit tab's settings",
+            action: Action::RandomFillDraft,
+            while_playing: false,
+        },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::SHIFT, Key::R),
+            label: "Surprise me: random knobs and a random fill",
+            action: Action::SurpriseMeDraft,
+            while_playing: false,
+        },
+        Shortcut {
+            keys: KeyboardShortcut::new(Modifiers::NONE, Key::M),
+            label: "Mutate the rule a little",
+            action: Action::MutateRuleDraft,
+            while_playing: false,
+        },
     ]
 }
 

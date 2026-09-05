@@ -137,6 +137,25 @@ pub(in crate::gui) enum Action {
     SaveFinalState,
     /// Anything that touches the Explore worker or applies a found genome.
     Explore(ExploreAction),
+    // ── fun ──
+    /// Draw every knob at random within its declared bounds, then random-fill
+    /// the grid (30 % of the first non-background type) with the same seed.
+    SurpriseMe {
+        seed: u64,
+    },
+    /// Nudge every knob a little (`sigma` = share of its range).
+    MutateRule {
+        seed: u64,
+        sigma: f64,
+    },
+    /// Put the knobs back the way they were before the last Surprise me,
+    /// Mutate rule or Apply genome.
+    UndoRule,
+    /// Keyboard forms: read the Edit tab's seed, type and sigma, then advance
+    /// the seed so the next press gives something new.
+    RandomFillDraft,
+    SurpriseMeDraft,
+    MutateRuleDraft,
 }
 
 /// Most actions applied in one frame before the drain gives up; a reducer arm
@@ -316,6 +335,31 @@ impl CellaApp {
             Action::ExportGif => self.export_gif_dialog(),
             Action::SaveFinalState => self.save_final_state(),
             Action::Explore(a) => self.apply_explore_action(a),
+            Action::SurpriseMe { seed } => self.surprise_me(seed),
+            Action::MutateRule { seed, sigma } => self.mutate_rule(seed, sigma),
+            Action::UndoRule => self.undo_rule(),
+            Action::RandomFillDraft => {
+                if let Some(ty) = self.fill_type_or_default() {
+                    let seed = self.next_fill_seed();
+                    self.push(Action::RandomFill {
+                        density: self.edit.fill_density,
+                        ty,
+                        seed,
+                        clear_first: self.edit.fill_clear,
+                    });
+                }
+            }
+            Action::SurpriseMeDraft => {
+                let seed = self.next_fill_seed();
+                self.push(Action::SurpriseMe { seed });
+            }
+            Action::MutateRuleDraft => {
+                let seed = self.next_fill_seed();
+                self.push(Action::MutateRule {
+                    seed,
+                    sigma: self.edit.mutate_sigma,
+                });
+            }
         }
     }
 

@@ -37,6 +37,7 @@ impl CellaApp {
                         self.scenario.d1.as_ref().map(GridState::from_grid1d);
                     self.view.history_1d.clear();
                     self.edit.undo_stack.clear();
+                    self.edit.rule_undo.clear();
                     self.edit.current_paint_batch = None;
                     self.stats_clear_and_init();
                     self.set_status(format!("Resized 1D grid to width {}", new_w));
@@ -59,6 +60,7 @@ impl CellaApp {
                         self.scenario.d2.as_ref().map(GridState::from_grid2d);
                     self.view.history_1d.clear();
                     self.edit.undo_stack.clear();
+                    self.edit.rule_undo.clear();
                     self.edit.current_paint_batch = None;
                     self.stats_clear_and_init();
                     self.set_status(format!("Resized 2D grid to {}×{}", new_w, new_h));
@@ -76,6 +78,7 @@ impl CellaApp {
         self.scenario.initial_state = self.scenario.d2.as_ref().map(GridState::from_grid2d);
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
         self.edit.current_paint_batch = None;
         self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
@@ -97,6 +100,7 @@ impl CellaApp {
         }
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
         self.edit.current_paint_batch = None;
         self.reset_colors_for_scenario();
         self.inputs.grid_width = width;
@@ -118,6 +122,7 @@ impl CellaApp {
         }
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
         self.edit.current_paint_batch = None;
         self.reset_colors_for_scenario();
         self.inputs.grid_width = width;
@@ -135,6 +140,7 @@ impl CellaApp {
         self.scenario.initial_state = self.scenario.d2.as_ref().map(GridState::from_grid2d);
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
         self.edit.current_paint_batch = None;
         self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
@@ -152,6 +158,7 @@ impl CellaApp {
         self.scenario.initial_state = self.scenario.d2.as_ref().map(GridState::from_grid2d);
         self.view.history_1d.clear();
         self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
         self.edit.current_paint_batch = None;
         self.reset_colors_for_scenario();
         self.inputs.grid_width = w;
@@ -179,6 +186,7 @@ impl CellaApp {
             }
             self.view.history_1d.clear();
             self.edit.undo_stack.clear();
+            self.edit.rule_undo.clear();
             self.edit.current_paint_batch = None;
             self.reset_colors_for_scenario();
             self.inputs.grid_width = width;
@@ -246,6 +254,7 @@ impl CellaApp {
                             }
                             self.view.history_1d.clear();
                             self.edit.undo_stack.clear();
+                            self.edit.rule_undo.clear();
                             self.edit.current_paint_batch = None;
                             self.reset_colors_for_scenario();
                             self.update_selected_draw_type_default();
@@ -265,6 +274,7 @@ impl CellaApp {
                             }
                             self.view.history_1d.clear();
                             self.edit.undo_stack.clear();
+                            self.edit.rule_undo.clear();
                             self.edit.current_paint_batch = None;
                             self.reset_colors_for_scenario();
                             self.update_selected_draw_type_default();

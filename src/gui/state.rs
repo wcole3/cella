@@ -178,7 +178,16 @@ pub(in crate::gui) struct EditState {
     pub(in crate::gui) fill_type: Option<CellType>,
     pub(in crate::gui) fill_seed: u64,
     pub(in crate::gui) fill_clear: bool,
+    /// Knob values before each Surprise me / Mutate rule / Apply genome, newest
+    /// last, so Undo rule can walk back through them. Capped at
+    /// [`RULE_UNDO_CAP`].
+    pub(in crate::gui) rule_undo: Vec<Vec<(String, ParamValue)>>,
+    /// How far Mutate rule nudges each knob, as a share of its range.
+    pub(in crate::gui) mutate_sigma: f64,
 }
+
+/// Most rule undo entries kept.
+pub(in crate::gui) const RULE_UNDO_CAP: usize = 16;
 
 impl Default for EditState {
     fn default() -> Self {
@@ -194,6 +203,8 @@ impl Default for EditState {
             fill_type: None,
             fill_seed: 1,
             fill_clear: true,
+            rule_undo: Vec::new(),
+            mutate_sigma: 0.2,
         }
     }
 }

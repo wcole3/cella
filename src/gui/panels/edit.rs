@@ -145,6 +145,46 @@ impl CellaApp {
                 });
             }
         });
+        section(ui, "Fun", |ui| {
+            let paused = !self.playback.playing;
+            let has_grid = self.scenario.dim.is_some();
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(paused && has_grid, egui::Button::new("Surprise me"))
+                    .on_hover_text(
+                        "Roll every knob of the rule and model at random, then fill the grid \
+                         30 % with the first type. Uses the seed above; Undo rule takes it back.",
+                    )
+                    .clicked()
+                {
+                    pending.push(Action::SurpriseMeDraft);
+                }
+                if ui
+                    .add_enabled(paused && has_grid, egui::Button::new("Mutate rule"))
+                    .on_hover_text("Nudge every knob a little from where it is now")
+                    .clicked()
+                {
+                    pending.push(Action::MutateRuleDraft);
+                }
+                if ui
+                    .add_enabled(
+                        paused && !self.edit.rule_undo.is_empty(),
+                        egui::Button::new("Undo rule"),
+                    )
+                    .on_hover_text("Put the knobs back the way they were before the last change (Ctrl+U)")
+                    .clicked()
+                {
+                    pending.push(Action::UndoRule);
+                }
+            });
+            ui.add(
+                egui::Slider::new(&mut self.edit.mutate_sigma, 0.01..=1.0)
+                    .logarithmic(true)
+                    .text("Mutation size"),
+            )
+            .on_hover_text("How far a mutation moves each knob, as a share of its range");
+            ui.small("R fills, Shift+R surprises, M mutates; each press moves the seed on.");
+        });
         section(ui, "Layers", |ui| {
             let mut lines = self.view.show_grid_lines;
             if ui.checkbox(&mut lines, "Grid lines").changed() {
