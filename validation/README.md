@@ -8,7 +8,8 @@ pulled by scripts and can always be recreated.
 **New here, or non-technical? Start with [ANALYSIS.md](ANALYSIS.md)** — the
 plain-language guide to what the scores mean, what the model's current
 shortcomings are, and how to read a results table without fooling yourself.
-The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md),
+Every term used in the experiment log is defined in
+[experiments/GLOSSARY.md](experiments/GLOSSARY.md). The formal pre-registered protocol lives in [TEST_PLAN.md](TEST_PLAN.md),
 and every improvement experiment (kept and rejected) is recorded in
 [experiments/](experiments/README.md).
 
@@ -276,3 +277,16 @@ Shared prerequisite for rungs 2–4: one `isochrones → arrival-time flat
 array` rasterizer (GDAL) — build once, unlocks PT-FireSprd, GOFER, NIROPS,
 and FIRIS alike. Metric to add alongside it: arrival-time error (the
 sub-daily sources make plain IoU under-informative).
+
+## Status update (2026-09-05, night): the experiment log rewritten for a junior reader
+
+Every experiment file now has one shape (In short · Question · What we
+changed · Why we expected it to matter · How we scored it · Result with a
+"how to read it" line · What it means · Questions this raises · Verdict ·
+Later); numbers, tables and verdicts are unchanged (checked by script).
+New: [experiments/GLOSSARY.md](experiments/GLOSSARY.md); the six-fires
+table, the two-score-families note, the configuration-per-round timeline
+and a table-reading checklist in [experiments/README.md](experiments/README.md);
+the five round files share one structure; [ANALYSIS.md §5d](ANALYSIS.md)
+covers E31 and Round 5; three overview figures
+(`scripts/experiments/figures_overview.py`).

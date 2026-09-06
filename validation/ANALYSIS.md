@@ -359,6 +359,49 @@ light" behaved exactly like the fences before it: either strangled the
 fire or was ignored. The paint is right; the crew's judgement about
 where to put it is what we have not modelled.
 
+## 5d. September 5: checking the machinery itself
+
+Two more things, in plain words. Details in
+[experiments/](experiments/README.md) E31 and Round 5, and every term in
+[experiments/GLOSSARY.md](experiments/GLOSSARY.md).
+
+**The numbers came back.** The code that runs the crowd of simulations
+was rewritten so any model can use it, not just the fire. Before trusting
+it we re-ran the recorded runs through the new code. They came back
+within about a hundredth, which is the size of the dice noise. One
+earlier claim did not survive: the new stopping rule (a fire is caught
+with a chance that depends on how fast it grew yesterday) had looked a
+little better than the old fixed slow-down on one fire. Re-run, the two
+are a tie everywhere. We keep the new rule because it is a published
+mechanism that costs nothing, not because it scores higher.
+
+**Then we tested the methods, not the fire.** Six questions:
+
+- *How much is luck?* Run the same setup with five different dice and
+  the scores differ by 0.01–0.02 on five fires and 0.04 on Buck. Anything
+  smaller than that is a tie, and every claim in this round is judged
+  against it.
+- *How many runs?* 32 is enough for the yes/no map. Eight is far too
+  few. More than 32 only sharpens the probabilities.
+- *Do the learning knobs matter?* Within a factor of two, no. What moves
+  the score is whether the whole crowd has given up (every run stopped)
+  while the real fire is still growing. That happened on one seed in
+  thirty and cost it 0.1. A one-line fix (newcomers start fresh rather
+  than already stopped) repairs it. It is kept as an option, because it
+  slightly hurts fires that really have stopped.
+- *Wide or narrow starting ranges?* Wide. A narrow range built from what
+  earlier runs had learned locked Bear out of its own answer, and the
+  crowd can never leave a range it was never given.
+- *Learn day by day, or fit the first three days and extrapolate?* Learn
+  day by day, on every fire, by 0.03–0.10. A three-day fit reproduces the
+  early growth by pushing knobs to their extremes, then forecasts badly.
+- *What shapes can the fire model make at all?* We mapped every size and
+  shape it can produce with any knob setting. Small fires can be any
+  shape; big fires are always round. Brattain, Ferguson and Pier are big
+  and long, so no tuning will ever draw them. That is now the target for
+  the next model change: after it, those three fires must fall inside
+  the map.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means
