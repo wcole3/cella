@@ -1,21 +1,37 @@
 # E16 — two non-weather ways to stop: heterogeneity (a) and a containment decay (b) · (a) REJECTED, (b) KEPT — biggest gain so far
 
-_Round: Round 3 — 2026-09-02: real weather in, explosion out_
+_Round 3 (2026-09-02) · 3 seeds · calibration fires · runner `exp_stopping.py` · results `exp16_stopping.json` · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-**Question.** Weather modulation (E3, E13, E15) cannot cap the burn. What
-can? Two practices from the CA literature that are not weather:
+**In short.** Weather could not cap the burn (E3, E13, E15). Two ideas
+from the literature that are not weather: (a) make the fuel patchy, so
+the fire has a harder time percolating; (b) make p0 shrink steadily over
+days, standing in for firefighters gaining ground. Patchiness did nothing.
+The decay is the largest single gain in the log: +0.12 on Bear, +0.07 on
+Brattain, +0.14 on Buck, and for the first time the model burns about the
+right *amount*. It is a fitted knob, not physics: it says when the fire
+stops, not where, so the Circle still wins on three of four fires.
 
-- **(a) Spatial heterogeneity of flammability.** Percolation theory says a
-  patchy medium has a different, softer threshold than a uniform one, and
-  real fuel beds are patchy at 30 m. Per-cell density multiplier drawn from
-  a lognormal with mean exactly 1 (σ ∈ {0.3, 0.6, 1.0}, seeded), p0 ×{1, 1.5, 2}.
-- **(b) A containment decay.** Every observed area curve grows then
-  plateaus (ANALYSIS.md §5) and the literature attributes the plateau to
-  suppression, which this model does not have. Crude stand-in: p0 ×
-  exp(−t/τ), τ ∈ {5, 10, 20} days, p0 ×{1, 1.5, 2} so the early fire is not
-  starved.
+**Question.** Can something other than weather make the model stop at
+the right size?
 
-`exp_stopping.py`, 3 seeds, E1 (p0, dur) recipes, calibration fires.
+**What we changed.**
+
+- **(a) Spatial heterogeneity.** Per-cell density multiplier drawn from
+  a lognormal with mean exactly 1 (σ ∈ {0.3, 0.6, 1.0}, seeded), p0
+  ×{1, 1.5, 2}. Percolation theory says a patchy medium has a softer
+  threshold than a uniform one, and real fuel beds are patchy at 30 m.
+- **(b) A containment decay.** p0 × exp(−t/τ), τ ∈ {5, 10, 20} days, p0
+  ×{1, 1.5, 2} so the early fire is not starved. Every observed area
+  curve grows then plateaus (ANALYSIS §5), and the literature attributes
+  the plateau to suppression, which this model does not have.
+
+E1 recipe otherwise.
+
+**How we scored it.** Mean IoU with area ratio in brackets, 3 seeds, four
+calibration fires; also final-day IoU and arrival error for the best
+decay run.
+
+**Result.**
 
 | variant | Bear | Brattain | Buck | Chimney |
 |---|---|---|---|---|
@@ -31,8 +47,10 @@ can? Two practices from the CA literature that are not weather:
 | contain τ20 ×1.5 | 0.323 (×2.8) | 0.350 (×3.3) | 0.470 (×1.0) | **0.444 (×2.3)** |
 | Circle | 0.541 | 0.450 | 0.670 | 0.372 |
 
-(mean IoU, area ratio in brackets; heterogeneity rows at other multipliers
-were all worse and are in `exp16_stopping.json`.)
+How to read it: mean IoU with the area ratio in brackets; "×2" in a
+variant name is the p0 multiplier. Bold is the best row per fire.
+Heterogeneity rows at other multipliers were all worse and are in the
+results file.
 
 Final-day IoU and arrival error, control → best containment run:
 
@@ -43,28 +61,39 @@ Final-day IoU and arrival error, control → best containment run:
 | Buck | 0.345 → **0.510** | 57 h → 82 h |
 | Chimney | 0.409 → 0.395 | 54 h → 37 h |
 
-**Findings.**
-
-- **(a) Heterogeneity: nothing.** At matched mean p0 it is within ±0.03 of
-  control on every fire; pushing p0 up to compensate the lost connectivity
-  brings the explosion straight back. The percolation cliff moves; it does
-  not soften enough to matter at this grid size.
+- **(a) Heterogeneity: nothing.** At matched mean p0 it is within ±0.03
+  of control on every fire; pushing p0 up to compensate the lost
+  connectivity brings the explosion straight back.
 - **(b) The decay is the largest single improvement in the log.** One
-  setting (τ = 5 days, p0 ×2) lifts mean IoU by +0.12 Bear, +0.07 Brattain,
-  +0.14 Buck, and — for the first time — brings the final burned area to
-  the right size (×0.7–1.0) instead of ×3–4. Final-day IoU nearly triples
-  on Bear and Brattain. Chimney, the fastest fire, wants a slower decay
-  (τ = 20) and gains nothing: it was already the fire the model handles.
-- **Why it works when weather did not:** the decay is monotone. Once p0
-  falls under the percolation threshold the front freezes for good; the
-  reachable set stops growing. A periodic modulation never does that.
-- **What it is not:** physics. τ and the ×2 are fitted on the calibration
-  fires, and exp(−t/τ) says nothing about *where* the fire stops, only
-  *when*. Spatially it still loses to the Circle on Bear, Brattain and
-  Buck (gap halved, not closed). The right version of this knob is real
-  containment data — daily percent-contained from the incident reports
-  (InciWeb / NIFC), which exists for all six fires — and, better still,
-  containment *lines* as unburnable cells. That is the next experiment.
+  setting (τ = 5 days, p0 ×2) lifts mean IoU by +0.12 Bear, +0.07
+  Brattain, +0.14 Buck, and brings the final burned area to ×0.7–1.0
+  instead of ×3–4. Final-day IoU nearly triples on Bear and Brattain.
+- Chimney, the fastest fire, wants a slower decay (τ = 20) and gains
+  nothing: it was already the fire the model handles.
 
-**Verdict.** (a) rejected. (b) kept as the working stopping mechanism;
-E16c reports the global version on the holdout.
+**What it means.** The decay works where weather did not because it is
+monotone: once p0 falls under the percolation threshold the front freezes
+for good. A periodic modulation never does that. What the decay is *not*
+is physics. τ and the ×2 are fitted on the calibration fires, and
+exp(−t/τ) says nothing about *where* the fire stops, only *when*. The gap
+to the Circle is halved, not closed.
+
+**Questions this raises.**
+
+- Does one global decay setting hold on the holdout fires? → E16c: Pier
+  yes (+0.14), Ferguson no (the model under-burns it, and a decay makes
+  under-burning worse).
+- Is the decay really suppression? → E21: no. Real percent-contained
+  rises far too slowly to do this job; the decay is an early-days
+  growth-rate decline whose cause is still open.
+- Is there a published mechanism that does the same job? → E28: a daily
+  containment probability by growth rate, learned by the filter, matches
+  it with the decay switched off (E31: a tie everywhere).
+
+**Verdict.** (a) rejected. (b) kept as the working stopping mechanism,
+labelled a calibrated suppression proxy. E16c reports the global version
+on the holdout.
+
+**Later.** E16c, E17 (moisture × decay), E20 (the optimiser chose τ 2.5–
+3.7 d), E21 (relabelled), E25 (the filter learns τ 5–20 d), E28 and E31
+(replaced by the containment operator).

@@ -1,17 +1,18 @@
 # E15 — hourly fuel-moisture damping from station RH/T · REJECTED (as tested)
 
-_Round: Round 3 — 2026-09-02: real weather in, explosion out_
+_Round 3 (2026-09-02) · 3 seeds · calibration fires · runner `exp_station.py moisture` · results `exp15_moisture.json` · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-**Question.** Operational CA simulators stop the fire at night and on humid
-days by multiplying the spread probability with a fuel-moisture factor
-(PROPAGATOR, Trucchia et al. 2020, using the Burgan & Rothermel 1984
-damping with a moisture of extinction of 0.3). We now have hourly RH and
-temperature from the nearest station (E14). Does the textbook damping fix
-the explosion?
+**In short.** Operational simulators slow the fire at night and on humid
+days by multiplying spread by a fuel-moisture factor. With hourly humidity
+and temperature from E14 we could do the textbook version. It does not
+fix the explosion. With the E1 p0 the damped fire dies; turn p0 back up
+and the same over-burn returns. A pause is not a stop: whatever the fire
+can reach on a dry afternoon, it reaches eventually. A stopping mechanism
+has to be cumulative and one-way, which E16 tests.
 
-**Method.** `exp_station.py moisture`, 3 seeds, E1 (p0, dur) recipes,
-hourly station wind ×1 throughout. Per hourly window the harness scales
-p0 by
+**Question.** Does hourly fuel-moisture damping cap the burn?
+
+**What we changed.** Per hourly window the harness scales p0 by
 
     EMC = Fosberg/Simard 1-h fuel moisture (%) from RH and T
     r   = EMC / M_x,   M_x ∈ {25 %, 35 %}
@@ -19,8 +20,18 @@ p0 by
 
 Mean η over a fire's hours came out 0.59–0.66, so p0 was re-scanned at
 ×{1, 1.5, 2, 3}. A `night` variant (p0 × 0.3 from 20:00 to 08:00 local,
-no moisture) isolates the plain day/night cycle. Hourly p0 changes are
-now cheap thanks to the new `WildfireModel::set_p0` (see round-3.md).
+no moisture) isolates the plain day/night cycle. Hourly station wind ×1
+throughout. Hourly p0 changes are cheap thanks to the new
+`WildfireModel::set_p0` ([round-3.md](round-3.md)).
+
+**Why we expected it to matter.** PROPAGATOR (Trucchia et al. 2020) uses
+exactly this damping (Burgan & Rothermel 1984, extinction moisture 0.3)
+and is operational in Italy.
+
+**How we scored it.** Mean IoU with area ratio in brackets, 3 seeds, four
+calibration fires, against the station ×1 control and the ERA5 E1 best.
+
+**Result.**
 
 | variant | Bear | Brattain | Buck | Chimney |
 |---|---|---|---|---|
@@ -37,26 +48,38 @@ now cheap thanks to the new `WildfireModel::set_p0` (see round-3.md).
 | ERA5 daily (E1 best) | 0.311 | 0.336 | 0.403 | 0.441 |
 | Circle | 0.541 | 0.450 | 0.670 | 0.372 |
 
-(mean IoU, area ratio in brackets.)
+How to read it: mean IoU with the area ratio in brackets. "×1" after a
+variant is the p0 multiplier that compensates the damping. Read each
+column top to bottom: as the multiplier rises, the area ratio climbs back
+from "died" to "exploded" without the score ever beating the ERA5 row.
 
-**Findings.**
+- **Periodic damping does not stop the fire; it only slows it.** With
+  the E1 p0 the damped fire dies (area ×0.1–0.2). Multiply p0 back up and
+  the same explosion returns (×3–5). The best damped run on every fire is
+  at or below the undamped ERA5 control.
+- Why, in one sentence: whether a cell *ever* burns depends on whether
+  the fire stays above the percolation threshold long enough to reach it;
+  humid hours pause the front but the next dry afternoon resumes it, so
+  the reachable set is the same.
+- The Fosberg moisture from a valley airport is also a poor proxy for a
+  ridge 40–70 km away; a RAWS record or a 10-h/100-h fuel-moisture model
+  would be fairer. But the failure is structural: even perfect hourly
+  moisture would only modulate, not cap.
 
-- **Periodic damping does not stop the fire; it only slows it.** With the
-  E1 p0 the damped fire dies (area ×0.1–0.2). Multiply p0 back up and the
-  same explosion returns (×3–5). The best damped run on every fire is at
-  or below the undamped ERA5 control. The knife edge is untouched.
-- Why, in one sentence: whether a cell *ever* burns depends on whether the
-  fire stays above the percolation threshold long enough to reach it;
-  night-time or humid hours pause the front but the next dry afternoon
-  resumes it, so the reachable set — and the over-burn — is the same.
-  A stopping mechanism has to be **cumulative and one-way**, which is what
-  E16b tests.
-- The Fosberg EMC from a valley airport is also a poor proxy for fuel
-  moisture on a ridge 40–70 km away; a RAWS record or a 10-h/100-h fuel
-  moisture model would be fairer. But the failure above is structural, not
-  an input problem: even a perfect hourly moisture would only modulate,
-  not cap.
+**What it means.** The right physics for *rate* is not the answer to
+"burns everything". Any fix for the over-burn has to be cumulative and
+one-way.
 
-**Verdict.** Rejected as tested. Keep the moisture code (it is the right
-physics for *rate*, and it will matter once sub-daily truth arrives), but
-it is not the answer to "burns everything".
+**Questions this raises.**
+
+- What mechanism is one-way? → E16b: a monotone decay of p0 (biggest gain
+  in the log); E28: a daily containment roll.
+- Does the moisture cycle earn its keep once the fire can stop? → E17:
+  costs nothing and slightly improves the final map.
+- Would it matter with hourly truth? Open; the GOFER and PT-FireSprd
+  tiers are where timing becomes the metric.
+
+**Verdict.** Rejected as tested. Keep the moisture code.
+
+**Later.** E16, E17, E20 (the optimiser switched moisture off on three of
+four fires because daily truth cannot see it), Round 3 conclusion 2.

@@ -1,17 +1,30 @@
 # E18 — a dynamic fire-line agent (paint Inactive along the model's own edge) · REJECTED as tested, direction KEPT
 
-_Round: Round 3 — 2026-09-02: real weather in, explosion out_
+_Round 3 (2026-09-02) · 3 seeds · calibration fires · runner `exp_fireline.py`, harness hook `EXP_LINE_RATE` · results `exp18_fireline.json` · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-**Idea.** cella lets any cell be repainted between steps, so containment
-does not need a pre-drawn line — an agent can build one during the run
-from what the fire is doing, which is what an operational tool would do.
-New harness hook `EXP_LINE_RATE` (`wildfire_experiment.rs`): after every
-wind window, take the model's *own* active edge (fuel cells with a
-burning 8-neighbour), rank heel-first (nearest the ignition centroid),
-and paint `rate × window_days` of them Inactive, starting after 24 h. No
-truth is consulted. Rates bracket a large incident's line production
-(one 30 m cell = 30 m of line): 100 / 300 / 1000 cells/day = 3 / 9 / 30 km
-of line per day. Also with p0 ×1.5. ERA5 daily wind, E1 (p0, dur), 3 seeds.
+**In short.** The engine lets any cell be repainted between steps, so a
+crew can be simulated: after each day, take the fire's own edge, start
+nearest the ignition, and paint some length of it unburnable. No truth is
+consulted. The outcome is binary. At 100 cells a day the ring never
+closes and the fire explodes as before; at 300 or more it closes on day
+two and the fire dies. Nothing in between gives the real "grows, then
+plateaus" curve. The mechanism is right; the tactics are not.
+
+**Question.** Can a rule-based crew, working from the fire's own state,
+stop the model at the right size?
+
+**What we changed.** Harness hook `EXP_LINE_RATE`: after every wind
+window, take the model's active edge (fuel cells with a burning
+8-neighbour), rank heel-first (nearest the ignition centroid), and paint
+`rate × window_days` of them Inactive, starting after 24 h. Rates bracket
+a large incident's line production (one 30 m cell = 30 m of line):
+100 / 300 / 1000 cells/day = 3 / 9 / 30 km of line per day. Also with p0
+×1.5. ERA5 daily wind, E1 recipe.
+
+**How we scored it.** Mean IoU with area ratio in brackets, 3 seeds, four
+calibration fires.
+
+**Result.**
 
 | variant | Bear | Brattain | Buck | Chimney |
 |---|---|---|---|---|
@@ -24,42 +37,41 @@ of line per day. Also with p0 ×1.5. ERA5 daily wind, E1 (p0, dur), 3 seeds.
 | line 1000, p0 ×1.5 | 0.218 (×0.1) | 0.072 (×0.0) | 0.422 (×0.3) | 0.241 (×0.1) |
 | Circle | 0.541 | 0.450 | 0.670 | 0.372 |
 
-**Findings.**
+How to read it: mean IoU with area ratio in brackets. An area ratio of
+×0.1 means the line strangled the fire; ×3–4 means it was ignored. Bold
+is the one cell that beat its control.
 
-- **Binary outcome: either the line does nothing or it encircles the fire
-  on day two.** On day 1 the model fire is small, so its whole edge is a
-  few hundred cells; 300 cells/day of heel-first line closes the ring and
-  the fire dies at ×0.1 of the observed area (Brattain: ×0.0). At 100/day
-  the ring never closes and the fire explodes as before. There is no rate
-  in between that yields the observed "grows, then plateaus" curve,
-  because a line that holds everywhere and is built from the heel is an
-  all-or-nothing perimeter fence.
+- **Binary outcome: the line does nothing or encircles the fire on day
+  two.** On day 1 the model fire is small, so its whole edge is a few
+  hundred cells; 300 cells/day of heel-first line closes the ring and the
+  fire dies at ×0.1 (Brattain ×0.0). At 100/day the ring never closes.
 - Arrival MAE collapses (Chimney 54 h → 4 h at 1000/day) only because
-  almost nothing burns after the ring closes — a reminder that MAE over
-  cells-burned-in-both is not a stand-alone metric.
+  almost nothing burns after the ring closes: MAE over cells burned in
+  both is not a stand-alone metric.
 - The one mild positive (Buck, 300/day with p0 ×1.5, +0.04) is the case
-  where the fire out-grew the crews for a while before being caught, i.e.
-  the shape we want.
+  where the fire out-grew the crews for a while before being caught,
+  which is the shape we want.
 
-**What a realistic agent needs** (why the direction stays open):
+**What it means.** A line that holds everywhere and is built from the
+heel is an all-or-nothing fence. A realistic agent needs four things:
+resources that ramp up over 3–7 days (a rate ∝ 1 − e^(−t/τ) would
+reproduce E16's decay mechanistically); line that can fail (low-
+flammability fuel instead of Inactive, so wind and slope can breach it);
+tactics that do not chase the head (anchor and flank); and observed
+percent-contained as the target to match.
 
-1. **Resources that ramp up**, not a constant rate from hour 24: real
-   incidents go from a few engines to thousands of personnel over 3–7
-   days. A rate ∝ (1 − e^(−t/τ)) reproduces the E16 decay *mechanistically*
-   and is the natural bridge between the two experiments.
-2. **Line that can fail.** Real line holds on the heel and flanks and is
-   overrun at the head in wind; painting Inactive is a perfect firebreak.
-   Make painted cells low-flammability fuel (density ×0.1) instead, so
-   wind and slope can breach them — the spotting and gust physics then
-   matter again.
-3. **Tactics that do not chase the head**: build where the front is slowest
-   (upwind side, downslope), skip cells where the local spread probability
-   is above a safety threshold — the "anchor and flank" doctrine.
-4. **Observed containment as the calibration target**: daily
-   percent-contained from the incident reports gives the agent's *output*
-   to match, without touching the burned-area truth.
+**Questions this raises.**
 
-**Verdict.** Rejected as implemented (heel-first, constant rate, perfect
-line). The mechanism — repaint cells between steps from the fire's own
-state — works and is the operationally right place for suppression; it
-needs the four changes above before it can beat a decay.
+- Do those four changes produce a middle ground? → E23: no. Perfect line
+  strangles, breachable line is ignored.
+- Is retardant (a multiplier, not a fence) different? → E27: same binary
+  outcome.
+- Is percent-contained usable as a driver instead? → E21: no; it rises
+  too slowly.
+
+**Verdict.** Rejected as implemented. The mechanism (repaint cells between
+steps from the fire's own state) works and is the operationally right
+place for suppression.
+
+**Later.** E23, E27 (both parked), E28 (stopping moved into the ensemble
+as a probability instead of a place).
