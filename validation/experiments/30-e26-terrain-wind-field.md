@@ -1,21 +1,30 @@
 # E26 — terrain-adjusted wind field (mass-consistent downscaling) · NULL at this kernel — infrastructure KEPT
 
-_Round: Round 4 — 2026-09-04: ensembles_
+_Round 4 (2026-09-04) · 3 seeds · calibration fires · runner `exp_windfield.py`, hook `EXP_WIND_FIELD` · results `exp26_windfield.json` · sources `research-decline-wind-suppression.md` §2 · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-**Why.** One wind for a 12 × 8 km fire is wrong on every ridge and in every
-canyon; operational tools downscale it with a mass-conserving diagnostic
-model (WindNinja; Forthofer et al. 2014). New `cella_lib::wind_field`
-implements the two-dimensional single-layer version — conserve the column
-flux `h·u` over the terrain, so ridges speed up and valleys channel — and
-the model gained a per-cell wind field (`WildfireModel::set_wind_field`,
-an 8-per-cell factor table). The basis trick (solve two unit problems once
-on a coarsened grid, combine per window) brought a Bear run from 5 minutes
-to 6 seconds.
+**In short.** One wind for a 12 × 8 km fire is wrong on every ridge and
+in every canyon. We built the standard fix, a mass-conserving downscaler
+(WindNinja; Forthofer et al. 2014) that speeds wind over ridges and channels it through
+valleys, and gave the model a per-cell wind. It changed nothing
+measurable: ±0.01 at real wind, ±0.02 at three times the wind. The
+downscaled fields look right; the kernel's speed responds to wind by only
+5–10 % (E19), so a wind that varies by 50 % across the terrain changes the
+local rate by a few percent. Fix the kernel first.
 
-**Runs.** `exp_windfield.py`: harness hook `EXP_WIND_FIELD=<layer depth>`
-∈ {150, 300, 600} m vs uniform, on the plain E1 recipe and on the τ 5
-decay recipe (E16b), with the ERA5 daily wind at ×1 and ×3. 3 seeds,
-calibration fires.
+**Question.** Does a terrain-aware wind field improve the score?
+
+**What we changed.** New `cella_lib::wind_field`: the two-dimensional
+single-layer mass-consistent model (conserve the column flux h·u over the
+terrain). `WildfireModel::set_wind_field` takes an 8-per-cell factor
+table. The basis trick (solve two unit problems once on a coarsened grid,
+combine per window) brought a Bear run from 5 minutes to 6 seconds.
+Harness hook `EXP_WIND_FIELD=<layer depth>` ∈ {150, 300, 600} m vs
+uniform, on the plain E1 recipe and on the τ 5 decay recipe (E16b), with
+ERA5 daily wind ×1 and ×3.
+
+**How we scored it.** Mean IoU, 3 seeds, four calibration fires.
+
+**Result.**
 
 | variant | Bear | Brattain | Buck | Chimney |
 |---|---|---|---|---|
@@ -29,26 +38,32 @@ calibration fires.
 | decay, ×3, terrain 150 / 300 / 600 | 0.399 / 0.398 / 0.401 | 0.370 / 0.371 / 0.372 | 0.532 / 0.527 / 0.529 | 0.359 / 0.359 / 0.360 |
 | Circle | 0.541 | 0.450 | 0.670 | 0.372 |
 
-**Findings.**
+How to read it: mean IoU; each "terrain" cell lists three layer depths.
+Compare each terrain row with the uniform row above it.
 
 - **Terrain wind changes nothing measurable**: ±0.01 at ×1, ±0.02 at ×3,
   in both directions, on every fire and at every layer depth. The
   downscaled fields themselves are sensible (ridge speed-up and valley
-  channelling visible in the test cases), so this is not a solver
-  failure.
-- **It is the E19 result again.** The kernel's front speed responds to
-  wind by 5–10 % (E19); a wind that varies by ±50 % across the terrain
-  therefore changes the local rate by a few percent, which is inside seed
-  noise at daily truth. Direction differences do reach the kernel (E9b
-  showed a 90° rotation can matter at ×5), but with the ERA5 magnitudes
-  the per-cell directions barely move the eight factors.
-- Buck is the one fire with a consistent (if small) gain, +0.01 at every
-  depth on the plain recipe — the steepest terrain in the set.
-- Layer depth 150–600 m is irrelevant at this sensitivity; keep 300 m as
-  the default.
+  channelling visible in the test cases).
+- **It is the E19 result again.** Direction differences do reach the
+  kernel (E9b showed a 90° rotation can matter at ×5), but with ERA5
+  magnitudes the per-cell directions barely move the eight factors.
+- Buck, the steepest terrain in the set, is the one fire with a
+  consistent small gain, +0.01 at every depth on the plain recipe.
+- Layer depth 150–600 m is irrelevant at this sensitivity; 300 m is the
+  default.
 
-**Verdict.** Null as a score; kept as infrastructure. The order of
-operations is now clear and matches the research notes: **first give the
+**What it means.** The order of operations is now clear: first give the
 kernel a real wind–rate response (E30: refit c1 or an elliptical rule),
-then the terrain field and the ROS clock (E22) become testable.** Until
+then the terrain field and the ROS clock (E22) become testable. Until
 then any wind-field work, however physical, is invisible.
+
+**Questions this raises.**
+
+- Does the kernel respond to wind anywhere in knob space? → E37: it
+  changes size, not shape.
+- Is Buck's +0.01 real? Open; below the noise floor E33 later measured.
+
+**Verdict.** Null as a score; kept as infrastructure.
+
+**Later.** E37, E30 (not yet run).
