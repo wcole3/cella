@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 604" role="img" aria-labelledby="ovf-title ovf-desc">
+<title id="ovf-title">How the two score families are computed</title>
+<desc id="ovf-desc">Two lanes of boxes and arrows. Top: one knob set, one run, a burned mask per day, IoU against the truth, averaged into mean IoU. Bottom: 32 knob sets from a prior, 32 runs to day k, a probability map, a 50 percent consensus mask, IoU against day k's truth before that mask is used, then a learning step that feeds the next day.</desc>
+<defs><style>@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style><marker id="ovf-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="24" y="80" width="952" height="136" rx="8" fill="none" stroke="rgba(45,49,66,0.10)" stroke-width="1"/>
+<text x="40" y="100" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.12em">ROUNDS 1–3 · ONE RUN · MEAN IoU</text>
+<rect x="24" y="240" width="952" height="280" rx="8" fill="none" stroke="rgba(45,49,66,0.10)" stroke-width="1"/>
+<text x="40" y="260" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.12em">ROUNDS 4–5 · 32-MEMBER ENSEMBLE, LEARNING EACH DAY · FORECAST CONSENSUS IoU</text>
+<line x1="160.0" y1="152" x2="194.0" y2="152" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="322.0" y1="152" x2="356.0" y2="152" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="484.0" y1="152" x2="518.0" y2="152" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="646.0" y1="152" x2="680.0" y2="152" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<rect x="32" y="116" width="128" height="72" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1.2" />
+<text x="96" y="148" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >One knob set</text>
+<text x="96" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >p0, duration, wind ×</text>
+<rect x="194" y="116" width="128" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2" />
+<text x="258" y="148" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >One run</text>
+<text x="258" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >day 0 to the end</text>
+<rect x="356" y="116" width="128" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1.2" />
+<text x="420" y="148" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Burned mask</text>
+<text x="420" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >one per observed day</text>
+<rect x="518" y="116" width="128" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2" />
+<text x="582" y="148" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >IoU vs truth</text>
+<text x="582" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >each day, day 0 excluded</text>
+<rect x="680" y="116" width="128" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1.2" />
+<text x="744" y="148" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Mean IoU</text>
+<text x="744" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >average over the days</text>
+<line x1="160.0" y1="316" x2="194.0" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="322.0" y1="316" x2="356.0" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="484.0" y1="316" x2="518.0" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="646.0" y1="316" x2="680.0" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<line x1="808.0" y1="316" x2="842.0" y2="316" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<path d="M744,352.0 V452 Q744,460 736,460 H617.0" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<path d="M385.0,460 H266 Q258,460 258,452 V352.0" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#ovf-arrow)"/>
+<text x="248" y="416" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >day k → k+1</text>
+<text x="754" y="416" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >after scoring</text>
+<rect x="32" y="280" width="128" height="72" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1.2" />
+<text x="96" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >32 knob sets</text>
+<text x="96" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >drawn from the prior</text>
+<rect x="194" y="280" width="128" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2" />
+<text x="258" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >32 runs</text>
+<text x="258" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >advance to day k</text>
+<rect x="356" y="280" width="128" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1.2" />
+<text x="420" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Probability map</text>
+<text x="420" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >share of members</text>
+<text x="420" y="340" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >that burned each cell</text>
+<rect x="518" y="280" width="128" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2" />
+<text x="582" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Consensus mask</text>
+<text x="582" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >cells at ≥ 50 %</text>
+<rect x="680" y="280" width="128" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2" />
+<text x="744" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >IoU vs truth, day k</text>
+<text x="744" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >before day k's mask</text>
+<text x="744" y="340" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >is used</text>
+<rect x="842" y="280" width="128" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1.2" />
+<text x="906" y="312" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Consensus IoU</text>
+<text x="906" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >mean over days;</text>
+<text x="906" y="340" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >Brier from the map</text>
+<rect x="385" y="424" width="232" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2" />
+<text x="501.0" y="456" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif" font-weight="600" text-anchor="middle" >Learn from day k's mask</text>
+<text x="501.0" y="472" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >resample · mutate · immigrants</text>
+<text x="501.0" y="484" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >each child keeps its parent's grid</text>
+<text x="500" y="548" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" font-weight="400" text-anchor="middle" >The two families are not comparable: a single run saw nothing; the ensemble's forecast for day k has learned from days 1 … k−1.</text>
+<line x1="32" y1="568" x2="968" y2="568" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="574" width="16" height="12" rx="2" fill="rgba(79,93,117,0.10)" stroke="#7a8399"/>
+<text x="132" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >input</text>
+<rect x="190" y="574" width="16" height="12" rx="2" fill="#ffffff" stroke="#2d3142"/>
+<text x="210" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >step</text>
+<rect x="262" y="574" width="16" height="12" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/>
+<text x="282" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >data / score</text>
+<rect x="382" y="574" width="16" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+<text x="402" y="584" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >the honesty rule: score first, learn second</text>
+</svg>
