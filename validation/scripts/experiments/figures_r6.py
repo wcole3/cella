@@ -304,8 +304,131 @@ def e39_gated_reset():
     print("wrote e39-gated-reset.svg")
 
 
+def _raw(exp_dir, fire, label):
+    """One raw wildfire_smc report, or None if it isn't on disk."""
+    p = EXP / exp_dir / f"{fire}_{label}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def _seed_mean_series(exp_dir, fire, label_of, key, seeds=5):
+    """Mean over `seeds` seeds, per observation window, of `scores[*][key]`
+    plus the (shared) hours axis -- `None, None` if any seed is missing.
+    Used to build the E40-vs-E33 per-day lines directly from the raw
+    per-window reports, the same way E39's evidence table read them,
+    since the summary rows in the *.json index only keep the mean over
+    the whole series.
+    """
+    per_seed = []
+    for s in range(seeds):
+        r = _raw(exp_dir, fire, label_of(s))
+        if r is None:
+            return None, None
+        per_seed.append([sc[key] for sc in r["scores"]])
+    n = min(len(s) for s in per_seed)
+    hours = [sc["hours"] for sc in _raw(exp_dir, fire, label_of(0))["scores"][:n]]
+    mean = [sum(s[i] for s in per_seed) / len(per_seed) for i in range(n)]
+    return hours, mean
+
+
+def e40_observed_immigrants():
+    """Top: dot strip per fire, E40 minus its E33 twin, per seed, against
+    the E33 ±1 sd band -- the same layout as E39's, one series only.
+    Bottom: per-day consensus IoU for Bear and Ferguson, the two fires
+    the prediction named as movers -- E40 vs E33 (both the 5-seed mean)
+    with the Circle null, read straight from the raw per-window reports.
+    """
+    rows = load("exp40_observed_immigrants.json")
+    noise = load("exp33_noise.json")
+    if rows is None or noise is None:
+        return
+    W, H = 1000, 800
+    body = []
+
+    # --- Top: dot strip ---
+    x0, x1, lo, hi = 200, 920, -0.06, 0.12
+    sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
+    for v in (-0.05, 0.0, 0.05, 0.10):
+        w = 1.2 if v == 0.0 else 0.8
+        body.append(f'<line x1="{sx(v):.0f}" y1="48" x2="{sx(v):.0f}" y2="368" '
+                     f'stroke="{INK if v == 0.0 else RULE}" stroke-width="{w}" '
+                     f'stroke-opacity="{0.4 if v == 0.0 else 1}"/>')
+        body.append(text(sx(v), 384, f"{v:+.2f}", anchor="middle"))
+    body.append(text(560, 400, "E40 MINUS E33 TWIN, MEAN CONSENSUS IOU, PER SEED",
+                      anchor="middle", extra='letter-spacing="0.08em"'))
+    for i, f in enumerate(FIRES):
+        y = 72 + i * 50
+        sd = E33_SD[f]
+        row0 = next((x for x in noise if x["fire"] == f and x["seed"] == 0), None)
+        if row0 is None:
+            continue
+        body.append(text(184, y + 4, SHORT[f] + ("*" if row0["holdout"] else ""),
+                          size=12, fill=INK, font=SANS, anchor="end", weight=600))
+        body.append(f'<rect x="{sx(-sd):.1f}" y="{y - 12}" width="{sx(sd) - sx(-sd):.1f}" height="24" '
+                     f'fill="rgba(45,49,66,0.08)"/>')
+        for s_ in range(5):
+            b = next((x for x in noise if x["fire"] == f and x["seed"] == s_), None)
+            a = next((x for x in rows if x["fire"] == f and x["seed"] == s_), None)
+            if not (a and b):
+                continue
+            d = a["mean_consensus_iou"] - b["mean_consensus_iou"]
+            beyond = abs(d) > sd
+            fill = ACCENT if beyond else SOFT
+            body.append(f'<circle cx="{sx(d):.1f}" cy="{y}" r="4.4" fill="{PAPER}"/>'
+                        f'<circle cx="{sx(d):.1f}" cy="{y}" r="4.4" fill="{fill}" fill-opacity="0.4" '
+                        f'stroke="{fill}" stroke-width="{1.6 if beyond else 1}"/>')
+
+    # --- Bottom: per-day consensus IoU, Bear and Ferguson, E40 vs E33 vs Circle ---
+    PW, PH = 380, 280
+    for j, f in enumerate(["Bear_2020", "Ferguson_2018"]):
+        px, py = 100 + j * (PW + 60), 460
+        hours40, cons40 = _seed_mean_series("exp40_observed_immigrants", f, lambda s: f"observed_seed{s}", "consensus_iou")
+        hours33, cons33 = _seed_mean_series("exp33_noise", f, lambda s: f"base_seed{s}", "consensus_iou")
+        _, circle = _seed_mean_series("exp33_noise", f, lambda s: f"base_seed{s}", "radial_iou")
+        if hours40 is None or hours33 is None:
+            continue
+        days = [h / 24.0 for h in hours40]
+        lo_y = 0.0
+        hi_y = max(max(cons40), max(cons33), max(circle)) + 0.05
+        sxp = lambda d: px + 24 + d / days[-1] * (PW - 32)
+        syp = lambda v: py + PH - 24 - (v - lo_y) / (hi_y - lo_y) * (PH - 40)
+        for g in (0.0, hi_y / 2, hi_y):
+            body.append(f'<line x1="{px + 20}" y1="{syp(g):.1f}" x2="{px + PW}" y2="{syp(g):.1f}" '
+                        f'stroke="{RULE}" stroke-width="0.8"/>')
+            body.append(text(px + 16, syp(g) + 3, f"{g:.2f}", anchor="end", size=6.5))
+        row0 = next((x for x in noise if x["fire"] == f and x["seed"] == 0), None)
+        body.append(text(px, py - 10, SHORT[f] + ("*" if row0 and row0["holdout"] else ""),
+                          size=12, fill=INK, font=SANS, weight=600))
+        body.append(f'<polyline points="{" ".join(f"{sxp(d):.1f},{syp(v):.1f}" for d, v in zip(days, circle))}" '
+                    f'fill="none" stroke="{MUTED}" stroke-width="1.4" stroke-dasharray="3,2" stroke-linejoin="round"/>')
+        body.append(f'<polyline points="{" ".join(f"{sxp(d):.1f},{syp(v):.1f}" for d, v in zip(days, cons33))}" '
+                    f'fill="none" stroke="{SOFT}" stroke-width="1.8" stroke-linejoin="round"/>')
+        body.append(f'<polyline points="{" ".join(f"{sxp(d):.1f},{syp(v):.1f}" for d, v in zip(days, cons40))}" '
+                    f'fill="none" stroke="{ACCENT}" stroke-width="2.0" stroke-linejoin="round"/>')
+        body.append(text(px, py + PH + 12, "day 0", size=6.5))
+        body.append(text(px + PW, py + PH + 12, f"day {days[-1]:.0f}", anchor="end", size=6.5))
+    body.append(text(560, 428, "PER-DAY CONSENSUS IOU: E40 (ACCENT) VS E33 (MUTED) VS THE CIRCLE (DASHED), 5-SEED MEAN",
+                      anchor="middle", extra='letter-spacing="0.06em"'))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="4.4" fill="{SOFT}" fill-opacity="0.4" stroke="{SOFT}"/>', "E40 minus E33, tie"),
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="4.4" fill="{ACCENT}" fill-opacity="0.4" stroke="{ACCENT}"/>', "E40 minus E33, beyond sd"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "±1 sd (E33)"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{ACCENT}" stroke-width="2"/>', "E40 per-day"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{SOFT}" stroke-width="1.8"/>', "E33 per-day"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{MUTED}" stroke-width="1.4" stroke-dasharray="3,2"/>', "Circle"),
+    ]))
+    (FIG / "e40-observed-immigrants.svg").write_text(svg(
+        "e40", "E40 observed-perimeter immigrants: per-seed change and per-day IoU",
+        "Top: dot strip per fire, the change in mean forecast IoU from the E33 twin for E40 (immigrants seeded "
+        "from the observed perimeter), one dot per seed, against the E33 noise band. Bottom: per-day consensus "
+        "IoU for Bear and Ferguson, the two fires the prediction named as movers, comparing E40 and E33 (both the "
+        "5-seed mean) with the Circle null.",
+        W, H, "\n".join(body)))
+    print("wrote e40-observed-immigrants.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
     e42_posterior()
     e39_gated_reset()
+    e40_observed_immigrants()

@@ -455,5 +455,12 @@ mod tests {
         s.paint(0, dead).unwrap();
         assert_eq!(s.ages()[0], 0);
         assert!(s.paint(999, alive).is_err(), "out-of-bounds is refused");
+
+        // The 1D grid takes the same path.
+        let mut r = row();
+        let x = CellType::from("X");
+        r.paint(0, x).unwrap();
+        assert_eq!(r.cells()[0], x);
+        assert!(r.paint(999, x).is_err());
     }
 }
