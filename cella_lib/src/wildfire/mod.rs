@@ -33,8 +33,36 @@
 //! count. Spotting (long-range ignition by firebrands) samples a lognormal
 //! landing distance along the wind vector (Sardoy et al.) and is delivered
 //! through [`ModelEvent`]s.
+//!
+//! ## Two spread rules
+//!
+//! The formula above (`params.spread = "bernoulli"`, the default) rolls one
+//! coin per tick per burning neighbour, at a *probability*. A probability
+//! cannot go above 1, so once a cell has enough burning neighbours it
+//! ignites almost immediately no matter which direction they are in — wind
+//! changes how *often* that happens, not how *long* it takes, so it widens
+//! a fire without stretching it, and a fire big enough to have burning
+//! neighbours on every side comes out round (experiment E37).
+//!
+//! `params.spread = "arrival"` fixes that by making direction set ignition
+//! *time* instead of ignition chance. Each fuel cell keeps a `heat`
+//! accumulator (0 at attach). Every tick, for each burning neighbour, the
+//! same per-direction factor that the Bernoulli rule uses as a probability
+//! is instead used as a rate added to `heat`; the cell ignites once `heat`
+//! reaches 1. A slow direction (crosswind, upwind) just takes longer to
+//! reach 1 than a fast one (downwind) — so the head:flank *speed* ratio is
+//! `dir[head] / dir[flank]` regardless of size or burn duration, and does
+//! not collapse as the fire grows. See [`WildfireDerived::heat`] and
+//! [`WildfireModel::step_chunk_arrival`].
+//!
+//! Independently, `params.wind_law` chooses *which* direction factor either
+//! rule uses: the original exponential law, or `"rear_focus"`, a rear-focus
+//! ellipse template aimed at matching the front/back wind-shape signal
+//! (E41) that the exponential law is too weak to produce. See
+//! [`WildfireParams::wind_law`].
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +81,10 @@ const STREAM_DIST_A: u64 = 2;
 const STREAM_DIST_B: u64 = 3;
 /// RNG stream for the landing-angle jitter.
 const STREAM_ANGLE: u64 = 4;
+/// RNG streams for the Box–Muller pair of the arrival rule's per-cell
+/// log-normal jitter (`WildfireModel::arrival_jitter`).
+const STREAM_ARRIVAL_JITTER_A: u64 = 5;
+const STREAM_ARRIVAL_JITTER_B: u64 = 6;
 
 pub mod driver;
 pub mod wind_field;
@@ -102,6 +134,15 @@ fn default_cell_size() -> f64 {
 fn default_burn_duration() -> u32 {
     1
 }
+fn default_spread() -> String {
+    "bernoulli".to_string()
+}
+fn default_arrival_jitter() -> f64 {
+    0.2
+}
+fn default_wind_law() -> String {
+    "exponential".to_string()
+}
 
 /// Tunable wildfire parameters. Serde defaults follow Alexandridis et al.
 ///
@@ -115,6 +156,24 @@ pub struct WildfireParams {
     /// Base ignition probability under no wind on flat terrain.
     #[serde(default = "default_p0")]
     pub p0: f64,
+    /// Which spread rule decides *when* a cell catches fire.
+    ///
+    /// `"bernoulli"` (default): the original Alexandridis rule — every tick,
+    /// every unburned neighbour of a burning cell rolls independent dice
+    /// (one per burning neighbour) at a per-direction *probability*. Because
+    /// a probability saturates at 1, a cell surrounded by enough burning
+    /// neighbours ignites almost immediately regardless of which direction
+    /// they are in, which is why large fires come out round (see the module
+    /// docs and experiment E37).
+    ///
+    /// `"arrival"`: direction sets ignition *time* instead of ignition
+    /// chance. Each unburned fuel cell with a burning neighbour accumulates
+    /// `heat` every tick (same per-direction factors, used as a rate instead
+    /// of a probability) and ignites once `heat >= 1`. A slow direction just
+    /// takes longer to reach 1, so the head:flank speed ratio survives no
+    /// matter how big the fire gets. See [`WildfireDerived::heat`].
+    #[serde(default = "default_spread")]
+    pub spread: String,
     /// Fuel classes; every other non-Burning/BurnedOut/Inactive type is inert.
     pub fuels: Vec<FuelClass>,
     /// Wind speed in m/s.
@@ -139,6 +198,24 @@ pub struct WildfireParams {
     pub c1: f64,
     #[serde(default = "default_c2")]
     pub c2: f64,
+    /// Which wind law shapes the eight per-direction factors.
+    ///
+    /// `"exponential"` (default): `exp(c1*v) * exp(v*c2*(cosθ-1))` — the
+    /// factor E37 found only ever widens a fire, never stretches it (its
+    /// head:back ratio is `exp(2*c2*v)`, just 1.17 at 0.6 m/s).
+    ///
+    /// `"rear_focus"`: a rear-focus ellipse template, `dir[j] = r(θ_j) /
+    /// r_max` with `r(θ) = 1 / (a - c*cosθ)`, `a` = Anderson (1983)'s
+    /// length-to-breadth ratio `LB(v)` (clamped `[1, 8]`), `c = sqrt(a² -
+    /// 1)`, `r_max = a + c`. At `v = 0`, `a = 1`, `c = 0`, so every
+    /// direction gets factor 1 — same as the exponential law at no wind.
+    /// The head:back ratio is `(a + c)²`, which reaches the ≈2.4 needed to
+    /// match the observed front/back wind-shape signal (E41) far below the
+    /// wind speeds the exponential law needs. Still multiplied by
+    /// `exp(c1*v)` so overall speed keeps rising with wind. See
+    /// [`anderson_lb`].
+    #[serde(default = "default_wind_law")]
+    pub wind_law: String,
     /// Slope coefficient `a`, per degree of slope angle.
     #[serde(default = "default_slope_a")]
     pub slope_a: f64,
@@ -148,6 +225,11 @@ pub struct WildfireParams {
     /// Steps a cell burns before becoming burned out (`>= 1`).
     #[serde(default = "default_burn_duration")]
     pub burn_duration: u32,
+    /// Log-normal jitter `σ` for the arrival rule's per-cell multiplier
+    /// `exp(σ·z)` (`z` a standard normal, one draw per cell for the whole
+    /// run). `0` turns jitter off. Ignored by the Bernoulli rule.
+    #[serde(default = "default_arrival_jitter")]
+    pub arrival_jitter: f64,
     #[serde(default)]
     pub spotting: Option<SpottingParams>,
     /// Override for the burning state's type name (default "Burning").
@@ -176,7 +258,7 @@ pub struct WildfireEnv {
 
 /// State derived from params + env + grid at attach time. Never serialized;
 /// rebuilt by [`WildfireModel::attach`].
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct WildfireDerived {
     /// `p0 * veg_factor * density` per cell; `0.0` marks non-fuel.
     p_base: Vec<f32>,
@@ -202,6 +284,54 @@ struct WildfireDerived {
     /// Index into `fuels` per cell (`u16::MAX` = not fuel), so `set_p0` can
     /// rebuild `p_base` without seeing the grid again.
     fuel_slot: Vec<u16>,
+    /// Per-cell heat accumulator for the arrival rule (`params.spread ==
+    /// "arrival"`), length `w·h`, zeroed at every `attach` (a fresh run, a
+    /// `reset_cells`, or a config load). Unused (and left at 0) under the
+    /// Bernoulli rule.
+    ///
+    /// `step_chunk` receives `&self` — a *shared* reference — because
+    /// several worker threads call it concurrently, one per chunk of the
+    /// grid (see the [`crate::external`] determinism contract). A plain
+    /// `Vec<f32>` cannot be written through a shared reference, so each
+    /// entry is instead an atomic holding the `f32`'s bit pattern
+    /// (`f32::to_bits` / `from_bits`). This is sound with the cheapest
+    /// ordering (`Relaxed`) because the engine hands out chunks as
+    /// non-overlapping, contiguous index ranges (see
+    /// [`crate::chunking::split_chunks`]): every cell's heat entry is
+    /// written by exactly one thread during a given step, so there is
+    /// never a race on any individual entry to order against. The *next*
+    /// call to `step_chunk` (the following tick) only happens after
+    /// `Grid2D::step_external`'s `rayon` `reduce()` has joined every
+    /// chunk's task on the calling thread, which is itself a
+    /// synchronization point — so a later step always sees an earlier
+    /// step's stores.
+    heat: Vec<AtomicU32>,
+}
+
+impl Clone for WildfireDerived {
+    fn clone(&self) -> Self {
+        Self {
+            p_base: self.p_base.clone(),
+            slope: self.slope.clone(),
+            wind_factors: self.wind_factors.clone(),
+            offsets: self.offsets,
+            lin: self.lin,
+            burning: self.burning,
+            burned: self.burned,
+            inactive: self.inactive,
+            fuels: self.fuels.clone(),
+            veg: self.veg.clone(),
+            fuel_slot: self.fuel_slot.clone(),
+            // `AtomicU32` is not `Clone`; carry the current values over into
+            // fresh atomics so a cloned model (an ensemble member, a boxed
+            // clone for a snapshot) starts from the same heat state.
+            heat: self
+                .heat
+                .iter()
+                .map(|a| AtomicU32::new(a.load(Ordering::Relaxed)))
+                .collect(),
+        }
+    }
 }
 
 /// The wildfire model. See the [module docs](self).
@@ -222,6 +352,18 @@ pub struct WildfireModel {
 /// west wind (from 270°) toward 0°.
 pub fn wind_toward_grid_deg(from_deg: f64) -> f64 {
     (from_deg + 90.0).rem_euclid(360.0)
+}
+
+/// Anderson (1983)'s empirical fire-ellipse length-to-breadth ratio as a
+/// function of wind speed `v` in m/s, clamped to `[1, 8]` (Anderson's own
+/// range; the fit is a curiosity outside it, not a measurement). `LB(0) =
+/// 1.0` exactly (a circle at no wind): `0.936 + 0.461 - 0.397 == 1.0`.
+///
+/// Used by the `"rear_focus"` [`WildfireParams::wind_law`] to size its
+/// direction template; also handy for comparing a measured length-to-breadth
+/// ratio against the reference curve in validation scripts.
+pub fn anderson_lb(v: f64) -> f64 {
+    (0.936 * (0.2566 * v).exp() + 0.461 * (-0.1548 * v).exp() - 0.397).clamp(1.0, 8.0)
 }
 
 impl WildfireModel {
@@ -318,17 +460,62 @@ impl WildfireModel {
     /// The eight factors for a wind of speed `v` blowing along the unit grid
     /// vector `(wx, wy)` (+x right, +y down). Shared by the uniform path and
     /// the per-cell field so both use identical arithmetic.
+    ///
+    /// The speed term `exp(c1*v)` and the `1/dist` diagonal-distance
+    /// correction apply under either [`WildfireParams::wind_law`]; only the
+    /// direction shape in between differs.
     fn factors_for_vector(&self, wx: f64, wy: f64, v: f64) -> [f32; 8] {
         let mut f = [0.0f32; 8];
+        let speed_term = (self.params.c1 * v).exp();
+        let rear_focus = self.params.wind_law == "rear_focus";
+        // Anderson ellipse shape, computed once per call (not per direction).
+        let (a, c, r_max) = if rear_focus {
+            let a = anderson_lb(v);
+            let c = (a * a - 1.0).max(0.0).sqrt();
+            (a, c, a + c)
+        } else {
+            (0.0, 0.0, 0.0) // unused when rear_focus is false
+        };
         for (j, &(dx, dy)) in self.derived.offsets.iter().enumerate() {
             // Spread direction: from the burning neighbor toward this cell.
             let (sx, sy) = (-(dx as f64), -(dy as f64));
             let norm = (sx * sx + sy * sy).sqrt();
             let cos_theta = (wx * sx + wy * sy) / norm;
-            let wind = (self.params.c1 * v).exp() * (v * self.params.c2 * (cos_theta - 1.0)).exp();
+            let dir_term = if rear_focus {
+                // r(theta) / r_max; b = 1 so r(theta) = 1 / (a - c*cos_theta).
+                (1.0 / (a - c * cos_theta)) / r_max
+            } else {
+                (v * self.params.c2 * (cos_theta - 1.0)).exp()
+            };
+            let wind = speed_term * dir_term;
             f[j] = (wind / norm) as f32;
         }
         f
+    }
+
+    /// The arrival rule's per-cell log-normal jitter multiplier, `exp(σ·z)`
+    /// with `σ = params.arrival_jitter` and `z` a standard normal.
+    ///
+    /// `z` comes from a Box–Muller transform of two `cell_rand` draws, the
+    /// same technique [`Self::spot_target`] uses for its landing distance.
+    /// The step argument is pinned to `0` (not `ctx.step`) so the draw is a
+    /// function of the cell only, not the tick: the same cell gets the same
+    /// multiplier for the whole run, which is what "one draw per cell" in
+    /// the module docs means. It still depends on `params.seed`, so
+    /// different ensemble members (different seeds) see different jitter.
+    /// `σ <= 0` short-circuits to `1.0` (no jitter, and no wasted draws).
+    fn arrival_jitter(&self, idx: usize) -> f32 {
+        let sigma = self.params.arrival_jitter;
+        if sigma <= 0.0 {
+            return 1.0;
+        }
+        let seed = self.params.seed;
+        let iu = idx as u64;
+        let u_a = (1.0 - f64::from(cell_rand(seed, 0, iu, STREAM_ARRIVAL_JITTER_A)))
+            .max(f64::MIN_POSITIVE);
+        let u_b = f64::from(cell_rand(seed, 0, iu, STREAM_ARRIVAL_JITTER_B));
+        let z = (-2.0 * u_a.ln()).sqrt() * (std::f64::consts::TAU * u_b).cos();
+        (sigma * z).exp() as f32
     }
 
     /// Grid unit vector and speed of the wind at cell `idx` from the per-cell
@@ -517,12 +704,13 @@ impl WildfireModel {
     /// Wind, Fire, Terrain, the Spotting group (present only when spotting is
     /// enabled), then the read-only seed.
     ///
-    /// `reattach` is true for exactly the three parameters that feed the
-    /// buffers [`Self::attach`] precomputes: `p0` builds `p_base`, and
-    /// `slope_a` and `cell_size` build the slope table. Everything else is
-    /// read live by [`Self::dir_factors`], [`Self::next_type`], or
-    /// [`Self::spot_target`], so a change takes effect on the next step with
-    /// no rebuild.
+    /// `reattach` is true for exactly the four parameters that feed the
+    /// buffers [`Self::attach`] precomputes: `p0` builds `p_base`, `slope_a`
+    /// and `cell_size` build the slope table, and `wind_law` (when a
+    /// per-cell wind field is set) feeds the precomputed `wind_factors`
+    /// table. Everything else is read live by [`Self::dir_factors`],
+    /// [`Self::next_type`], or [`Self::spot_target`], so a change takes
+    /// effect on the next step with no rebuild.
     ///
     /// Bounds are what the engine checks a new value against before this model
     /// sees it, which is why [`Self::set_param`] does no range checking. They
@@ -578,6 +766,41 @@ impl WildfireModel {
                     min: 0.0,
                     max: 1.0,
                     step: 0.005,
+                },
+                false,
+            ),
+            param_desc(
+                "wind_law",
+                "Wind law",
+                "Wind",
+                "How wind shapes the eight spread directions: 'exponential' (default) only ever raises every direction's odds; 'rear_focus' makes the head much faster than the back, matching Anderson's fire-ellipse shape.",
+                "",
+                ParamKind::Choice {
+                    options: vec!["exponential".to_string(), "rear_focus".to_string()],
+                },
+                true,
+            ),
+            param_desc(
+                "spread",
+                "Spread rule",
+                "Fire",
+                "'bernoulli' (default): each tick every unburned neighbor of a burning cell rolls independent dice. 'arrival': direction sets how long ignition takes instead of how likely it is, so shape survives at any fire size.",
+                "",
+                ParamKind::Choice {
+                    options: vec!["bernoulli".to_string(), "arrival".to_string()],
+                },
+                false,
+            ),
+            param_desc(
+                "arrival_jitter",
+                "Arrival jitter",
+                "Fire",
+                "Spread in how fast individual cells catch under the arrival rule (log-normal σ). 0 turns it off. Has no effect under the bernoulli rule.",
+                "",
+                ParamKind::Float {
+                    min: 0.0,
+                    max: 2.0,
+                    step: 0.01,
                 },
                 false,
             ),
@@ -775,6 +998,24 @@ impl ExternalModel for WildfireModel {
                 p.cell_size
             )));
         }
+        if !matches!(p.spread.as_str(), "bernoulli" | "arrival") {
+            return Err(ModelError::InvalidParam(format!(
+                "spread must be 'bernoulli' or 'arrival', got '{}'",
+                p.spread
+            )));
+        }
+        if !matches!(p.wind_law.as_str(), "exponential" | "rear_focus") {
+            return Err(ModelError::InvalidParam(format!(
+                "wind_law must be 'exponential' or 'rear_focus', got '{}'",
+                p.wind_law
+            )));
+        }
+        if p.arrival_jitter < 0.0 {
+            return Err(ModelError::InvalidParam(format!(
+                "arrival_jitter must be >= 0, got {}",
+                p.arrival_jitter
+            )));
+        }
         if p.fuels.is_empty() {
             return Err(ModelError::InvalidParam(
                 "at least one fuel class is required".into(),
@@ -871,6 +1112,7 @@ impl ExternalModel for WildfireModel {
             fuels,
             veg,
             fuel_slot: Vec::new(),
+            heat: (0..n).map(|_| AtomicU32::new(0)).collect(),
         };
 
         let mut p_base = vec![0.0f32; n];
@@ -917,6 +1159,141 @@ impl ExternalModel for WildfireModel {
         20
     }
 
+    /// Dispatches to one of two spread rules ([`WildfireParams::spread`]):
+    /// [`Self::step_chunk_bernoulli`] (default, unchanged since before this
+    /// rule existed) or [`Self::step_chunk_arrival`].
+    fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+        if self.params.spread == "arrival" {
+            self.step_chunk_arrival(ctx, next)
+        } else {
+            self.step_chunk_bernoulli(ctx, next)
+        }
+    }
+
+    fn event_applies(&self, current_next: CellType, _event: &ModelEvent) -> bool {
+        // Only standing fuel can be spot-ignited; re-application to an
+        // already-burning target is rejected, making application idempotent.
+        self.derived.fuels.iter().any(|(t, _)| *t == current_next)
+    }
+
+    fn on_paint(&mut self, idx: usize, new_type: CellType) {
+        if idx < self.derived.p_base.len() {
+            self.derived.p_base[idx] = self.p_base_for(new_type, idx);
+            self.derived.fuel_slot[idx] = self.fuel_slot_for(new_type);
+        }
+    }
+
+    fn declared_types(&self) -> Vec<CellType> {
+        let d = &self.derived;
+        let mut out: Vec<CellType> = d.fuels.iter().map(|(t, _)| *t).collect();
+        out.push(d.burning);
+        out.push(d.burned);
+        out
+    }
+
+    fn params(&self) -> Vec<ParamDesc> {
+        self.param_descs()
+    }
+
+    /// Current value of `key`.
+    ///
+    /// Every key [`Self::params`] lists answers with `Some`, which is what
+    /// makes `Grid2D::set_model_param`'s rollback able to put the old value
+    /// back. `None` means the key is not one of this model's parameters —
+    /// including `spotting.*` when spotting is switched off, in which case
+    /// `params` does not list it either.
+    fn get_param(&self, key: &str) -> Option<ParamValue> {
+        let p = &self.params;
+        let spot = p.spotting.as_ref();
+        Some(match key {
+            "wind_speed" => ParamValue::Float(p.wind_speed),
+            "wind_from_deg" => ParamValue::Float(p.wind_from_deg),
+            "c1" => ParamValue::Float(p.c1),
+            "c2" => ParamValue::Float(p.c2),
+            "p0" => ParamValue::Float(p.p0),
+            "spread" => ParamValue::Choice(p.spread.clone()),
+            "wind_law" => ParamValue::Choice(p.wind_law.clone()),
+            "arrival_jitter" => ParamValue::Float(p.arrival_jitter),
+            "burn_duration" => ParamValue::Int(i64::from(p.burn_duration)),
+            "slope_a" => ParamValue::Float(p.slope_a),
+            "cell_size" => ParamValue::Float(p.cell_size),
+            "spotting.p_spot" => ParamValue::Float(spot?.p_spot),
+            "spotting.median_distance" => ParamValue::Float(spot?.median_distance),
+            "spotting.sigma" => ParamValue::Float(spot?.sigma),
+            "spotting.angle_jitter_deg" => ParamValue::Float(spot?.angle_jitter_deg),
+            // A seed above i64::MAX cannot be carried by ParamValue::Int. The
+            // seed is read-only, so clamping only affects the label a panel
+            // shows, never the run.
+            "seed" => ParamValue::Int(i64::try_from(p.seed).unwrap_or(i64::MAX)),
+            _ => return None,
+        })
+    }
+
+    /// Write `key`.
+    ///
+    /// This is a plain field write per key: the engine has already checked the
+    /// value against the parameter's [`ParamKind`] bounds, and for a
+    /// `reattach` parameter [`Self::attach`] re-checks it afterwards, so there
+    /// is no range checking to repeat here. What is left is what the engine
+    /// cannot know: a key this model does not have, a value of a shape the
+    /// field cannot hold, and `spotting.*` on a model with no spotting block.
+    /// Each of those comes back as [`ModelError::InvalidParam`] naming the key.
+    fn set_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
+        let p = &mut self.params;
+        match (key, &value) {
+            ("wind_speed", ParamValue::Float(v)) => p.wind_speed = *v,
+            ("wind_from_deg", ParamValue::Float(v)) => p.wind_from_deg = *v,
+            ("c1", ParamValue::Float(v)) => p.c1 = *v,
+            ("c2", ParamValue::Float(v)) => p.c2 = *v,
+            ("p0", ParamValue::Float(v)) => p.p0 = *v,
+            ("spread", ParamValue::Choice(v)) => p.spread = v.clone(),
+            ("wind_law", ParamValue::Choice(v)) => p.wind_law = v.clone(),
+            ("arrival_jitter", ParamValue::Float(v)) => p.arrival_jitter = *v,
+            ("burn_duration", ParamValue::Int(v)) => {
+                p.burn_duration = u32::try_from(*v).map_err(|_| {
+                    ModelError::InvalidParam(format!("'{key}': {v} is not a step count"))
+                })?;
+            }
+            ("slope_a", ParamValue::Float(v)) => p.slope_a = *v,
+            ("cell_size", ParamValue::Float(v)) => p.cell_size = *v,
+            ("spotting.p_spot", ParamValue::Float(v)) => spotting_mut(p, key)?.p_spot = *v,
+            ("spotting.median_distance", ParamValue::Float(v)) => {
+                spotting_mut(p, key)?.median_distance = *v;
+            }
+            ("spotting.sigma", ParamValue::Float(v)) => spotting_mut(p, key)?.sigma = *v,
+            ("spotting.angle_jitter_deg", ParamValue::Float(v)) => {
+                spotting_mut(p, key)?.angle_jitter_deg = *v;
+            }
+            ("seed", _) => {
+                return Err(ModelError::InvalidParam(
+                    "'seed' is read-only: changing it mid-run would break reproducibility".into(),
+                ));
+            }
+            _ => {
+                return Err(ModelError::InvalidParam(format!(
+                    "cannot set parameter '{key}' from {value:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        // The seed is read at step time (`cell_rand(seed, step, cell, stream)`),
+        // so nothing derived has to be rebuilt.
+        self.params.seed = seed;
+    }
+
+    fn boxed_clone(&self) -> Box<dyn ExternalModel> {
+        Box::new(self.clone())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+impl WildfireModel {
     /// Fire only moves at its edges, and this loop exploits that.
     ///
     /// A cell's type can only change this step if it is Burning (it ages or
@@ -939,7 +1316,12 @@ impl ExternalModel for WildfireModel {
     /// Results are identical to visiting every cell: skipped cells could not
     /// have changed, and they never consumed randomness in the first place
     /// (the ignition draw only happens when a burning neighbor exists).
-    fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+    ///
+    /// This is the Bernoulli rule's stepper and is untouched by the arrival
+    /// rule's addition: `params.spread == "bernoulli"` (the default) reaches
+    /// this function and only this function, with exactly the code it had
+    /// before the arrival rule existed.
+    fn step_chunk_bernoulli(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
         let dir = self.dir_factors();
         let mut events = Vec::new();
@@ -1058,120 +1440,93 @@ impl ExternalModel for WildfireModel {
         events
     }
 
-    fn event_applies(&self, current_next: CellType, _event: &ModelEvent) -> bool {
-        // Only standing fuel can be spot-ignited; re-application to an
-        // already-burning target is rejected, making application idempotent.
-        self.derived.fuels.iter().any(|(t, _)| *t == current_next)
-    }
-
-    fn on_paint(&mut self, idx: usize, new_type: CellType) {
-        if idx < self.derived.p_base.len() {
-            self.derived.p_base[idx] = self.p_base_for(new_type, idx);
-            self.derived.fuel_slot[idx] = self.fuel_slot_for(new_type);
-        }
-    }
-
-    fn declared_types(&self) -> Vec<CellType> {
+    /// The arrival rule's stepper: direction sets ignition *time*, not
+    /// ignition chance. See the [module docs](self) and
+    /// [`WildfireDerived::heat`].
+    ///
+    /// Unlike [`Self::step_chunk_bernoulli`] this does not build the
+    /// burning-neighbor bitmap; it just walks every cell of the chunk (the
+    /// "plain per-cell path" the task brief allows), which is simpler and
+    /// still chunk-parallel-safe because a chunk only ever touches `heat`
+    /// entries inside its own `start .. start + next.len()` range.
+    fn step_chunk_arrival(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
-        let mut out: Vec<CellType> = d.fuels.iter().map(|(t, _)| *t).collect();
-        out.push(d.burning);
-        out.push(d.burned);
-        out
-    }
+        let dir = self.dir_factors();
+        let mut events = Vec::new();
+        let width = ctx.width;
+        let height = ctx.height;
+        let cells = ctx.cells;
+        let start = ctx.start;
+        let len = next.len();
+        if len == 0 {
+            return events;
+        }
+        // Default: cells untouched by fire keep their type, same as the
+        // Bernoulli path.
+        next.copy_from_slice(&cells[start..start + len]);
 
-    fn params(&self) -> Vec<ParamDesc> {
-        self.param_descs()
-    }
+        for (local, slot) in next.iter_mut().enumerate() {
+            let idx = start + local;
+            let cur = cells[idx];
+            let x = idx % width;
+            let y = idx / width;
 
-    /// Current value of `key`.
-    ///
-    /// Every key [`Self::params`] lists answers with `Some`, which is what
-    /// makes `Grid2D::set_model_param`'s rollback able to put the old value
-    /// back. `None` means the key is not one of this model's parameters —
-    /// including `spotting.*` when spotting is switched off, in which case
-    /// `params` does not list it either.
-    fn get_param(&self, key: &str) -> Option<ParamValue> {
-        let p = &self.params;
-        let spot = p.spotting.as_ref();
-        Some(match key {
-            "wind_speed" => ParamValue::Float(p.wind_speed),
-            "wind_from_deg" => ParamValue::Float(p.wind_from_deg),
-            "c1" => ParamValue::Float(p.c1),
-            "c2" => ParamValue::Float(p.c2),
-            "p0" => ParamValue::Float(p.p0),
-            "burn_duration" => ParamValue::Int(i64::from(p.burn_duration)),
-            "slope_a" => ParamValue::Float(p.slope_a),
-            "cell_size" => ParamValue::Float(p.cell_size),
-            "spotting.p_spot" => ParamValue::Float(spot?.p_spot),
-            "spotting.median_distance" => ParamValue::Float(spot?.median_distance),
-            "spotting.sigma" => ParamValue::Float(spot?.sigma),
-            "spotting.angle_jitter_deg" => ParamValue::Float(spot?.angle_jitter_deg),
-            // A seed above i64::MAX cannot be carried by ParamValue::Int. The
-            // seed is read-only, so clamping only affects the label a panel
-            // shows, never the run.
-            "seed" => ParamValue::Int(i64::try_from(p.seed).unwrap_or(i64::MAX)),
-            _ => return None,
-        })
-    }
+            if cur == d.burning {
+                *slot = if ctx.ages[local] + 1 >= self.params.burn_duration {
+                    d.burned
+                } else {
+                    d.burning
+                };
+                if let Some(target) = self.spot_target(ctx, idx, x, y) {
+                    events.push(ModelEvent {
+                        target,
+                        new_type: d.burning,
+                    });
+                }
+                continue;
+            }
+            if cur == d.burned {
+                continue; // absorbing; default copy already applies.
+            }
+            let p_base = d.p_base[idx];
+            if p_base <= 0.0 {
+                continue; // inactive or inert type: absorbing.
+            }
 
-    /// Write `key`.
-    ///
-    /// This is a plain field write per key: the engine has already checked the
-    /// value against the parameter's [`ParamKind`] bounds, and for a
-    /// `reattach` parameter [`Self::attach`] re-checks it afterwards, so there
-    /// is no range checking to repeat here. What is left is what the engine
-    /// cannot know: a key this model does not have, a value of a shape the
-    /// field cannot hold, and `spotting.*` on a model with no spotting block.
-    /// Each of those comes back as [`ModelError::InvalidParam`] naming the key.
-    fn set_param(&mut self, key: &str, value: ParamValue) -> Result<(), ModelError> {
-        let p = &mut self.params;
-        match (key, &value) {
-            ("wind_speed", ParamValue::Float(v)) => p.wind_speed = *v,
-            ("wind_from_deg", ParamValue::Float(v)) => p.wind_from_deg = *v,
-            ("c1", ParamValue::Float(v)) => p.c1 = *v,
-            ("c2", ParamValue::Float(v)) => p.c2 = *v,
-            ("p0", ParamValue::Float(v)) => p.p0 = *v,
-            ("burn_duration", ParamValue::Int(v)) => {
-                p.burn_duration = u32::try_from(*v).map_err(|_| {
-                    ModelError::InvalidParam(format!("'{key}': {v} is not a step count"))
-                })?;
+            let dir_cell: &[f32; 8] = if d.wind_factors.is_empty() {
+                &dir
+            } else {
+                d.wind_factors[idx * 8..idx * 8 + 8].try_into().unwrap()
+            };
+            let slope = &d.slope[idx * 8..idx * 8 + 8];
+
+            let mut rate = 0.0f32;
+            let mut any = false;
+            for j in 0..8 {
+                let (dx, dy) = d.offsets[j];
+                let (nx, ny) = (x as i64 + dx as i64, y as i64 + dy as i64);
+                let neighbor = if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                    d.inactive
+                } else {
+                    cells[ny as usize * width + nx as usize]
+                };
+                if neighbor == d.burning {
+                    any = true;
+                    rate += p_base * dir_cell[j] * slope[j];
+                }
             }
-            ("slope_a", ParamValue::Float(v)) => p.slope_a = *v,
-            ("cell_size", ParamValue::Float(v)) => p.cell_size = *v,
-            ("spotting.p_spot", ParamValue::Float(v)) => spotting_mut(p, key)?.p_spot = *v,
-            ("spotting.median_distance", ParamValue::Float(v)) => {
-                spotting_mut(p, key)?.median_distance = *v;
+            if !any {
+                continue;
             }
-            ("spotting.sigma", ParamValue::Float(v)) => spotting_mut(p, key)?.sigma = *v,
-            ("spotting.angle_jitter_deg", ParamValue::Float(v)) => {
-                spotting_mut(p, key)?.angle_jitter_deg = *v;
-            }
-            ("seed", _) => {
-                return Err(ModelError::InvalidParam(
-                    "'seed' is read-only: changing it mid-run would break reproducibility".into(),
-                ));
-            }
-            _ => {
-                return Err(ModelError::InvalidParam(format!(
-                    "cannot set parameter '{key}' from {value:?}"
-                )));
+            let jitter = self.arrival_jitter(idx);
+            let prev = f32::from_bits(d.heat[idx].load(Ordering::Relaxed));
+            let new_heat = prev + rate * jitter;
+            d.heat[idx].store(new_heat.to_bits(), Ordering::Relaxed);
+            if new_heat >= 1.0 {
+                *slot = d.burning;
             }
         }
-        Ok(())
-    }
-
-    fn set_seed(&mut self, seed: u64) {
-        // The seed is read at step time (`cell_rand(seed, step, cell, stream)`),
-        // so nothing derived has to be rebuilt.
-        self.params.seed = seed;
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ExternalModel> {
-        Box::new(self.clone())
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
+        events
     }
 }
 
@@ -1197,6 +1552,9 @@ mod tests {
             spotting: None,
             burning_name: None,
             burned_name: None,
+            spread: "bernoulli".into(),
+            arrival_jitter: 0.2,
+            wind_law: "exponential".into(),
         }
     }
 
@@ -1258,6 +1616,9 @@ mod tests {
         check(|p| p.p0 = -0.1, "p0 negative");
         check(|p| p.burn_duration = 0, "burn_duration");
         check(|p| p.cell_size = 0.0, "cell_size");
+        check(|p| p.spread = "sometimes".into(), "spread must be a known rule");
+        check(|p| p.wind_law = "gusty".into(), "wind_law must be a known law");
+        check(|p| p.arrival_jitter = -0.1, "arrival_jitter negative");
         check(|p| p.fuels.clear(), "no fuels");
         check(|p| p.fuels[0].veg_factor = -1.0, "veg_factor");
         check(
@@ -1929,7 +2290,7 @@ mod tests {
 
     #[test]
     fn params_lists_every_key_in_a_stable_order_with_groups_and_units() {
-        // Without spotting the whole Spotting group is absent: nine keys.
+        // Without spotting the whole Spotting group is absent: twelve keys.
         let m = WildfireModel::new(base_params(), WildfireEnv::default());
         let keys: Vec<String> = m.params().into_iter().map(|d| d.key).collect();
         assert_eq!(
@@ -1939,6 +2300,9 @@ mod tests {
                 "wind_from_deg",
                 "c1",
                 "c2",
+                "wind_law",
+                "spread",
+                "arrival_jitter",
                 "p0",
                 "burn_duration",
                 "slope_a",
@@ -1963,6 +2327,9 @@ mod tests {
                 ("wind_from_deg", Some("Wind"), Some("°")),
                 ("c1", Some("Wind"), None),
                 ("c2", Some("Wind"), None),
+                ("wind_law", Some("Wind"), None),
+                ("spread", Some("Fire"), None),
+                ("arrival_jitter", Some("Fire"), None),
                 ("p0", Some("Fire"), None),
                 ("burn_duration", Some("Fire"), Some("steps")),
                 ("slope_a", Some("Terrain"), None),
@@ -1974,16 +2341,16 @@ mod tests {
                 ("seed", None, None),
             ]
         );
-        assert_eq!(descs.len(), 13);
+        assert_eq!(descs.len(), 16);
 
-        // Only the three parameters that feed attach's precomputed buffers
+        // Only the four parameters that feed attach's precomputed buffers
         // ask for a rebuild, and only the seed is read-only.
         let reattach: Vec<&str> = descs
             .iter()
             .filter(|d| d.reattach)
             .map(|d| d.key.as_str())
             .collect();
-        assert_eq!(reattach, vec!["p0", "slope_a", "cell_size"]);
+        assert_eq!(reattach, vec!["wind_law", "p0", "slope_a", "cell_size"]);
         let read_only: Vec<&str> = descs
             .iter()
             .filter(|d| d.read_only)
@@ -2075,6 +2442,9 @@ mod tests {
             ("wind_from_deg", ParamValue::Float(210.0)),
             ("c1", ParamValue::Float(0.06)),
             ("c2", ParamValue::Float(0.2)),
+            ("wind_law", ParamValue::Choice("rear_focus".to_string())),
+            ("spread", ParamValue::Choice("arrival".to_string())),
+            ("arrival_jitter", ParamValue::Float(0.5)),
             ("p0", ParamValue::Float(0.42)),
             ("burn_duration", ParamValue::Int(7)),
             ("slope_a", ParamValue::Float(0.1)),
@@ -2127,6 +2497,11 @@ mod tests {
             if let ParamKind::Int { min, max } = &d.kind {
                 ends.push(ParamValue::Int(*min));
                 ends.push(ParamValue::Int(*max));
+            }
+            if let ParamKind::Choice { options } = &d.kind {
+                // A Choice's "end stops" are its two declared options — both
+                // `spread` and `wind_law` happen to have exactly two.
+                ends.extend(options.iter().cloned().map(ParamValue::Choice));
             }
             assert_eq!(ends.len(), 2, "'{}' has no numeric bounds", d.key);
             for end in ends {
@@ -2214,6 +2589,8 @@ mod tests {
             ("burn_duration", ParamValue::Float(3.0)),
             ("burn_duration", ParamValue::Int(-1)),
             ("wind_speed", ParamValue::Bool(true)),
+            ("spread", ParamValue::Float(1.0)),
+            ("wind_law", ParamValue::Float(1.0)),
             ("spotting.p_spot", ParamValue::Float(0.1)),
             ("spotting.median_distance", ParamValue::Float(5.0)),
             ("spotting.sigma", ParamValue::Float(0.5)),
@@ -2264,5 +2641,357 @@ mod tests {
             model_of(&mut back).derived.p_base[0] > 0.0,
             "restoring re-ran attach, so derived state is live again"
         );
+    }
+
+    // -------- Arrival-time spread rule (E30a) --------
+
+    fn heat_of(m: &WildfireModel, idx: usize) -> f32 {
+        f32::from_bits(m.derived.heat[idx].load(Ordering::Relaxed))
+    }
+
+    #[test]
+    fn heat_is_zero_right_after_attach() {
+        let cells = forest_grid(3, 3);
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        assert_eq!(m.derived.heat.len(), 9);
+        assert!((0..9).all(|i| heat_of(&m, i) == 0.0));
+    }
+
+    #[test]
+    fn heat_resets_on_reattach_and_on_reset_cells() {
+        // p0 = 1, no wind, flat: a full tick pushes the cardinal neighbors'
+        // heat above 0 but (with more than one burning neighbor needed to
+        // reach 1.0) not all the way to ignition, so the accumulator is
+        // observable before the reset.
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(3, 3);
+        cells[4] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.3; // < 1: a single cardinal neighbor's rate is 0.3, not 1.0
+        let mut m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        let ages = vec![0u32; 9];
+        let mut next = vec![CellType::inactive(); 9];
+        m.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next);
+        assert!(heat_of(&m, 1) > 0.0, "cardinal neighbor accumulated heat");
+
+        // Re-running attach (what a live `spread`/`p0` edit or a config
+        // reload does) must zero it again.
+        let view = GridView {
+            width: 3,
+            height: 3,
+            cells: &cells,
+            inactive: CellType::inactive(),
+        };
+        m.attach(&view).expect("reattach");
+        assert!((0..9).all(|i| heat_of(&m, i) == 0.0), "attach zeroes heat");
+
+        // `Grid2D::reset_cells` re-attaches a fresh clone of the model
+        // (see `grid2d.rs`), which must go through the same zeroing path.
+        let mut g = crate::Grid2D::new(3, 3, 0, forest_grid(3, 3), crate::Rule2D { subrules: vec![] });
+        let mut p2 = base_params();
+        p2.spread = "arrival".into();
+        p2.p0 = 0.3;
+        let mut cells2 = forest_grid(3, 3);
+        cells2[4] = b;
+        g.attach_model(Box::new(WildfireModel::new(p2, WildfireEnv::default())))
+            .unwrap();
+        g.reset_cells(cells2).unwrap();
+        g.step();
+        let heated = model_of(&mut g).derived.heat[1].load(Ordering::Relaxed);
+        assert_ne!(heated, 0, "heat accumulated after the reset");
+        g.reset_cells(forest_grid(3, 3)).unwrap();
+        assert_eq!(
+            model_of(&mut g).derived.heat[1].load(Ordering::Relaxed),
+            0,
+            "reset_cells zeroes heat"
+        );
+    }
+
+    #[test]
+    fn arrival_rule_ignites_at_exactly_heat_one_not_before() {
+        // p0 = 1, no wind, flat, sigma = 0: one cardinal burning neighbor
+        // contributes rate = p_base * dir * slope = 1 * 1 * 1 = 1.0 exactly
+        // (f32-exact), so the cell must ignite on this very tick.
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(3, 3);
+        cells[4] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 1.0;
+        p.arrival_jitter = 0.0;
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        let ages = vec![0u32; 9];
+        let mut next = vec![CellType::inactive(); 9];
+        m.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next);
+        for idx in [1usize, 3, 5, 7] {
+            assert_eq!(next[idx], b, "cardinal neighbor reaches heat 1.0 exactly");
+        }
+
+        // p0 = 0.99: heat stays at 0.99 after one tick, strictly below 1.0.
+        let mut p2 = base_params();
+        p2.spread = "arrival".into();
+        p2.p0 = 0.99;
+        p2.arrival_jitter = 0.0;
+        let m2 = attach_on(WildfireModel::new(p2, WildfireEnv::default()), 3, 3, &cells);
+        let mut next2 = vec![CellType::inactive(); 9];
+        m2.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next2);
+        let f = CellType::new("Forest");
+        assert_eq!(next2[1], f, "0.99 heat must not ignite");
+        assert!((heat_of(&m2, 1) - 0.99).abs() < 1e-6);
+    }
+
+    #[test]
+    fn arrival_rule_accumulates_across_ticks_to_the_boundary() {
+        // p0 = 0.5: heat 0.5 after tick 1 (no ignite), 1.0 after tick 2
+        // (ignite). burn_duration is kept long so the neighbor is still
+        // burning for the second tick.
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(3, 3);
+        cells[4] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.5;
+        p.arrival_jitter = 0.0;
+        p.burn_duration = 10;
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        let ages = vec![0u32; 9];
+        let mut next = vec![CellType::inactive(); 9];
+        m.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next);
+        let f = CellType::new("Forest");
+        assert_eq!(next[1], f, "0.5 heat after tick 1: not yet");
+        assert!((heat_of(&m, 1) - 0.5).abs() < 1e-6);
+        // Cell 4 is still burning (age 0 < burn_duration - 1) in `cells`, so
+        // feed the *original* `cells` again for tick 2 (this test drives
+        // `step_chunk` directly rather than a whole `Grid2D::step`).
+        let ages2 = vec![1u32; 9];
+        m.step_chunk(&ctx(&cells, &ages2, 3, 3, 1), &mut next);
+        assert_eq!(next[1], b, "0.5 + 0.5 reaches 1.0 on tick 2");
+    }
+
+    #[test]
+    fn arrival_rule_burns_out_and_stays_absorbing_like_bernoulli() {
+        let f = CellType::new("Forest");
+        let b = CellType::new("Burning");
+        let cells = vec![b, f, f, f];
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.0; // isolate burn-duration handling
+        p.burn_duration = 2;
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 2, 2, &cells);
+        let mut next = vec![CellType::inactive(); 4];
+        let ages = vec![0u32; 4];
+        m.step_chunk(&ctx(&cells, &ages, 2, 2, 0), &mut next);
+        assert_eq!(next[0], b, "age 0 + 1 < duration 2: still burning");
+        let ages = vec![1u32; 4];
+        m.step_chunk(&ctx(&cells, &ages, 2, 2, 1), &mut next);
+        assert_eq!(next[0], CellType::new("BurnedOut"));
+        // Burned stays burned even with p0 = 0 (nothing to ignite anyway),
+        // and a non-fuel/inert cell (p_base <= 0) is untouched.
+        let cells2 = vec![CellType::new("BurnedOut"), f, f, f];
+        m.step_chunk(&ctx(&cells2, &ages, 2, 2, 2), &mut next);
+        assert_eq!(next[0], CellType::new("BurnedOut"));
+        assert_eq!(next[1], f);
+    }
+
+    #[test]
+    fn arrival_rule_generates_spotting_events_from_burning_cells() {
+        // Mirrors `spotting_generates_deterministic_in_bounds_events`: the
+        // arrival stepper's burning-cell branch also has to fire the spot
+        // draw and push the resulting event.
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(9, 9);
+        cells[4 * 9 + 4] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.0;
+        p.burn_duration = u32::MAX; // keep it burning
+        p.wind_from_deg = 270.0; // west wind: firebrands fly toward +x
+        p.spotting = Some(SpottingParams {
+            p_spot: 1.0,
+            median_distance: 3.0,
+            sigma: 0.0,
+            angle_jitter_deg: 0.0,
+        });
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 9, 9, &cells);
+        let ages = vec![0u32; 81];
+        let mut next = vec![CellType::inactive(); 81];
+        let ev = m.step_chunk(&ctx(&cells, &ages, 9, 9, 0), &mut next);
+        assert_eq!(ev.len(), 1, "p_spot = 1 with one burning cell");
+        assert_eq!(ev[0].target, 4 * 9 + 7, "3 cells east, same as Bernoulli");
+        assert_eq!(ev[0].new_type, b);
+    }
+
+    #[test]
+    fn arrival_rule_is_chunk_parallel_consistent() {
+        // Same shape as `chunked_evaluation_matches_whole_grid`, for the
+        // arrival rule's plain per-cell path: splitting into two chunks must
+        // give exactly the same result as one chunk, cell for cell,
+        // including each chunk's own heat writes.
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(4, 4);
+        cells[5] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.6;
+        p.wind_speed = 5.0;
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 4, 4, &cells);
+        let ages = vec![0u32; 16];
+        let mut whole = vec![CellType::inactive(); 16];
+        m.step_chunk(&ctx(&cells, &ages, 4, 4, 3), &mut whole);
+        let whole_heat: Vec<f32> = (0..16).map(|i| heat_of(&m, i)).collect();
+
+        // Fresh model (same params) so the whole-grid pass above didn't
+        // already heat any cells.
+        let mut p2 = base_params();
+        p2.spread = "arrival".into();
+        p2.p0 = 0.6;
+        p2.wind_speed = 5.0;
+        let m2 = attach_on(WildfireModel::new(p2, WildfireEnv::default()), 4, 4, &cells);
+        let mut lo = vec![CellType::inactive(); 8];
+        let mut hi = vec![CellType::inactive(); 8];
+        m2.step_chunk(&ctx(&cells, &ages, 4, 4, 3), &mut lo);
+        let hi_ctx = ChunkCtx {
+            cells: &cells,
+            ages: &ages[8..],
+            start: 8,
+            width: 4,
+            height: 4,
+            step: 3,
+            inactive: CellType::inactive(),
+        };
+        m2.step_chunk(&hi_ctx, &mut hi);
+        assert_eq!(&whole[..8], &lo[..]);
+        assert_eq!(&whole[8..], &hi[..]);
+        let chunked_heat: Vec<f32> = (0..16).map(|i| heat_of(&m2, i)).collect();
+        assert_eq!(whole_heat, chunked_heat, "chunking must not change heat");
+    }
+
+    #[test]
+    fn arrival_rule_uses_the_percell_wind_field_when_one_is_set() {
+        // Exercises the `d.wind_factors` branch of `step_chunk_arrival`
+        // (as opposed to the uniform `dir_factors()` branch).
+        let b = CellType::new("Burning");
+        let mut cells = forest_grid(3, 3);
+        cells[4] = b;
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 1.0;
+        p.arrival_jitter = 0.0;
+        let mut m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        m.set_wind_field(&[0.0; 9], &[0.0; 9]).unwrap();
+        assert!(m.has_wind_field());
+        let ages = vec![0u32; 9];
+        let mut next = vec![CellType::inactive(); 9];
+        m.step_chunk(&ctx(&cells, &ages, 3, 3, 0), &mut next);
+        assert_eq!(next[1], b, "still ignites via the per-cell field table");
+    }
+
+    #[test]
+    fn arrival_jitter_is_deterministic_per_cell_and_varies_with_cell_and_seed() {
+        let mut p = base_params();
+        p.arrival_jitter = 0.2;
+        let m = WildfireModel::new(p.clone(), WildfireEnv::default());
+        let a = m.arrival_jitter(10);
+        let b = m.arrival_jitter(10);
+        assert_eq!(a, b, "same cell, same call: deterministic");
+        let c = m.arrival_jitter(11);
+        assert_ne!(a, c, "different cell: different jitter");
+        let mut p2 = p.clone();
+        p2.seed = p.seed + 1;
+        let m2 = WildfireModel::new(p2, WildfireEnv::default());
+        assert_ne!(
+            a,
+            m2.arrival_jitter(10),
+            "different seed: different jitter (ensemble diversity)"
+        );
+        assert!(a > 0.0, "log-normal jitter is always positive");
+
+        // sigma <= 0 short-circuits to no jitter at all.
+        let mut p3 = p;
+        p3.arrival_jitter = 0.0;
+        let m3 = WildfireModel::new(p3, WildfireEnv::default());
+        assert_eq!(m3.arrival_jitter(10), 1.0);
+    }
+
+    // -------- Wind laws (E30a addendum) --------
+
+    #[test]
+    fn anderson_lb_is_one_at_zero_wind_and_clamped_to_eight() {
+        assert!((anderson_lb(0.0) - 1.0).abs() < 1e-9);
+        assert!(anderson_lb(0.0) >= 1.0);
+        assert_eq!(anderson_lb(1000.0), 8.0, "clamped to Anderson's own range");
+    }
+
+    #[test]
+    fn rear_focus_reduces_to_the_exponential_laws_no_wind_case() {
+        let cells = forest_grid(3, 3);
+        let mut p_exp = base_params();
+        p_exp.wind_speed = 0.0;
+        let m_exp = attach_on(WildfireModel::new(p_exp, WildfireEnv::default()), 3, 3, &cells);
+        let mut p_rf = base_params();
+        p_rf.wind_law = "rear_focus".into();
+        p_rf.wind_speed = 0.0;
+        let m_rf = attach_on(WildfireModel::new(p_rf, WildfireEnv::default()), 3, 3, &cells);
+        let (a, b) = (m_exp.dir_factors(), m_rf.dir_factors());
+        for j in 0..8 {
+            assert!((a[j] - b[j]).abs() < 1e-6, "direction {j}: {} vs {}", a[j], b[j]);
+        }
+    }
+
+    #[test]
+    fn rear_focus_head_to_back_ratio_matches_the_ellipse_formula() {
+        let cells = forest_grid(3, 3);
+        for v in [0.6, 2.0, 5.0, 8.0] {
+            let mut p = base_params();
+            p.wind_law = "rear_focus".into();
+            p.wind_speed = v;
+            p.wind_from_deg = 270.0; // west wind: blows toward +x
+            let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+            let dir = m.dir_factors();
+            let offs = m.derived.offsets;
+            let j_head = offs.iter().position(|&o| o == (-1, 0)).unwrap(); // downwind
+            let j_back = offs.iter().position(|&o| o == (1, 0)).unwrap(); // upwind
+            let ratio = f64::from(dir[j_head]) / f64::from(dir[j_back]);
+            let a = anderson_lb(v);
+            let c = (a * a - 1.0).max(0.0).sqrt();
+            let expected = (a + c).powi(2);
+            assert!(
+                (ratio - expected).abs() / expected < 1e-4,
+                "v={v}: ratio {ratio} vs expected {expected}"
+            );
+        }
+        // Addendum prediction: head:back >= 2 already at 0.6 m/s.
+        let mut p = base_params();
+        p.wind_law = "rear_focus".into();
+        p.wind_speed = 0.6;
+        p.wind_from_deg = 270.0;
+        let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
+        let dir = m.dir_factors();
+        let offs = m.derived.offsets;
+        let j_head = offs.iter().position(|&o| o == (-1, 0)).unwrap();
+        let j_back = offs.iter().position(|&o| o == (1, 0)).unwrap();
+        assert!(
+            f64::from(dir[j_head]) / f64::from(dir[j_back]) >= 2.0,
+            "head:back at 0.6 m/s must be >= 2"
+        );
+    }
+
+    #[test]
+    fn wind_law_rejects_unknown_values_and_defaults_to_exponential() {
+        assert_eq!(base_params().wind_law, "exponential");
+        let cells = forest_grid(2, 2);
+        let mut p = base_params();
+        p.wind_law = "made_up".into();
+        let mut m = WildfireModel::new(p, WildfireEnv::default());
+        let view = GridView {
+            width: 2,
+            height: 2,
+            cells: &cells,
+            inactive: CellType::inactive(),
+        };
+        assert!(m.attach(&view).is_err());
     }
 }

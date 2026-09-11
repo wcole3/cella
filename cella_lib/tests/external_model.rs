@@ -344,6 +344,9 @@ fn attach_model_error_propagates_and_leaves_grid_modelless() {
             spotting: None,
             burning_name: None,
             burned_name: None,
+            spread: "bernoulli".into(),
+            arrival_jitter: 0.2,
+            wind_law: "exponential".into(),
         },
         WildfireEnv::default(),
     );
@@ -384,6 +387,9 @@ fn wildfire_params(seed: u64) -> WildfireParams {
         }),
         burning_name: None,
         burned_name: None,
+        spread: "bernoulli".into(),
+        arrival_jitter: 0.2,
+        wind_law: "exponential".into(),
     }
 }
 

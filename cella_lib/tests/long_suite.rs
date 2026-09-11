@@ -1158,6 +1158,9 @@ fn wildfire_grid_256(spotting: bool) -> Grid2D {
         }),
         burning_name: None,
         burned_name: None,
+        spread: "bernoulli".into(),
+        arrival_jitter: 0.2,
+        wind_law: "exponential".into(),
     };
     let mut g = Grid2D::new(w, h, 0, init, Rule2D { subrules: vec![] });
     g.attach_model(Box::new(WildfireModel::new(

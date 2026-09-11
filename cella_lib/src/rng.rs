@@ -14,7 +14,7 @@
 //!   in a genetic algorithm). Same seed, same sequence.
 //!
 //! Streams keep independent uses from reading the same numbers: the wildfire
-//! model owns streams `0..=4`, subrule `i` of a rule draws on
+//! model owns streams `0..=6`, subrule `i` of a rule draws on
 //! [`STREAM_RULE`]` + i`, and random fill uses [`STREAM_FILL`].
 
 /// First stream reserved for rule subrules: subrule `i` draws on `STREAM_RULE + i`.

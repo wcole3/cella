@@ -996,6 +996,9 @@ mod tests {
                 spotting: None,
                 burning_name: None,
                 burned_name: None,
+                spread: "bernoulli".into(),
+                arrival_jitter: 0.2,
+                wind_law: "exponential".into(),
             },
             crate::wildfire::WildfireEnv::default(),
         )))

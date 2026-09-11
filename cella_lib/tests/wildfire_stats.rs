@@ -32,6 +32,9 @@ fn params(seed: u64, wind_speed: f64, wind_from_deg: f64) -> WildfireParams {
         spotting: None,
         burning_name: None,
         burned_name: None,
+        spread: "bernoulli".into(),
+        arrival_jitter: 0.2,
+        wind_law: "exponential".into(),
     }
 }
 
