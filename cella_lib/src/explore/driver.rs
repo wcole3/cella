@@ -116,6 +116,36 @@ pub trait MemberDriver: Send + Sync + std::fmt::Debug {
         Vec::new()
     }
 
+    /// Rebuild an immigrant's grid from the observation just scored, rather
+    /// than letting it inherit a parent's grid (state correction: Rochoux et
+    /// al. 2014; Xue, Gu & Hu 2012). Called only when
+    /// [`super::ensemble::EnsembleConfig::immigrant_source`] is
+    /// `Observed`, once per immigrant, on a `sim` that already has its
+    /// fresh genome and driver state applied.
+    ///
+    /// `observed` is a throwaway grid the engine builds purely to carry the
+    /// observation's *shape* in this ensemble's own cell types: cell `i` is
+    /// painted with the first tracked type when observed there, and with
+    /// this ensemble's own inactive (background) type otherwise — so
+    /// `observed.cells()[i] != observed.inactive()` is exactly "cell `i` was
+    /// observed on", model or not. The engine builds it by cloning a
+    /// member, so it has the right dimensions and an attached model, but it
+    /// is never stepped and no driver should try to.
+    ///
+    /// Default: copy `observed`'s cells onto `sim` verbatim, cell for cell,
+    /// with [`Sim::paint`] (which is what a driver should use here too —
+    /// see its docs for why not [`Sim::reset_cells`]). That is the honest,
+    /// model-agnostic thing to do when a driver has nothing smarter to say.
+    /// A model that can tell "this observed cell is still on fire" from
+    /// "this one has already burned out" (the wildfire driver) overrides
+    /// this to say so.
+    fn seed_from_observation(&self, sim: &mut Sim, observed: &Sim) -> Result<(), ModelError> {
+        for (idx, &t) in observed.cells().iter().enumerate() {
+            sim.paint(idx, t)?;
+        }
+        Ok(())
+    }
+
     /// Clone into a box; lets configs holding a driver be cloned.
     fn boxed_clone(&self) -> Box<dyn MemberDriver>;
 }

@@ -1189,6 +1189,7 @@ impl CellaApp {
             crossover: 0.0,
             immigrant_reset: false,
             immigrant_reset_gate: None,
+            immigrant_source: cella_lib::ImmigrantSource::Prior,
             driver: None,
         }
     }

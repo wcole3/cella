@@ -38,6 +38,14 @@
 //!      value, i.e. only while the population is under-predicting the
 //!      observed area; setting this takes the decision away from
 //!      SMC_IMM_RESET, which is then ignored),
+//!      SMC_IMM_SOURCE=observed (E40: an immigrant's *grid*, not just its
+//!      state, is rebuilt from the observed perimeter — burned cells become
+//!      the model's burned type, the rim of still-unburned fuel next to a
+//!      burned cell becomes burning at age 0, everything else is untouched
+//!      from a fresh scenario grid; ignores SMC_IMM_RESET/SMC_IMM_RESET_GATE
+//!      for the immigrants it seeds, which are always uncontained. Default:
+//!      "prior", the pre-E40 behaviour — an immigrant's grid is a clone of
+//!      a resampled parent, like any other child),
 //!      SMC_WIND_ROT_DEG (0), SMC_ASSIM_EVERY (1),
 //!      SMC_PRIOR=path.json (a JSON array of genes replacing the default list),
 //!      SMC_CONTAIN=1 (add the containment genes `contain_a`/`contain_b`, so
@@ -65,7 +73,7 @@ use cella_lib::wildfire::driver::{
     GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow, WildfireDriver,
 };
 use cella_lib::wildfire::wind_toward_grid_deg;
-use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue};
+use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ImmigrantSource, ParamValue};
 use cella_lib::{Evolution, EvolveConfig, Grid2D, Metric, Rule2D};
 use serde::{Deserialize, Serialize};
 
@@ -757,6 +765,10 @@ fn main() {
         immigrant_reset_gate: std::env::var("SMC_IMM_RESET_GATE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok()),
+        immigrant_source: match std::env::var("SMC_IMM_SOURCE").as_deref() {
+            Ok("observed") => ImmigrantSource::Observed,
+            _ => ImmigrantSource::Prior,
+        },
         driver: Some(Box::new(WildfireDriver {
             // One containment draw per simulated day.
             steps_per_day,

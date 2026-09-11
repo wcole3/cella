@@ -40,7 +40,7 @@ pub use archive::{
     SnapshotCell, Thumbnail, thumbnail_from_rows,
 };
 pub use driver::{Forcing, MemberDriver, MemberState};
-pub use ensemble::{AssimilationReport, Ensemble, EnsembleConfig, Member};
+pub use ensemble::{AssimilationReport, Ensemble, EnsembleConfig, ImmigrantSource, Member};
 pub use evolve::{
     Evolution, EvolveConfig, GenerationReport, Individual, InitialCondition, Search, Selection,
 };

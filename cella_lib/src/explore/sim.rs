@@ -204,6 +204,32 @@ impl Sim {
         }
     }
 
+    /// Set one cell's type in place — the same move a live paint tool makes
+    /// (see [`Grid2D::transition_state_and_buffer`]): its age resets to 0 if
+    /// the type actually changed, an attached model is told via
+    /// `on_paint`, but nothing else about the grid moves. Unlike
+    /// [`Self::reset_cells`] this does **not** touch the step counter,
+    /// which is exactly why a [`super::driver::MemberDriver`] rebuilding an
+    /// immigrant's grid from an observation
+    /// ([`super::driver::MemberDriver::seed_from_observation`]) must use
+    /// this instead: the ensemble relies on every member reporting the same
+    /// step count, and a driver has no business changing that. Population
+    /// counts are not updated here (a live paint tool already leaves them
+    /// stale the same way); they catch up at the member's next step.
+    pub fn paint(&mut self, idx: usize, new_type: CellType) -> Result<(), ModelError> {
+        let refused = match self {
+            Sim::D1(g) => g.transition_state_and_buffer(idx, &new_type),
+            Sim::D2(g) => g.transition_state_and_buffer(idx, &new_type),
+        };
+        match refused {
+            None => Ok(()),
+            Some(_) => Err(ModelError::InvalidParam(format!(
+                "paint: cell {idx} is outside the grid of {} cells",
+                self.len()
+            ))),
+        }
+    }
+
     /// Every type this simulation can show: the ones on the grid now, the
     /// ones its rule can produce or looks for, and the ones its model
     /// declares. Used to check that a type name in a config is real.
@@ -404,5 +430,30 @@ mod tests {
         assert!(b.model_mut().is_none());
         let state1 = row().to_state();
         assert!(matches!(Sim::from_state(&state1), Some(Sim::D1(_))));
+    }
+
+    #[test]
+    fn paint_changes_one_cell_without_touching_the_step_counter() {
+        let mut s = blinker();
+        s.step_n(3);
+        let step_before = s.step_count();
+        let alive = CellType::from("Alive");
+        let dead = CellType::inactive();
+        assert_eq!(s.ages()[0], 3, "an untouched cell ages every step");
+        s.paint(0, alive).unwrap();
+        assert_eq!(s.cells()[0], alive);
+        assert_eq!(s.ages()[0], 0, "a real type change resets the cell's age");
+        assert_eq!(
+            s.step_count(),
+            step_before,
+            "paint must not move the step counter — a driver seeding one \
+             immigrant must never desync it from the rest of the ensemble"
+        );
+        // Painting the same type again just ages it, like a step would.
+        s.paint(0, alive).unwrap();
+        assert_eq!(s.ages()[0], 1);
+        s.paint(0, dead).unwrap();
+        assert_eq!(s.ages()[0], 0);
+        assert!(s.paint(999, alive).is_err(), "out-of-bounds is refused");
     }
 }

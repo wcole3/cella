@@ -111,9 +111,37 @@ pub struct EnsembleConfig {
     /// treats that as "do not reset".
     #[serde(default)]
     pub immigrant_reset_gate: Option<f64>,
+    /// Where an immigrant's *grid* comes from. `Prior` (default) is the
+    /// classic particle filter: an immigrant is a clone of a resampled
+    /// parent, exactly like every other child, and only `immigrant_reset` /
+    /// `immigrant_reset_gate` decide whether its driver *state* also
+    /// carries over. `Observed` is state correction (Rochoux et al. 2014;
+    /// Xue, Gu & Hu 2012): an immigrant's grid is rebuilt from the
+    /// observation itself, via [`MemberDriver::seed_from_observation`],
+    /// instead of inherited from any parent. An `Observed` immigrant's
+    /// driver state is always fresh — it is uncontained by construction,
+    /// having no history to have been contained *in* — so for these
+    /// immigrants `immigrant_reset_gate` and `immigrant_reset` are not
+    /// consulted at all; they still govern `Prior` immigrants exactly as
+    /// before.
+    #[serde(default)]
+    pub immigrant_source: ImmigrantSource,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Box<dyn MemberDriver>>,
+}
+
+/// See [`EnsembleConfig::immigrant_source`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImmigrantSource {
+    /// An immigrant's grid is a clone of a resampled parent, like any other
+    /// child. Default.
+    #[default]
+    Prior,
+    /// An immigrant's grid is rebuilt from the observation via
+    /// [`MemberDriver::seed_from_observation`].
+    Observed,
 }
 
 fn default_members() -> usize {
@@ -142,6 +170,7 @@ impl Default for EnsembleConfig {
             crossover: 0.0,
             immigrant_reset: false,
             immigrant_reset_gate: None,
+            immigrant_source: ImmigrantSource::Prior,
             driver: None,
         }
     }
@@ -191,6 +220,14 @@ pub struct Ensemble {
     /// both burned counts at scoring time, and computing the ratio right
     /// there is simpler than threading it through the caller.
     last_area_ratio: Option<f64>,
+    /// The observation from the last [`Self::assimilate`] call, as a
+    /// throwaway [`Sim`] (see [`MemberDriver::seed_from_observation`]);
+    /// `None` until the first call, and never built at all unless
+    /// [`EnsembleConfig::immigrant_source`] is `Observed` (building it
+    /// clones a member, so a config that never needs it never pays for it).
+    /// A direct call to [`Self::assimilate_scores`] never updates it, same
+    /// as `last_area_ratio`.
+    last_observed: Option<Sim>,
 }
 
 impl std::fmt::Debug for Ensemble {
@@ -298,6 +335,7 @@ impl Ensemble {
             forcing,
             total,
             last_area_ratio: None,
+            last_observed: None,
         })
     }
 
@@ -546,7 +584,32 @@ impl Ensemble {
             area_sum += mask.iter().filter(|&&b| b).count() as f64;
         }
         self.last_area_ratio = Some(area_sum / self.members.len() as f64 / obs_area.max(1.0));
+        self.last_observed = (self.config.immigrant_source == ImmigrantSource::Observed)
+            .then(|| self.observed_as_sim(observed, types));
         self.assimilate_scores(&scores)
+    }
+
+    /// A throwaway [`Sim`] carrying `observed` in this ensemble's own cell
+    /// types, for [`MemberDriver::seed_from_observation`]: cell `i` is
+    /// painted with `types[0]` (or this grid's own inactive type, if
+    /// `types` is empty — `track` should never be, but this keeps the
+    /// method total) when `observed[i]` is true, and with this grid's own
+    /// inactive type otherwise. A driver reads it back with exactly that
+    /// rule — "not this grid's inactive type" means "observed here" — so
+    /// it never needs to know what `types[0]` means. Cloning a member is
+    /// cheap next to a whole [`Self::new`], and keeps the engine from ever
+    /// needing its own idea of "a grid": it borrows one of the model's.
+    fn observed_as_sim(&self, observed: &[bool], types: &[CellType]) -> Sim {
+        let mut sim = self.members[0].sim.clone();
+        let inactive = sim.inactive();
+        let on = types.first().copied().unwrap_or(inactive);
+        let cells: Vec<CellType> = observed
+            .iter()
+            .map(|&b| if b { on } else { inactive })
+            .collect();
+        sim.reset_cells(cells)
+            .expect("a member's own cell count always matches its own length");
+        sim
     }
 
     /// One round of learning from any per-member score (higher is better):
@@ -585,15 +648,19 @@ impl Ensemble {
             parents.push(j);
         }
         let n_imm = (self.config.immigrants * m as f64).round() as usize;
-        // Whether *this generation's* immigrants get a fresh state. The
-        // gate, when set, overrides the plain bool: it resets only while
-        // the last-observed area ratio says the population is under-
-        // predicting (see `EnsembleConfig::immigrant_reset_gate`). No ratio
-        // yet is treated as "do not reset" — there is no evidence for it.
+        // Whether *this generation's* immigrants get a fresh state, for
+        // `Prior`-source immigrants only. The gate, when set, overrides the
+        // plain bool: it resets only while the last-observed area ratio
+        // says the population is under-predicting (see
+        // `EnsembleConfig::immigrant_reset_gate`). No ratio yet is treated
+        // as "do not reset" — there is no evidence for it. An `Observed`
+        // immigrant never consults this: it always gets a fresh state (see
+        // `EnsembleConfig::immigrant_source`).
         let reset_immigrants = match self.config.immigrant_reset_gate {
             Some(gate) => self.last_area_ratio.is_some_and(|ratio| ratio < gate),
             None => self.config.immigrant_reset,
         };
+        let observed_source = self.config.immigrant_source == ImmigrantSource::Observed;
 
         // The first children of a parent clone its grid; the last one moves
         // it, saving one full copy per surviving parent.
@@ -636,7 +703,8 @@ impl Ensemble {
                     .clone()
             };
             sim.set_seed(self.next_seed);
-            let mut state = if ci < n_imm && reset_immigrants {
+            let is_immigrant = ci < n_imm;
+            let mut state = if is_immigrant && (observed_source || reset_immigrants) {
                 MemberState::default()
             } else {
                 parent_state.clone()
@@ -652,6 +720,16 @@ impl Ensemble {
             };
             if let Some(d) = &self.config.driver {
                 d.apply(&mut sim, &genome, &self.space, &self.forcing, &mut state)?;
+                if is_immigrant && observed_source {
+                    if let Some(observed) = &self.last_observed {
+                        d.seed_from_observation(&mut sim, observed)?;
+                    }
+                    // No observation yet (a bare `assimilate_scores` call,
+                    // or `Observed` set before the first `assimilate`): no
+                    // evidence to seed from, so the immigrant's grid is
+                    // left as the parent's, exactly like `Prior` — the same
+                    // "no evidence yet" fallback `immigrant_reset_gate` uses.
+                }
             }
             children.push(Member {
                 sim,
@@ -1158,5 +1236,123 @@ mod tests {
                 "immigrant {i} must not reset: both the gate and the bool are off"
             );
         }
+    }
+
+    /// A driver that does nothing but satisfy the trait — enough to exercise
+    /// [`MemberDriver::seed_from_observation`]'s *default* implementation at
+    /// the engine level, without pulling in the wildfire model. The
+    /// wildfire driver's own override (rim-marking) is tested separately in
+    /// `wildfire::driver`, on real fuel/fire cell types.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NoopDriver;
+
+    #[typetag::serde(name = "noop_test_driver")]
+    impl MemberDriver for NoopDriver {
+        fn apply(
+            &self,
+            _sim: &mut Sim,
+            _genome: &Genome,
+            _space: &GeneSpace,
+            _forcing: &Forcing,
+            _state: &mut MemberState,
+        ) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        fn boxed_clone(&self) -> Box<dyn MemberDriver> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn observed_source_seeds_only_immigrants_and_prior_source_is_unaffected() {
+        let base = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            driver: Some(Box::new(NoopDriver)),
+            ..cfg(8)
+        };
+        let alive = CellType::from("Alive");
+        let mut observed = vec![false; 16 * 16];
+        observed[..40].fill(true);
+
+        // Two ensembles, identical seed and config except `immigrant_source`.
+        let mut prior = Ensemble::new(
+            soup(16, 16),
+            &EnsembleConfig {
+                immigrant_source: ImmigrantSource::Prior,
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        prior.step_n(6).unwrap();
+        let rep_p = prior.assimilate(&observed, &[alive]).unwrap();
+
+        let mut obs = Ensemble::new(
+            soup(16, 16),
+            &EnsembleConfig {
+                immigrant_source: ImmigrantSource::Observed,
+                ..base
+            },
+        )
+        .unwrap();
+        obs.step_n(6).unwrap();
+        let rep_o = obs.assimilate(&observed, &[alive]).unwrap();
+
+        assert!(rep_o.immigrants >= 1, "the test needs at least one immigrant");
+        // Seeding a grid draws no random numbers, so the two runs must
+        // resample, mutate and admit immigrants identically.
+        assert_eq!(rep_p.parents, rep_o.parents, "seeding must not perturb resampling");
+        assert_eq!(
+            prior.genomes(),
+            obs.genomes(),
+            "seeding must not touch a single gene"
+        );
+
+        // The default `seed_from_observation` copies the observation
+        // verbatim, so an Observed immigrant's tracked mask must equal the
+        // observation exactly.
+        for i in 0..rep_o.immigrants {
+            assert_eq!(
+                obs.member_mask(i, &[alive]),
+                observed,
+                "Observed immigrant {i} must equal the observation exactly"
+            );
+        }
+        // Every non-immigrant child, and every part of an Observed run that
+        // Prior also produces, must be byte-for-byte the same run: this is
+        // "Prior is unaffected" checked directly, not asserted.
+        for i in rep_o.immigrants..obs.len() {
+            assert_eq!(
+                obs.members()[i].sim.cells(),
+                prior.members()[i].sim.cells(),
+                "non-immigrant {i} must be identical whether or not \
+                 immigrant_source is Observed"
+            );
+        }
+
+        // With no observation yet, an Observed config falls back to
+        // leaving the immigrant's grid as the parent's — the same "no
+        // evidence" fallback the reset gate uses (see
+        // `EnsembleConfig::immigrant_reset_gate`) — rather than erroring.
+        let mut fresh = Ensemble::new(
+            soup(8, 8),
+            &EnsembleConfig {
+                members: 8,
+                immigrants: 0.25,
+                immigrant_source: ImmigrantSource::Observed,
+                driver: Some(Box::new(NoopDriver)),
+                ..cfg(8)
+            },
+        )
+        .unwrap();
+        let before = fresh.members()[0].sim.cells().to_vec();
+        fresh.assimilate_scores(&vec![1.0; 8]).unwrap();
+        assert_eq!(
+            fresh.members()[0].sim.cells(),
+            &before[..],
+            "no observation yet: an immigrant's grid is left untouched"
+        );
     }
 }

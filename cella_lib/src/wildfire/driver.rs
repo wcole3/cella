@@ -37,6 +37,8 @@ use crate::explore::genome::{Gene, GeneSpace, Genome};
 use crate::explore::sim::Sim;
 use crate::external::ModelError;
 use crate::rng::Rng;
+use crate::rules::{Neighborhood2D, neighborhood_offsets};
+use crate::types::CellType;
 
 /// Free gene: multiplier on the wind speed the forcing supplies.
 pub const GENE_WIND_SCALE: &str = "wind_scale";
@@ -232,6 +234,69 @@ impl MemberDriver for WildfireDriver {
             }
         }
         state.set(STATE_BURNED_AT_DAY_START, burned as f64);
+        Ok(())
+    }
+
+    /// State correction (E40): rebuild an immigrant's grid from the
+    /// observation instead of a parent's history. `sim` arrives with a
+    /// fresh genome already written into the model but never stepped, so
+    /// every cell this loop does not touch is still exactly the scenario's
+    /// original fuel/inert layout — the "fresh scenario grid" the design
+    /// calls for.
+    ///
+    /// `observed`'s cells are read the model-agnostic way the engine
+    /// promises: `!= observed.inactive()` means "observed on" here. Three
+    /// rules, applied per cell:
+    ///
+    /// - not observed on: untouched (stays the fresh fuel/inert cell).
+    /// - observed on, and it is a fuel cell with at least one *unobserved*
+    ///   fuel neighbour (the live rim — still next to something that can
+    ///   catch): the burning type, age 0 (`Sim::paint` resets age on a real
+    ///   type change).
+    /// - observed on, otherwise (the burned interior, or an inert cell
+    ///   inside the observed set — a lake the satellite's pixel happened to
+    ///   catch, say): the burned type. An inert cell can never satisfy the
+    ///   rim rule (it is excluded from the fuel check on both sides), so it
+    ///   is never set to the burning type — non-flammable terrain cannot be
+    ///   put back on fire just because the mask covers it.
+    fn seed_from_observation(&self, sim: &mut Sim, observed: &Sim) -> Result<(), ModelError> {
+        let fresh: Vec<CellType> = sim.cells().to_vec();
+        let obs_bg = observed.inactive();
+        let obs_on: Vec<bool> = observed.cells().iter().map(|&t| t != obs_bg).collect();
+        let (w, h) = sim.dims();
+        let (burning_t, burned_t, fuels) = {
+            let model = model_of(sim)?;
+            (
+                model.burning_type(),
+                model.burned_type(),
+                model
+                    .params
+                    .fuels
+                    .iter()
+                    .map(|f| CellType::new(&f.name))
+                    .collect::<Vec<CellType>>(),
+            )
+        };
+        let is_fuel = |t: CellType| fuels.contains(&t);
+        let offsets = neighborhood_offsets(Neighborhood2D::Moore, 1);
+        for y in 0..h {
+            for x in 0..w {
+                let idx = y * w + x;
+                if !obs_on[idx] {
+                    continue;
+                }
+                let rim = is_fuel(fresh[idx])
+                    && offsets.iter().any(|&(dx, dy)| {
+                        let (nx, ny) = (x as i64 + i64::from(dx), y as i64 + i64::from(dy));
+                        if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                            return false;
+                        }
+                        let nidx = ny as usize * w + nx as usize;
+                        !obs_on[nidx] && is_fuel(fresh[nidx])
+                    });
+                sim.paint(idx, if rim { burning_t } else { burned_t })?;
+            }
+        }
         Ok(())
     }
 
@@ -581,5 +646,107 @@ mod tests {
             },
         );
         assert!(e.is_err());
+    }
+
+    #[test]
+    fn seed_from_observation_marks_the_rim_and_leaves_inert_cells_alone() {
+        let (w, h) = (20usize, 20usize);
+        let forest = CellType::new("Forest");
+        let water = CellType::new("Water"); // not a fuel class: inert.
+        let mut cells = vec![forest; w * h];
+        // An inert cell sitting right on the burned block's own edge, where
+        // a fuel cell in the same spot would qualify as the rim.
+        cells[5 * w + 9] = water;
+
+        let params = WildfireParams {
+            seed: 0,
+            p0: 0.3,
+            fuels: vec![FuelClass {
+                name: "Forest".into(),
+                veg_factor: 1.0,
+            }],
+            wind_speed: 0.0,
+            wind_from_deg: 270.0,
+            c1: 0.045,
+            c2: 0.131,
+            slope_a: 0.078,
+            cell_size: 30.0,
+            burn_duration: 5,
+            spotting: None,
+            burning_name: None,
+            burned_name: None,
+        };
+        let mut g = Grid2D::new(w, h, 0, cells, Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default())))
+            .unwrap();
+        let mut sim = Sim::D2(g);
+
+        // Observed: a 10x10 burned block in the top-left corner; everything
+        // else unobserved.
+        let mut mask = vec![false; w * h];
+        for y in 0..10 {
+            for x in 0..10 {
+                mask[y * w + x] = true;
+            }
+        }
+        let burning = CellType::new("Burning");
+        let inactive = CellType::inactive();
+        let obs_cells: Vec<CellType> = mask
+            .iter()
+            .map(|&b| if b { burning } else { inactive })
+            .collect();
+        let observed = Sim::D2(Grid2D::new(w, h, 0, obs_cells, Rule2D { subrules: vec![] }));
+
+        WildfireDriver::default()
+            .seed_from_observation(&mut sim, &observed)
+            .unwrap();
+
+        let burned_t = CellType::new("BurnedOut");
+        let idx = |x: usize, y: usize| y * w + x;
+
+        // Burned interior: deep inside the block, every neighbour is also
+        // observed on, so there is nothing left unburned to catch from.
+        assert_eq!(
+            sim.cells()[idx(3, 3)],
+            burned_t,
+            "interior of the observed block must be BurnedOut"
+        );
+
+        // Rim: on the block's own edge, next to an unobserved, unburned
+        // Forest cell — the live edge that should still be spreading.
+        assert_eq!(sim.cells()[idx(9, 2)], burning, "the rim must be Burning");
+        assert_eq!(
+            sim.ages()[idx(9, 2)],
+            0,
+            "a freshly-marked rim cell starts at age 0"
+        );
+
+        // Fuel elsewhere: outside the mask, left exactly as the fresh
+        // scenario had it — untouched, not even repainted to itself.
+        assert_eq!(
+            sim.cells()[idx(15, 15)],
+            forest,
+            "unburned fuel far from the mask is untouched"
+        );
+        assert_eq!(
+            sim.cells()[idx(10, 5)],
+            forest,
+            "unburned fuel just outside the block is untouched too"
+        );
+
+        // An inert cell inside the observed block must never become
+        // Burning, even though it sits exactly where a fuel cell would
+        // have qualified as the rim (its neighbour at (10, 5) is
+        // unobserved, unburned Forest).
+        assert_ne!(
+            sim.cells()[idx(9, 5)],
+            burning,
+            "an inert cell must never be marked burning"
+        );
+        assert_eq!(
+            sim.cells()[idx(9, 5)],
+            burned_t,
+            "an inert-but-observed cell collapses to burned, not left as Water"
+        );
     }
 }
