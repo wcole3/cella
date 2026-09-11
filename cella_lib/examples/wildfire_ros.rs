@@ -271,12 +271,29 @@ fn run_speed_table() {
 
 /// E30a measurement 1: the E19 flat-grid speed table for both spread rules,
 /// on the combinations the task brief pre-registered.
+/// Opening line for a metadata-wrapped report: `{"binary_git": ...,
+/// "binary_built_utc": ..., "results": [`. `CELLA_GIT_SHA`/`CELLA_BUILT_UTC`
+/// come from `cella_lib/build.rs` (the same fields `wildfire_smc`'s reports
+/// carry), so a results file can always be traced back to the exact commit
+/// and build that produced it.
+fn print_report_open() {
+    println!(
+        "{{\"binary_git\":{:?},\"binary_built_utc\":{:?},\"results\":[",
+        env!("CELLA_GIT_SHA"),
+        env!("CELLA_BUILT_UTC")
+    );
+}
+
+fn print_report_close() {
+    println!("\n]}}");
+}
+
 fn run_arrival_flat() {
     let p0s = [0.12, 0.22, 0.44];
     let durs = [5u32, 10];
     let winds = [0.0, 2.0, 5.0, 8.0];
     let rules = ["bernoulli", "arrival"];
-    println!("[");
+    print_report_open();
     let mut first = true;
     for &spread in &rules {
         for &dur in &durs {
@@ -305,7 +322,7 @@ fn run_arrival_flat() {
             }
         }
     }
-    println!("\n]");
+    print_report_close();
 }
 
 /// E30a measurement 2: point-ignition elongation vs. size, both rules.
@@ -319,14 +336,15 @@ fn run_illuminate() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(3u64);
     let checkpoints = [0.02, 0.05, 0.10, 0.20];
-    // p0 = 0.22, burn_duration = 5: two of the three values from this same
-    // task's pre-registered flat-grid speed combination, chosen (before
-    // looking at any illumination result) so a lone downwind neighbor
-    // self-sustains under the arrival rule: p0 * dir_downwind(8 m/s) *
-    // burn_duration = 0.22 * 1.43 * 5 ~= 1.6 > 1, so the point ignition does
-    // not have a realistic chance of dying out before reaching every
-    // checkpoint. p0 = 0.12 (the trio's low end) fails this check (~0.86 <
-    // 1) and the arrival rule's fire does die out before 10% at that value.
+    // p0 = 0.44 (the top of this same task's pre-registered flat-grid trio),
+    // burn_duration = 5, chosen (before looking at any illumination result)
+    // so a lone downwind neighbor self-sustains under the arrival rule with
+    // a comfortable margin: p0 * dir_downwind(8 m/s) * burn_duration = 0.44
+    // * 1.43 * 5 ~= 3.15, well clear of 1. Lower values in the same trio
+    // (0.12, 0.22) sit close enough to the margin = 1 boundary that the
+    // default arrival_jitter (sigma 0.2) can push an individual cell below
+    // it, permanently starving that path (heat stops accumulating once its
+    // only supporting neighbor has burned out) — confirmed with WF_DEBUG=1.
     let p0: f64 = env::var("WF_P0").ok().and_then(|s| s.parse().ok()).unwrap_or(0.44);
     let burn_duration: u32 = env::var("WF_BURN_DUR")
         .ok()
@@ -334,7 +352,7 @@ fn run_illuminate() {
         .unwrap_or(5);
     let wind_speed = 8.0;
     let max_steps = 20_000u64;
-    println!("[");
+    print_report_open();
     let mut first = true;
     for &spread in &["bernoulli", "arrival"] {
         for seed in 0..seeds {
@@ -365,7 +383,7 @@ fn run_illuminate() {
             }
         }
     }
-    println!("\n]");
+    print_report_close();
 }
 
 /// E30a measurement 3: length-to-breadth table on the arrival rule at 10 %
@@ -428,7 +446,7 @@ fn run_lb() {
         None => "null".to_string(),
     };
 
-    println!("[");
+    print_report_open();
     let mut first = true;
     let mut emit = |law: &str, c2: f64, wind: f64, lbs: &[Option<f64>]| {
         if !first {
@@ -498,7 +516,7 @@ fn run_lb() {
         }
         emit("rear_focus", 0.0, wind, &lbs);
     }
-    println!("\n]");
+    print_report_close();
 }
 
 fn main() {
