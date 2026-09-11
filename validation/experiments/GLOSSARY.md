@@ -296,6 +296,16 @@ a bug in this page.
 
 - **Elongation.** √(λ₁/λ₂) of the burned set's second-moment matrix.
   1.0 = a disc, 2.7 = nearly three times longer than wide. E12, E37.
+  Computed over *every* tracked cell with no notion of connectivity, so a
+  round core plus a few cells scattered far away reads as elongated the
+  same as a genuinely stretched single blob would (E43).
+- **Largest-component elongation.** Elongation (same formula), computed
+  from the largest 8-connected component of the tracked set alone,
+  instead of every tracked cell together. Reported next to the largest
+  component's own share of the total (`largest_fraction`; 1.0 = one
+  connected piece) so "one stretched shape" can be told from "a round
+  core plus scattered outliers." `cella_lib::explore::metrics::
+  largest_component_stats`. E43 fix round 1.
 - **Growth direction.** Direction from the previous day's burned set to
   the centroid of the new burn. Compared with the wind direction to ask
   whether the fire followed the wind.

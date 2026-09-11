@@ -1,6 +1,6 @@
-# E43 — does spotting extend the reachable shape region? · finding — yes, more than predicted: spotting moves two of the three unreachable fires (Ferguson, Pier) inside the wedge; Brattain narrows but stays out
+# E43 — does spotting extend the reachable shape region? · finding — yes on Ferguson, only marginally on Pier: a connected-component replay confirms Ferguson's new reach is a real single-blob shape, not scatter, but Pier's is a fragile, barely-there margin that most fresh replays miss; Brattain stays out on every check
 
-_Round 6 (2026-09-11, after E37) · MAP-Elites, 960 evaluations per fire (batch 32, 30 generations) · all six fires incl. holdout · runner `exp_r6_spot_illuminate.py` (`SMC_SPOT=1`) → `wildfire_smc map` · results `exp43_spot_illuminate.json` (raw per-fire archives in `exp43_spot_illuminate/`) · compared against E37's own archives (`exp37_illuminate.json`, not re-run) · pre-registered TEST_PLAN v1.8 addendum · terms: [GLOSSARY.md](GLOSSARY.md)_
+_Round 6 (2026-09-11, after E37; component-replay fix round added 2026-09-11) · MAP-Elites, 960 evaluations per fire (batch 32, 30 generations) · all six fires incl. holdout · runner `exp_r6_spot_illuminate.py` (`SMC_SPOT=1`) → `wildfire_smc map` · results `exp43_spot_illuminate.json` (raw per-fire archives in `exp43_spot_illuminate/`) · compared against E37's own archives (`exp37_illuminate.json`, not re-run) · replay diagnostic: runner `exp_r6_replay.py` → `wildfire_smc replay` · results `exp43_replay.json` (raw per-fire reports in `exp43_replay/`) · pre-registered TEST_PLAN v1.8 addenda · terms: [GLOSSARY.md](GLOSSARY.md)_
 
 **In short.** E37 found the model's reachable growth × elongation region
 is a wedge — small fires can be any shape, large fires are round — and
@@ -13,14 +13,28 @@ every fire, and — contrary to the pre-registered prediction — the
 *shape* ceiling at the observed size also moves a lot, not a little, on
 two of the three fires E37 found unreachable. Ferguson's reachable
 elongation at its own size rises from 1.38 to 2.66 (its observed shape
-is 1.61 — now comfortably inside) and Pier's rises from 1.15 to 1.77
-(observed 1.45 — also inside). Only Brattain, whose reachable elongation
-moves the least (1.35 → 1.49, still short of its observed 1.83), stays
-outside the wedge. The elites that make this possible use spotting
-settings near the top of the pre-registered range (`p_spot` 0.003–0.004,
-`median_distance` pinned at or near its allowed maximum of 20 cells on
-four of six fires) combined with real wind — the opposite of the
-predicted mechanism ("spot fires merge into a rounder mass").
+is 1.61) and Pier's rises from 1.15 to 1.77 (observed 1.45). Only
+Brattain, whose reachable elongation moves the least (1.35 → 1.49, still
+short of its observed 1.83), stays outside the wedge.
+
+**But the archive's elongation is a second-moment measure over every
+tracked cell with no notion of connectivity, so it cannot by itself tell
+"one stretched fire" from "a round core plus a few spot-fire embers
+scattered far downwind."** A post-hoc replay diagnostic (below) re-runs
+the top elites through an 8-connected-component check. The scatter
+hypothesis turns out to be **wrong for Ferguson and Pier specifically**
+— their burned sets stay 97–100 % one connected piece in every replay,
+so their elongation is genuinely about shape, not disconnected outliers.
+What the replay finds instead is a **reproducibility problem**: the same
+genome, replayed with three fresh seeds, produces elongations that swing
+by as much as 0.3. Ferguson clears its observed shape (1.61) on **every
+one of 15 replays** (worst case 2.01, a margin of +0.40) — a robust
+result. Pier clears its observed shape (1.45) on only **6 of 15
+replays** (best case 1.55, a margin of +0.10) — a real but fragile
+result that the single archived number (1.77) overstated by chance.
+Brattain fails the check even harder than the archive suggested: no
+replay of its top five elites exceeds 1.36, well short of both its own
+archived ceiling (1.49) and its observed shape (1.83).
 
 **Question.** Is spotting a mechanism that gives a *large* fire more
 reach in the downwind direction, i.e. does it move E37's wedge?
@@ -125,19 +139,19 @@ Pier flip from no to yes; Brattain stays no).
   (1.35 → 1.49) but not past its observed shape (1.83) — it remains the
   one fire in this campaign no combination of these knobs, with or
   without spotting, can draw.
-- **The mechanism is not "spotting adds isolated round blobs."** Reading
-  the genome behind each fire's best at-size elite: `median_distance` is
-  pinned at or near its allowed maximum (20 cells) on four of six fires
-  (Buck, Ferguson, Pier at exactly 20.0; Chimney and Brattain at
-  13–16), `p_spot` sits in the upper half of its range (0.0026–0.0042
-  of 0.001–0.005), and every one of these elites also carries a real
-  wind scale (0.44–1.08, not near 0). Long-range, wind-aligned spot
-  jumps land detached embers well downwind of the front, which stretches
-  the burned set's second-moment shape rather than rounding it out —
-  the opposite of the predicted mechanism. `median_distance` sitting at
-  its own ceiling on four of six fires is itself a signal: the model
-  would likely reach further still with a wider range, so 20 cells may
-  be an artificial floor on this result, not spotting's real limit.
+- **The genomes behind the best at-size elites lean on long-range,
+  wind-aligned spotting.** `median_distance` sits at or above 13 cells on
+  five of six fires — all but Bear, whose best at-size elite uses 11.8 —
+  and is pinned at the pre-registered ceiling of 20 on three of those
+  (Buck, Ferguson, Pier); `p_spot` sits in the upper half of its range
+  (0.0026–0.0042 of 0.001–0.005); every one of these elites also carries
+  a real wind scale (0.44–1.08, not near 0). `median_distance` sitting at
+  its own ceiling on three fires is itself a signal: the model would
+  likely reach further still with a wider range, so 20 cells may be an
+  artificial floor on this result, not spotting's real limit. **Whether
+  this combination genuinely produces one stretched shape, or an
+  elongated-looking scatter of disconnected embers, is answered by the
+  post-hoc component check below — not by the genome alone.**
 - **A caveat on precision.** The "at observed size" column is the best
   of however many elites happen to have grown at least that large; that
   count is small on Brattain (4 elites) and Pier (6), so those two
@@ -170,25 +184,143 @@ Pier flip from no to yes; Brattain stays no).
   wind-aligned spotting, which stretches the shape rather than rounding
   it (see the mechanism note above).
 - *"The three dots stay outside the wedge."* **False for two of the
-  three.** Ferguson and Pier's observed shapes move inside the reachable
-  region; only Brattain's stays outside.
+  three, but see the component check below for how solid each "false"
+  is.** Ferguson and Pier's observed shapes move inside the reachable
+  region on the archive's own numbers; only Brattain's stays outside.
+
+## Post-hoc component check (fix round 1)
+
+**Why.** `elongation()` (`cella_lib::explore::metrics`) is a
+second-moment measure over *every* cell of the tracked type, with no
+notion of connectivity — it cannot tell "one stretched fire" from "a
+round core plus a few cells landed far downwind" apart, and the archive
+stores no mask or component data to check afterwards. That is a real gap
+in the headline result above: spotting's whole mechanism is throwing
+cells away from the front, so an inflated elongation from scatter,
+rather than genuine stretch, was a live possibility for exactly the two
+fires (Ferguson, Pier) whose reachability verdict flipped.
+
+**What we built.** `cella_lib::explore::metrics::largest_component_stats`
+splits a tracked set into 8-connected components and reports the largest
+one's share of the total and its own elongation (same formula as
+`elongation()`, factored out so the two cannot disagree). A new
+`Evolution::evaluate_genome_sim` re-runs a stored genome for the archive's
+own step count and returns the final grid — needed because an archive
+elite does not record which `(generation, index, repeat)` search-time
+evaluation produced it, so there is no seed to recover; every replay
+here is a **fresh re-evaluation of the stored genome**, not a
+reproduction of whatever run first placed it in its cell. `wildfire_smc
+replay` (`SMC_MAP_REPLAY=<archive>`) wires the two together: for each of
+the six fires, the top 5 elites by elongation at or above the observed
+day-5 growth (E43's own "at observed size" filter) are replayed for 3
+fresh seeds each, all under E43's exact settings (same genes, same
+steps, same driver/weather) read back out of the archive file itself.
+
+**Result.**
+
+| Fire | elites × seeds | archived top elong. (E43 table) | largest-fraction range | whole-set elong. range | largest-component elong. range | clears observed | observed elong. | verdict |
+|---|---|---|---|---|---|---|---|---|
+| Bear | 5×3=15 | 2.90 | 0.53–1.00 | 1.42–2.90 | 1.32–2.11 | 1/15 | 1.98 | fragile: the archived value is not reproduced (best replay margin +0.13) |
+| Brattain | 4×3=12 | 1.49 | 0.99–1.00 | 1.11–1.35 | 1.11–1.36 | 0/12 | 1.83 | fails harder than the archive suggested |
+| Buck | 5×3=15 | 3.52 | 0.49–0.99 | 1.05–3.27 | 1.29–2.95 | 8/15 | 1.50 | mixed: real scatter on some replays (fraction as low as 0.49) but clears on over half regardless |
+| Chimney | 5×3=15 | 1.80 | 0.66–1.00 | 1.41–1.70 | 1.07–1.67 | 10/15 | 1.22 | clears on most replays |
+| Ferguson* | 5×3=15 | 2.66 | 0.97–0.99 | 2.02–2.64 | 2.01–2.65 | **15/15** | 1.61 | **robust**: no scatter, clears every replay by ≥ 0.40 |
+| Pier* | 5×3=15 | 1.77 | 0.98–1.00 | 1.24–1.55 | 1.24–1.55 | **6/15** | 1.45 | **fragile**: no scatter, but under half of replays clear, by at most +0.10 |
+
+How to read it: "elites × seeds" is how many replays feed the ranges;
+"largest-fraction range" is the largest component's share of the total
+burned set (1.0 = one connected piece, no matter how small the rest);
+"clears observed" counts replays whose *largest-component* elongation
+meets or beats that fire's observed day-5 elongation. `*` is the holdout
+pair.
+
+- **The scatter hypothesis is wrong for exactly the two fires it was
+  raised for.** Ferguson and Pier's largest-fraction never drops below
+  0.97 across all 30 replays combined — their burned sets are, for
+  practical purposes, one connected piece every time. Whole-set and
+  largest-component elongation track each other within noise (≤ 0.03)
+  on both fires. The scattered-embers mechanism is real in this model —
+  Buck's fraction drops as low as 0.49, with one replay reading
+  whole-set 3.27 against a largest-component of only 1.43 — but it shows
+  up on Buck, Bear and Chimney, the fires whose reachability was never
+  in question, not on Ferguson or Pier.
+- **What actually undercuts part of the headline is search-outcome
+  variance, not connectivity.** Holding a genome fixed and changing only
+  the seed swings its elongation by up to 0.3 (Ferguson: 2.01–2.65;
+  Pier: 1.24–1.55). The single number E43's archive kept for each cell
+  is whichever draw happened to score highest across the original
+  960-evaluation search — for Pier's top elite specifically, none of
+  three fresh replays reached anywhere near its archived 1.77 (best
+  replay of that exact genome: 1.54).
+- **Ferguson's "inside the wedge" stands, and stands solidly.** Every
+  one of 15 replays across its top 5 elites beats its observed shape
+  (1.61), the worst of them by 0.40. This is not a lucky single draw:
+  it is a robust property of this part of the genome space.
+- **Pier's "inside the wedge" stands only technically.** Some genomes,
+  some seeds, do clear its observed shape (1.45) — 6 of 15 replays, by
+  as much as 0.10 — so the model can produce a shape at Pier's size that
+  matches or beats what was observed, meeting the letter of "reachable."
+  But the margin is the thinnest possible and only handful of the
+  replays make it: a different search run, or different luck within
+  this one, plausibly reports Pier as unreachable instead. Read as
+  "borderline," the same word E37 used for Buck, not as a confirmed
+  parallel to Ferguson.
+- **Brattain fails even harder under replay than the archive showed.**
+  No replay of its top five elites exceeds 1.36 — below even its own
+  archived ceiling of 1.49, let alone its observed shape (1.83). The
+  archive's own number here was also an optimistic outlier.
+
+**The post-hoc prediction, checked line by line.** ("on Ferguson and
+Pier the largest-component fraction of the best at-size elites is < 0.7
+and their largest-component elongation falls below the observed value;
+on Brattain it is unchanged" — TEST_PLAN v1.8.)
+
+- *"On Ferguson and Pier the largest-component fraction ... is < 0.7."*
+  **No.** 0.97–0.99 on both — the model is not scattering cells on
+  either fire.
+- *"... and their largest-component elongation falls below the observed
+  value."* **No for Ferguson** (never falls below 2.01, comfortably
+  above its 1.61 observed). **Half right for Pier**: some replays fall
+  below (as low as 1.24) but not all — 6 of 15 stay at or above 1.45.
+- *"On Brattain it is unchanged."* **Yes**, in the sense that intended:
+  fraction stays at 0.99–1.00 (no scatter there either), and the
+  reachability conclusion (outside) is unchanged — if anything it is
+  reinforced, since no replay reaches even the archive's own claimed
+  ceiling.
+
+So the specific mechanism this prediction guessed at (scatter) was
+wrong, but the prediction's *practical* expectation — that the component
+check would complicate Ferguson and Pier's story relative to the
+headline table — was still half right, for the different reason of
+search-outcome variance rather than connectivity.
 
 **What it means.** The prediction under-estimated spotting on the two
-fires it was most confident would resist it. Spotting is not merely a
+fires it was most confident would resist it, and the archive's own
+elongation numbers for Ferguson and Pier were not artifacts of
+disconnected scatter — the component check rules that specific failure
+mode out. What it does not rule out, and in fact demonstrates directly,
+is that a single MAP-Elites archive cell can record an optimistic
+outlier: the same genome does not reliably reproduce its own recorded
+shape. Ferguson's result survives that scrutiny with a wide margin and
+should be read as a genuine, robust finding: spotting, combined with
+wind, gives this model access to shapes it could not reach before, not
+merely a lucky search draw. Pier's does not survive with the same
+confidence — it is real (some settings do produce the shape) but thin
+enough that it should be reported as "borderline," on par with E37's
+own Buck, rather than grouped with Ferguson's solid reversal. Brattain
+is unambiguously still the fire needing E30's kind of fix; this check
+found no reason to revise that down. Spotting is not merely a
 score-degrading nuisance (E7's finding, at low settings, with no
-stopping mechanism) or a small correction to E37's wedge — at the
-upper end of its pre-registered range, combined with wind, it is enough
-to draw two of the three previously-unreachable observed shapes. That
-reopens a question E37 had provisionally closed in E30's favour: a
-kernel refit is not the only route to a model that can draw Ferguson and
-Pier's shapes; enabling and tuning spotting is another, and on this
-evidence, a more direct one for those two fires specifically. Brattain
-is the fire that most needs E30's kind of fix regardless — its ceiling
-barely moved and its gap to observed (0.34 elongation) is still the
-largest of the three. Because `median_distance`'s pre-registered ceiling
-(20 cells) was actively used by the elites that did the most work here,
-this result is a lower bound on what spotting alone can reach, not a
-final answer.
+stopping mechanism) or a small correction to E37's wedge — at the upper
+end of its pre-registered range, combined with wind, it gives Ferguson
+genuine new reach and gives Pier a fragile, marginal one. That reopens a
+question E37 had provisionally closed in E30's favour: a kernel refit is
+not the only route to a model that can draw Ferguson's shape; enabling
+and tuning spotting is another, and on this evidence, a more direct one
+for that fire specifically. Because `median_distance`'s pre-registered
+ceiling (20 cells) was actively used by the elites that did the most
+work here, this result is a lower bound on what spotting alone can
+reach, not a final answer.
 
 **Questions this raises.**
 
@@ -196,6 +328,16 @@ final answer.
   ceiling) push Brattain's ceiling further, or is 20 cells already past
   the point of diminishing return for that fire specifically? Open, not
   tested (would need a new pre-registered range).
+- Would more replay seeds (10, 20) on Pier's top elites narrow the
+  6-of-15 figure toward "reliably reachable" or "reliably not," or is
+  the true rate genuinely near 40–50 %? Open — 3 seeds establishes that
+  the result is not a single fluke in either direction but not its
+  exact rate.
+- Does the same replay check, run on E37's own (spotting-off) archive,
+  find the same kind of search-outcome variance in its own "at observed
+  size" numbers? If so, E37's own Buck "borderline" call, and possibly
+  others, may carry the same caveat this file now attaches to Pier.
+  Open, not run here.
 - E7 found spotting costs 0.1–0.2 mean IoU at the "far" setting because
   it burns too much area, with no stopping mechanism in place. Does that
   finding still hold once containment (E28) is in the loop, now that
@@ -208,14 +350,23 @@ final answer.
   mechanism seen two ways (both add reach via a wind-aligned, elongating
   effect)? Open; E30 has not been run yet.
 
-**Verdict.** Finding — spotting is a real, usable mechanism for
-extending the model's reachable shapes, more effective than predicted on
-two of the three fires E37 flagged as unreachable, and the one fire it
-does not rescue (Brattain) is the one with the largest remaining gap.
-Recommend keeping spotting as a live candidate mechanism alongside (not
-instead of) the E30 kernel refit, and re-running this illumination once
-E30 lands to see whether the two combine.
+**Verdict.** Finding, revised after a post-hoc component check. Spotting
+is a real, usable mechanism for extending the model's reachable shapes
+on **Ferguson**, confirmed robust by an 8-connected-component replay (no
+scatter, every replay clears the observed shape by a wide margin). On
+**Pier** the same check finds a real but fragile effect — reachable only
+in the sense that some settings clear the bar, not reliably — best
+described as borderline, not a confirmed parallel to Ferguson. On
+**Brattain** the effect is smaller still and the fire remains
+unambiguously outside the wedge, if anything more clearly than the
+archive alone showed. Recommend keeping spotting as a live candidate
+mechanism for Ferguson specifically alongside (not instead of) the E30
+kernel refit; treating Pier's result as suggestive, not decided, until
+either a wider `median_distance` range or more replay seeds settle it;
+and re-running this illumination once E30 lands to see whether the two
+combine.
 
-**Later.** Not yet revisited. E30 (kernel refit) is still not run; the
-open questions above (containment interaction, a wider `median_distance`
+**Later.** Not yet revisited beyond this fix round. E30 (kernel refit)
+is still not run; the open questions above (containment interaction, a
+wider `median_distance`
 range, combining with E30) are all future work.

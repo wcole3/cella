@@ -390,6 +390,29 @@ in `validation/results/analysis/`.
   on every fire (spotting adds growth), but the maximum elongation at
   the observed size rises by < 0.2 on Brattain/Ferguson/Pier: spot fires
   merge into a rounder mass. The three dots stay outside the wedge.
+  **Post-hoc addendum (2026-09-11, after seeing the E43 results, before
+  the replay diagnostic run below): a component check.** E43's own
+  elongation (`Metric::Elongation`) is a second-moment measure over
+  *every* tracked cell with no connectivity distinction, and the archive
+  stores no mask or component stats — so a round main body plus a
+  handful of spot-fire embers landed well downwind can read as
+  "elongated" exactly the way a genuinely stretched single blob would,
+  which would undercut E43's "Ferguson/Pier inside the wedge" headline.
+  A new `replay` mode in `wildfire_smc` (`SMC_MAP_REPLAY=<path>`)
+  re-evaluates a stored elite's genome and reports connected-component
+  stats (8-connected): total burned cells, the largest component's share
+  of that total, the number of components, and the largest component's
+  own elongation next to the whole-set figure. Run for the top 5 elites
+  by elongation at or above the observed day-5 growth, on each of the
+  six fires, 3 fresh seeds per elite (the archive does not record which
+  search-time evaluation produced a given elite, so these are
+  re-evaluations of the stored genome, not reproductions of the original
+  stochastic run — see `Evolution::evaluate_genome_sim`'s own doc
+  comment).
+  **Prediction, written before the run:** on Ferguson and Pier the
+  largest-component fraction of the best at-size elites is < 0.7 and
+  their largest-component elongation falls below the observed value; on
+  Brattain it is unchanged.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
