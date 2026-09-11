@@ -464,6 +464,13 @@ in `validation/results/analysis/`.
   head:back ≥ 2 already at 0.6 m/s, and its LB is within 20 % of
   Anderson at 2, 5 and 8 m/s at every size, under the arrival rule;
   under the Bernoulli rule its elongation still collapses with size.
+  **E30a v2 (2026-09-11):** the rule was redefined as minimum travel
+  time after v1 showed a death threshold and a saturated head; v1
+  numbers are kept in the file for the record. **Prediction:**
+  elongation flat with size at every wind for both laws; jitter-0 LB
+  equals cosh(c2·v) within 15 % under the exponential law and is within
+  20 % of Anderson under rear-focus at 2/5/8 m/s; p0 0.12 fires no
+  longer die.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
