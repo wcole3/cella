@@ -222,8 +222,18 @@ fn illuminate(
             next_checkpoint += 1;
         }
         if t.is_multiple_of(200) && !cells_now.contains(&b) {
+            if env::var("WF_DEBUG").is_ok() {
+                eprintln!("  [debug] died at t={t}, frac={frac:.5}, next_checkpoint={next_checkpoint}");
+            }
             break; // fire died before reaching every checkpoint.
         }
+    }
+    if env::var("WF_DEBUG").is_ok() && next_checkpoint < checkpoints.len() {
+        let frac = g.cells().iter().filter(|&&c| c == b || c == burned).count() as f64 / total;
+        eprintln!(
+            "  [debug] stopped at t={t}/{max_steps}, frac={frac:.5}, next_checkpoint={next_checkpoint}, still_burning={}",
+            g.cells().contains(&b)
+        );
     }
     out
 }
@@ -309,8 +319,19 @@ fn run_illuminate() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(3u64);
     let checkpoints = [0.02, 0.05, 0.10, 0.20];
-    let p0 = 0.3;
-    let burn_duration = 5;
+    // p0 = 0.22, burn_duration = 5: two of the three values from this same
+    // task's pre-registered flat-grid speed combination, chosen (before
+    // looking at any illumination result) so a lone downwind neighbor
+    // self-sustains under the arrival rule: p0 * dir_downwind(8 m/s) *
+    // burn_duration = 0.22 * 1.43 * 5 ~= 1.6 > 1, so the point ignition does
+    // not have a realistic chance of dying out before reaching every
+    // checkpoint. p0 = 0.12 (the trio's low end) fails this check (~0.86 <
+    // 1) and the arrival rule's fire does die out before 10% at that value.
+    let p0: f64 = env::var("WF_P0").ok().and_then(|s| s.parse().ok()).unwrap_or(0.44);
+    let burn_duration: u32 = env::var("WF_BURN_DUR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
     let wind_speed = 8.0;
     let max_steps = 20_000u64;
     println!("[");
@@ -361,12 +382,33 @@ fn run_lb() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3u64);
-    let p0 = 0.3;
-    let burn_duration = 5;
+    // p0 as in `run_illuminate`. burn_duration is much longer here: at
+    // rear_focus / wind 8 the crosswind direction factor is ~0.0146, so a
+    // single upstream neighbor only contributes p0 * 0.0146 * burn_duration
+    // heat before burning out. At burn_duration = 5 that is ~0.03 — far
+    // below 1, so the fire can only ever advance as a one-cell-wide spine
+    // (no organic sideways growth), which starves out once it reaches the
+    // grid edge, long before 10 % of the domain is burned (confirmed by
+    // running it: it dies at <0.1 % burned regardless of grid size, since a
+    // fixed-width spine's area *share* of an N x N grid shrinks as N grows).
+    // burn_duration = 500 gives that same worst-case direction a margin of
+    // 0.44 * 0.0146 * 500 ~= 3.2 (safe against the arrival_jitter default's
+    // draw-to-draw spread) so the fire can actually thicken into a 2-D shape
+    // whose length-to-breadth ratio is measurable at all.
+    let p0 = 0.44;
+    let burn_duration: u32 = env::var("WF_BURN_DUR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
     let winds = [2.0, 5.0, 8.0];
     let c2s = [0.131, 0.2, 0.3, 0.45];
     let checkpoints = [0.10];
-    let max_steps = 20_000u64;
+    // A strongly wind-anisotropic setting (high c2, high wind, or
+    // rear_focus) can grow a needle-thin fire that runs to the grid edge
+    // before it has thickened enough to cover 10 % of the domain; a larger
+    // step budget than `illuminate` gives the slow lateral direction more
+    // chance to catch up before giving up on that cell.
+    let max_steps = 100_000u64;
 
     // Closed-form head:back at 0.6 m/s, both laws, default c2 for the
     // exponential law (Alexandridis c2 = 0.131).
@@ -379,20 +421,41 @@ fn run_lb() {
         "head:back at {v} m/s: exponential (c2=0.131) = {exp_head_back:.3}, rear_focus = {rf_head_back:.3} (LB={a:.3})"
     );
 
+    // JSON has no NaN, so a checkpoint a seed never reached (the needle-thin
+    // failure mode described above) is `null`, not a number.
+    let json_opt = |v: Option<f64>| match v {
+        Some(x) => format!("{x:.4}"),
+        None => "null".to_string(),
+    };
+
     println!("[");
     let mut first = true;
-    let mut emit = |law: &str, c2: f64, wind: f64, lb_mean: f64, lb_each: &[f64]| {
+    let mut emit = |law: &str, c2: f64, wind: f64, lbs: &[Option<f64>]| {
         if !first {
             println!(",");
         }
         first = false;
         let anderson = anderson_lb(wind);
+        let reached: Vec<f64> = lbs.iter().filter_map(|&v| v).collect();
+        let mean = if reached.is_empty() {
+            None
+        } else {
+            Some(reached.iter().sum::<f64>() / reached.len() as f64)
+        };
+        let seeds_json: Vec<String> = lbs.iter().map(|&v| json_opt(v)).collect();
         print!(
-            "{{\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"lb_mean\":{lb_mean:.4},\"lb_seeds\":{lb_each:?},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{}}}",
+            "{{\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"lb_mean\":{},\"lb_seeds\":[{}],\"reached_seeds\":{},\"total_seeds\":{},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{}}}",
+            json_opt(mean),
+            seeds_json.join(","),
+            reached.len(),
+            lbs.len(),
             if law == "rear_focus" { rf_head_back } else { exp_head_back }
         );
         eprintln!(
-            "{law:12} c2={c2:.3} wind={wind:.0}: LB={lb_mean:.3} (Anderson {anderson:.3})"
+            "{law:12} c2={c2:.3} wind={wind:.0}: LB={} ({}/{} seeds reached 10%; Anderson {anderson:.3})",
+            mean.map(|m| format!("{m:.3}")).unwrap_or_else(|| "n/a".into()),
+            reached.len(),
+            lbs.len(),
         );
     };
 
@@ -412,12 +475,9 @@ fn run_lb() {
                     &checkpoints,
                     max_steps,
                 );
-                let e = hits.first().map(|&(_, _, e)| e).unwrap_or(f64::NAN);
-                lbs.push(e);
+                lbs.push(hits.first().map(|&(_, _, e)| e));
             }
-            let mean = lbs.iter().filter(|v| v.is_finite()).sum::<f64>()
-                / lbs.iter().filter(|v| v.is_finite()).count().max(1) as f64;
-            emit("exponential", c2, wind, mean, &lbs);
+            emit("exponential", c2, wind, &lbs);
         }
         // Rear-focus: c2 is unused by that law; report once per wind.
         let mut lbs = Vec::new();
@@ -434,12 +494,9 @@ fn run_lb() {
                 &checkpoints,
                 max_steps,
             );
-            let e = hits.first().map(|&(_, _, e)| e).unwrap_or(f64::NAN);
-            lbs.push(e);
+            lbs.push(hits.first().map(|&(_, _, e)| e));
         }
-        let mean = lbs.iter().filter(|v| v.is_finite()).sum::<f64>()
-            / lbs.iter().filter(|v| v.is_finite()).count().max(1) as f64;
-        emit("rear_focus", 0.0, wind, mean, &lbs);
+        emit("rear_focus", 0.0, wind, &lbs);
     }
     println!("\n]");
 }
