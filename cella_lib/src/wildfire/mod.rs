@@ -55,6 +55,7 @@ const STREAM_DIST_B: u64 = 3;
 const STREAM_ANGLE: u64 = 4;
 
 pub mod driver;
+pub mod wind_field;
 pub use driver::{WeatherWindow, WildfireDriver};
 
 /// Stateless counter-based uniform draw in `[0, 1)`; lives in [`crate::rng`] and is
@@ -362,7 +363,7 @@ impl WildfireModel {
     /// Replace the per-cell wind field on an attached model (m/s, `u`
     /// eastward, `v` northward, one value per cell) and rebuild the factor
     /// table. Pass two empty slices to go back to the uniform wind. This is
-    /// how a terrain-adjusted field (see [`crate::wind_field`]) or a gridded
+    /// how a terrain-adjusted field (see [`wind_field`]) or a gridded
     /// forecast reaches the kernel; `wind_speed` / `wind_from_deg` are
     /// ignored while a field is set.
     pub fn set_wind_field(&mut self, u: &[f32], v: &[f32]) -> Result<(), ModelError> {

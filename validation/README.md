@@ -206,7 +206,7 @@ above it on Chimney; Ferguson 0.13 → 0.34. Recommended: β 10, σ 0.2,
 block, [docs/ensemble.md](../docs/ensemble.md)). The ad-hoc decay has a
 physical replacement: the FSim-style containment-probability operator
 (E28) matches or beats it with the decay off. Terrain wind
-(`cella_lib::wind_field`, E26) and painted retardant (`set_density`, E27)
+(`cella_lib::wildfire::wind_field`, E26) and painted retardant (`set_density`, E27)
 are in place but null/negative until the kernel's wind response (E30) and
 an agent placement rule exist.
 

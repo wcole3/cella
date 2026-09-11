@@ -2,7 +2,7 @@
 """E26: terrain-adjusted wind field (mass-consistent downscaling) vs uniform wind.
 
 Every wind window the harness downscales the uniform wind over the
-scenario's elevation with cella_lib::wind_field::mass_consistent (the
+scenario's elevation with cella_lib::wildfire::wind_field::mass_consistent (the
 two-dimensional WindNinja idea: conserve air flux over terrain, so ridges
 speed up and valleys channel) and sets it as a per-cell field. Layer depth
 controls how strongly terrain acts (thinner = stronger).

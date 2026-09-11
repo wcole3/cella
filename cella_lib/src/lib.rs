@@ -16,6 +16,13 @@
 //! - Define rules (1D Wolfram-style or 2D threshold neighborhoods)
 //! - Create a Grid1D or Grid2D with initial CellType values
 //! - Call step() repeatedly; serialize via GridState.
+//!
+//! One module is not part of the engine: [`wildfire`] is a worked example of
+//! the [`external::ExternalModel`] plugin seam — a stochastic fire-spread
+//! model, its [`explore::MemberDriver`], and the terrain wind downscaler that
+//! feeds it. Nothing in the engine depends on it, and none of it is
+//! re-exported at the crate root; reach it by name, e.g.
+//! `use cella_lib::wildfire::WildfireModel;`.
 
 mod chunking;
 pub mod config;
@@ -30,8 +37,10 @@ pub mod threads;
 pub mod tunables;
 pub mod types;
 pub mod wildfire;
-pub mod wind_field;
 
+// Re-exports for an ergonomic public API. Engine types only: nothing from
+// `wildfire` is re-exported here, so `use cella_lib::*;` gives you the
+// cellular-automata engine and not one particular model built on it.
 pub use external::{
     ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
 };
@@ -46,13 +55,7 @@ pub use explore::{
     Sim,
 };
 pub use state::{GridState, grid2d_to_json};
-pub use wind_field::{MassConsistentOptions, WindField, mass_consistent};
-// Re-exports for ergonomic public API
 pub use types::{CellState, CellType, INACTIVE};
-pub use wildfire::{
-    FuelClass, SpottingParams, WeatherWindow, WildfireDriver, WildfireEnv, WildfireModel,
-    WildfireParams,
-};
 
 #[cfg(test)]
 mod tests {

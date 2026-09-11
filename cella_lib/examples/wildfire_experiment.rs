@@ -23,7 +23,7 @@
 //!   flanks first, never the head) instead of distance to the ignition.
 //! - `EXP_WIND_FIELD=300` — terrain wind (E26): every window the uniform
 //!   wind is downscaled with the mass-consistent solver
-//!   (`cella_lib::wind_field`, layer depth in metres) over the config's
+//!   (`cella_lib::wildfire::wind_field`, layer depth in metres) over the config's
 //!   elevation layer and set as a per-cell field.
 //! - `EXP_LINE_TYPE=density:0.2` — the line agent paints a density
 //!   multiplier (retardant / wet line, E27) instead of a cell type;
@@ -64,7 +64,9 @@
 use std::path::{Path, PathBuf};
 
 use cella_lib::config::CellaConfig;
-use cella_lib::{CellType, Grid2D, WildfireModel};
+use cella_lib::wildfire::WildfireModel;
+use cella_lib::wildfire::wind_field::{MassConsistentBasis, MassConsistentOptions};
+use cella_lib::{CellType, Grid2D};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -250,7 +252,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
     let wind_field_depth: Option<f64> = std::env::var("EXP_WIND_FIELD")
         .ok()
         .and_then(|v| v.parse().ok());
-    let mut wind_basis: Option<cella_lib::wind_field::MassConsistentBasis> = None;
+    let mut wind_basis: Option<MassConsistentBasis> = None;
     let elevation: Vec<f32> = grid
         .model_mut()
         .unwrap()
@@ -341,13 +343,11 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
                 // Terrain basis once per run (elevation is static); one
                 // multiply-add pass per window for the actual wind.
                 let basis = wind_basis.get_or_insert_with(|| {
-                    let opts = cella_lib::MassConsistentOptions {
+                    let opts = MassConsistentOptions {
                         layer_depth_m: depth,
                         ..Default::default()
                     };
-                    cella_lib::wind_field::MassConsistentBasis::new(
-                        &elevation, width, height, cell_size, &opts,
-                    )
+                    MassConsistentBasis::new(&elevation, width, height, cell_size, &opts)
                 });
                 // Meteorological components: the wind blows toward from + 180.
                 let speed = cur.speed_ms * wind_scale;

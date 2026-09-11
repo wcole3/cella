@@ -25,7 +25,7 @@
 //! (Neumann) boundaries, so the flux through the edges stays `h·u0`. The
 //! result is returned as meteorological components: `u` eastward (+x), `v`
 //! northward (−y on a north-up grid), ready for
-//! [`crate::wildfire::WildfireModel::set_wind_field`].
+//! [`super::WildfireModel::set_wind_field`].
 
 /// Result of a downscaling: per-cell `u` (eastward) and `v` (northward), m/s.
 #[derive(Clone, Debug, PartialEq)]

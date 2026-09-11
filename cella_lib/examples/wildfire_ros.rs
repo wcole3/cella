@@ -16,7 +16,8 @@
 //!
 //! Usage (from cella_lib/): cargo run --release --example wildfire_ros
 
-use cella_lib::{CellType, FuelClass, Grid2D, Rule2D, WildfireEnv, WildfireModel, WildfireParams};
+use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireModel, WildfireParams};
+use cella_lib::{CellType, Grid2D, Rule2D};
 
 const W: usize = 240;
 const H: usize = 120;

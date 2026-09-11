@@ -740,7 +740,7 @@ cella is actually built around, whereas Hashlife shines precisely when you
 
 ## 7. Wildfire-Driven Performance Hooks
 
-The external-model seam (`external.rs`) and the wildfire model (`wildfire.rs`)
+The external-model seam (`external.rs`) and the wildfire model (`wildfire/mod.rs`)
 were designed around three performance decisions worth recording here:
 
 **Stateless counter-based RNG.** `wildfire::cell_rand(seed, step, idx, stream)`

@@ -13,7 +13,7 @@ local rate by a few percent. Fix the kernel first.
 
 **Question.** Does a terrain-aware wind field improve the score?
 
-**What we changed.** New `cella_lib::wind_field`: the two-dimensional
+**What we changed.** New `cella_lib::wind_field` (since moved to `cella_lib::wildfire::wind_field`): the two-dimensional
 single-layer mass-consistent model (conserve the column flux h·u over the
 terrain). `WildfireModel::set_wind_field` takes an 8-per-cell factor
 table. The basis trick (solve two unit problems once on a coarsened grid,

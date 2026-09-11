@@ -405,7 +405,7 @@ Commits `6d7e9b3..ad3654d`.
   `attach` it restores the value `get_param` reported before the write and
   re-runs `attach` again, so a refused edit cannot leave the model in a state
   `attach` would not accept.
-- **§3.3 — `WildfireModel` implements 13 keys**, `cella_lib/src/wildfire.rs`.
+- **§3.3 — `WildfireModel` implements 13 keys**, `cella_lib/src/wildfire/mod.rs`.
   Wind group: `wind_speed`, `wind_from_deg`, `c1`, `c2`. Fire group: `p0`,
   `burn_duration`. Terrain group: `slope_a`, `cell_size`. Spotting group (only
   when `params.spotting` is `Some`): `spotting.p_spot`,
@@ -415,7 +415,7 @@ Commits `6d7e9b3..ad3654d`.
   and slope buffers; everything else is read live per chunk or per cell, so
   it needs no rebuild. §3.5's round-trip test (set a parameter, snapshot,
   restore, assert `get_param` still reports the edit) lives alongside these
-  in `wildfire.rs`'s test module.
+  in `wildfire/mod.rs`'s test module.
 - **§3.4 — the generic panel**, new file `src/gui/panels/model.rs`, wired
   into `ui_left_panel` in `src/gui/app.rs`. `ui_model_params` draws nothing
   when no model is attached, otherwise one control per `ParamDesc` under a
@@ -472,7 +472,7 @@ Commits `6d7e9b3..ad3654d`.
 `cella_lib` has a plugin seam: an `ExternalModel` (in
 `cella_lib/src/external.rs`) can replace the subrule engine entirely and compute
 the next state however it likes. `WildfireModel` in
-`cella_lib/src/wildfire.rs` is the first real implementation.
+`cella_lib/src/wildfire/mod.rs` is the first real implementation.
 
 But the only way for an application to reach a model's tunable values is:
 
@@ -622,7 +622,7 @@ check.)
 
 ### 3.3 Reference implementation on `WildfireModel`
 
-In `cella_lib/src/wildfire.rs`. **Purely additive** — no change to `step_chunk`
+In `cella_lib/src/wildfire/mod.rs`. **Purely additive** — no change to `step_chunk`
 or any numerical path, so no validation figure can move.
 
 | `key` | Label | Kind | Group | `reattach` |

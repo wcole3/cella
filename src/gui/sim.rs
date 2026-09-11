@@ -413,6 +413,11 @@ pub(in crate::gui) mod tests {
         Chrome, EditState, EditorState, ExportState, Inputs, Playback, Scenario, StatsState,
         ViewSettings,
     };
+    // Wildfire is not part of the library's own API: it is one `ExternalModel`
+    // behind `cella_lib::wildfire`. Importing it here, inside the test module
+    // rather than at file scope, keeps that visible — the GUI's production
+    // path does not name a concrete model.
+    use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireModel, WildfireParams};
     use std::collections::BTreeMap;
 
     /// A real `CellaApp` with no scenario loaded yet.

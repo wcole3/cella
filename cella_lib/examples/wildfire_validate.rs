@@ -34,7 +34,8 @@
 use std::path::{Path, PathBuf};
 
 use cella_lib::config::CellaConfig;
-use cella_lib::{CellType, Grid2D, WildfireModel};
+use cella_lib::wildfire::WildfireModel;
+use cella_lib::{CellType, Grid2D};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]

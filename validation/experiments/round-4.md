@@ -93,7 +93,7 @@ context. Bold is the ensemble's headline.
    are a tie everywhere, and the operator is kept for being the physical
    mechanism at no cost.
 6. **Terrain wind is null until the kernel responds to wind** (E26):
-   `cella_lib::wind_field` (6 s per run) moves scores by ±0.01. E19's
+   `cella_lib::wildfire::wind_field` (6 s per run) moves scores by ±0.01. E19's
    5–10 % response is the bottleneck; E30 comes before any more wind
    work.
 7. **Retardant as a paintable multiplier** (E27, `set_density`) has the

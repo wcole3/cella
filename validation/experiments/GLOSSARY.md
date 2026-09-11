@@ -160,7 +160,7 @@ a bug in this page.
   burn) along the fire's edge during the run, standing in for crews.
   Three versions (E18, E23, E27), all either strangled or ignored.
 - **Terrain wind field.** Per-cell wind from a mass-conserving downscaler
-  (ridges speed up, valleys channel). `cella_lib::wind_field`, E26.
+  (ridges speed up, valleys channel). `cella_lib::wildfire::wind_field`, E26.
 - **Heterogeneity.** Random per-cell patchiness of flammability (E16a).
 
 ## Ensembles and learning

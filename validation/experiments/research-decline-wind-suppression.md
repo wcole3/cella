@@ -69,7 +69,7 @@ ridge stations: speed RMSE 1.6–2.7 m/s, direction RMSE 65–81° — better
 than the raw forecast on ridgetops, still large. Their conclusion, and
 ours from E14: **a valley station is not the wind on the ridge**, and
 downscaling gets you part of the way. Implemented today as
-`cella_lib::wind_field::mass_consistent` (the two-dimensional, single-layer
+`cella_lib::wildfire::wind_field::mass_consistent` (the two-dimensional, single-layer
 form of the same idea) feeding the new per-cell wind field in the model.
 
 **Fire–atmosphere coupling** (Coen et al. 2013, *JAMC* 52:16, WRF-Fire;

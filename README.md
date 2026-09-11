@@ -294,18 +294,31 @@ cella/
 │       ├── mod.rs           # Demo helpers & re-exports
 │       ├── one_d.rs         # 1D demo builders & runners
 │       └── two_d.rs         # 2D demo builders & runners
-├── cella_lib/              # Library crate
+├── cella_lib/              # Library crate (its own Cargo build root)
 │   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs           # Public API & re-exports
-│       ├── types.rs         # CellType, CellState
-│       ├── rules.rs         # Rule1D, Rule2D, subrules, neighborhoods
-│       ├── grid1d.rs        # Grid1D
-│       ├── grid2d.rs        # Grid2D
-│       ├── state.rs         # GridState serialisation
-│       ├── config.rs        # JSON config loading/building
-│       └── threads.rs       # Thread configuration
-└── cella_lib/tests/         # Integration & snapshot tests
+│   ├── src/
+│   │   ├── lib.rs           # Public API & re-exports
+│   │   ├── types.rs         # CellType, CellState
+│   │   ├── rules.rs         # Rule1D, Rule2D, subrules, neighborhoods
+│   │   ├── grid1d.rs        # Grid1D
+│   │   ├── grid2d.rs        # Grid2D
+│   │   ├── state.rs         # GridState serialisation
+│   │   ├── config.rs        # JSON config loading/building
+│   │   ├── threads.rs       # Thread configuration
+│   │   ├── chunking.rs      # (private) per-worker output slices
+│   │   ├── rng.rs           # cell_rand: the one source of randomness
+│   │   ├── tunables.rs      # One key grammar over every knob
+│   │   ├── external.rs      # ExternalModel plugin seam
+│   │   ├── explore/         # Ensembles, evolution, illumination (model-agnostic)
+│   │   │   ├── mod.rs
+│   │   │   ├── sim.rs, metrics.rs, genome.rs, driver.rs
+│   │   │   └── ensemble.rs, evolve.rs, archive.rs
+│   │   └── wildfire/        # NOT engine code — the worked example model.
+│   │       ├── mod.rs       #   WildfireModel: an ExternalModel
+│   │       ├── driver.rs    #   WildfireDriver: a MemberDriver
+│   │       └── wind_field.rs # Terrain wind downscaling for the model
+│   ├── examples/            # wildfire_validate, wildfire_smc, explore, ...
+│   └── tests/               # Integration & snapshot tests
 ```
 
 ---

@@ -1,7 +1,7 @@
 //! Ensemble forecasting for the wildfire model (validation E24 / E25 / E28),
 //! built on the library's model-agnostic [`cella_lib::Ensemble`] plus the
-//! [`cella_lib::WildfireDriver`] — the same two pieces any other model would
-//! use.
+//! [`cella_lib::wildfire::WildfireDriver`] — the same two pieces any other
+//! model would use.
 //!
 //! `open` mode — plain Monte Carlo: `M` members with genes drawn from the
 //! ranges below, run independently; the per-cell burn probability is scored
@@ -54,12 +54,11 @@ use cella_lib::explore::archive::{ArchiveReport, DescriptorSpec};
 use cella_lib::explore::driver::Forcing;
 use cella_lib::explore::metrics::{Fitness, When, brier, elongation, fraction, iou, mean_sd};
 use cella_lib::explore::{Search, Sim};
-use cella_lib::wildfire::driver::WeatherWindow;
 use cella_lib::wildfire::driver::{
     FORCING_HOURS, FORCING_WIND_FROM, FORCING_WIND_SPEED, GENE_CONTAIN_A, GENE_CONTAIN_B,
-    GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED,
+    GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow, WildfireDriver,
 };
-use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue, WildfireDriver};
+use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue};
 use cella_lib::{Evolution, EvolveConfig, Grid2D, Metric, Rule2D};
 use serde::{Deserialize, Serialize};
 

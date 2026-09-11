@@ -23,11 +23,12 @@ The library is designed with a focus on:
 | `rng` | `Rng` (SplitMix64), `mix`, `cell_rand(seed, step, idx, stream)`, `STREAM_RULE`, `STREAM_FILL` — the one source of randomness |
 | `tunables` | one key grammar over every knob: `rule.subrules[i].field` and `model.key` as `ParamDesc`s, `Grid*::{params, get_param, set_param}` |
 | `explore` | ensembles, evolution and illumination for any grid: `sim` (`Sim`), `metrics`, `genome`, `driver`, `ensemble`, `evolve`, `archive` — guide in [explore.md](explore.md); primers: [primer-monte-carlo.md](primer-monte-carlo.md), [primer-genetic-algorithms.md](primer-genetic-algorithms.md) |
-| `wildfire` | `WildfireModel` — stochastic Alexandridis-style wildfire spread, the first `ExternalModel`; `wildfire::driver::WildfireDriver`, the worked example of a `MemberDriver` |
-| `wind_field` | `mass_consistent` terrain wind downscaling for the wildfire model |
+| `wildfire` | **Not part of the engine — a worked example of it.** Everything fire-specific lives here: `WildfireModel`, a stochastic Alexandridis-style spread model and the first `ExternalModel`; `wildfire::driver::WildfireDriver`, the worked example of a `MemberDriver`; `wildfire::wind_field::mass_consistent`, terrain wind downscaling that feeds `WildfireModel::set_wind_field` |
 | `chunking` (private) | `split_chunks` — carves the output buffers into disjoint per-worker slices |
 
-Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, `grid2d_to_json`, the model-parameter types, and from `explore`: `Sim`, `Ensemble`, `EnsembleConfig`, `Evolution`, `EvolveConfig`, `GeneSpec`, `Metric`, `Objective`, `MemberDriver`, plus `WildfireDriver`/`WeatherWindow`.
+Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, `grid2d_to_json`, the `ExternalModel` seam types (`ExternalModel`, `ChunkCtx`, `GridView`, `ModelEvent`, `ModelError`, `ParamDesc`, `ParamKind`, `ParamValue`), and from `explore`: `Sim`, `Ensemble`, `EnsembleConfig`, `Evolution`, `EvolveConfig`, `GeneSpec`, `Metric`, `Objective`, `MemberDriver`.
+
+Nothing from `wildfire` is re-exported at the crate root. That is deliberate: `use cella_lib::*;` should give you the engine and nothing else, so a reader can tell at a glance which types are library and which belong to one example model. To use the wildfire model you name the module — `use cella_lib::wildfire::{WildfireModel, WildfireParams};` — and the same goes for `wildfire::driver::WildfireDriver` and `wildfire::wind_field::mass_consistent`. Note the split around `MemberDriver`: the *trait* is engine API and is re-exported, while `WildfireDriver`, the fire-specific implementation of it, is not.
 
 ### Core Components
 
@@ -174,16 +175,22 @@ Knob-turning is generic; anything else a model needs per member (a weather sched
 
 ### The wildfire model
 
+Everything in this section lives under `cella_lib::wildfire`, and none of it
+is re-exported at the crate root. The module is a demonstration of the
+`ExternalModel` and `MemberDriver` seams, not a feature of the engine: the
+engine could drop it tomorrow and lose nothing. Read it as the answer to
+"what does a real model plugged into this library look like?"
+
 **Ensembles and wind fields (September 2026).** Ensembles are a generic
 feature (`explore::Ensemble`, [explore.md](explore.md)); the wildfire model
 takes part through `WildfireDriver`, which applies the wind schedule,
 optional `tau_days` decay and the FSim-style daily containment roll to each
 member. `configs/2d_wildfire_ensemble.json` shows the `"ensemble"` block;
 `examples/wildfire_smc.rs` is the validation runner built on it.
-`wind_field::mass_consistent` /
-`MassConsistentBasis` downscale one wind over the elevation layer
-(WindNinja-style mass conservation: ridges speed up, valleys channel) into a
-per-cell field for `WildfireModel::set_wind_field`; `set_density` paints a
+`wildfire::wind_field::mass_consistent` / `MassConsistentBasis` downscale one
+wind over the elevation layer (WindNinja-style mass conservation: ridges
+speed up, valleys channel) into a per-cell field for
+`WildfireModel::set_wind_field`; `set_density` paints a
 per-cell multiplier (retardant, wet line) that can be restored. Members share
 the slope table (`Arc`), so an ensemble costs roughly cells × members × 8 B.
 
@@ -370,7 +377,7 @@ Environment variables the suite reads:
 - `CELLA_BENCH_RUNS=N` — repeats per benchmark (default 10). Timings are recorded per thread count (`<name>_t<threads>`).
 - `CELLA_EXPORT_CONFIGS=1` — write a JSON config file for each scenario the tests build.
 
-Integration tests live in `cella_lib/tests/`: `config_tests.rs` (JSON round-trips; every shipped config loads and builds its blocks), `edge_cases.rs` (validation boundaries), `randomness.rs`, `soa_robust.rs` (history circular buffer + serial/parallel agreement), `external_model.rs`, `explore_generic.rs` (an out-of-tree model and driver run through `CellaConfig` JSON, proving the engines need nothing from the wildfire crate), and `long_suite.rs` (ignored-by-default stress, snapshots, benchmarks).
+Integration tests live in `cella_lib/tests/`: `config_tests.rs` (JSON round-trips; every shipped config loads and builds its blocks), `edge_cases.rs` (validation boundaries), `randomness.rs`, `soa_robust.rs` (history circular buffer + serial/parallel agreement), `external_model.rs`, `explore_generic.rs` (an out-of-tree model and driver run through `CellaConfig` JSON, proving the engines need nothing from the `wildfire` module), and `long_suite.rs` (ignored-by-default stress, snapshots, benchmarks).
 
 ---
 

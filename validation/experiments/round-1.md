@@ -45,7 +45,7 @@ predicted (TEST_PLAN §7).
 Engine findings (not score-related, arguably worth more):
 
 1. **p0 write-after-attach footgun.** `params.p0` is baked into
-   `derived.p_base` at attach ([wildfire.rs](../../cella_lib/src/wildfire.rs)
+   `derived.p_base` at attach ([wildfire/mod.rs](../../cella_lib/src/wildfire/mod.rs)
    `attach()`); writing `params.p0` afterwards is silently ignored. Wind
    params are read live per chunk, which hides the inconsistency. The
    first E3 run was a silent no-op because of it (all variants identical
