@@ -1,4 +1,4 @@
-# E39 — area-ratio-gated immigrant reset · REJECTED (as tested) — the gate is safe but comes too late to keep E38's one real gain
+# E39 — area-ratio-gated immigrant reset · REJECTED (as tested) — safe everywhere, but on Buck (the one fire that needed it) the gate fires too late to keep E38's gain
 
 _Round 6 (2026-09-11, after E38) · 5 seeds matched to E33/E38 · all six fires incl. holdout · runner `exp_r6_gated_reset.py` (`SMC_IMM_RESET_GATE=1.0`) · results `exp39_gated_reset.json` · pre-registered TEST_PLAN v1.8 addendum · terms: [GLOSSARY.md](GLOSSARY.md)_
 
@@ -11,13 +11,20 @@ observed area (below 1.0), the exact signature of a lock-in. The gate
 worked perfectly at its defensive job — Pier's loss and most of the
 Brier cost vanish — and failed completely at its offensive one: Buck
 seed 3 comes back at 0.527, tying E33 to three decimal places, not
-E38's 0.632. The reason is mechanical, not a tuning problem: by the time
-the area ratio actually drops below 1, the locked members' grids have
-already burned out completely (zero `Burning` cells, only `BurnedOut`),
-so clearing the `contained` flag on a fresh immigrant has nothing left
-to reignite. The gate is defensively safe and offensively useless as
-specified — it does not earn a place over just leaving `immigrant_reset`
-off.
+E38's 0.632. The reason is timing, not a tuning problem, and the raw
+reports show it directly: on Buck, every one of the five seeds only
+crosses the gate (area ratio < 1.0) after 91–100% of members are
+already flagged `contained` (see "Why the gate fires when it does"
+below) — the population has to spend most of the fire settling toward
+full containment before there is enough evidence to reset anyone. By
+then a reset changes the `contained` bookkeeping flag but not the
+forecast, which is consistent with (though the stored reports cannot
+directly prove) those members' grids having no live embers left to
+reignite. On the other four fires the gate fires immediately, at the
+very first window, well before any member is contained — those fires
+never had Buck's lock-in problem for the gate to catch, early or late.
+The gate is defensively safe and offensively useless as specified — it
+does not earn a place over just leaving `immigrant_reset` off.
 
 **Question.** Does resetting immigrants only while the consensus
 under-predicts the observed area keep E38's Buck gain without its Pier
@@ -101,6 +108,82 @@ matches E33 exactly: the gate never fires there, because Pier's area
 ratio never drops below 1 — it is correctly recognised as a fire that
 has genuinely stopped, not one that is locked in.
 
+**Why the gate fires when it does — the evidence.** The claim above
+("too late" on Buck) is checked directly against the raw per-window
+reports rather than asserted. `wildfire_smc`'s report schema (`ObsScore`)
+stores `area_ratio_mean` and `contained_fraction`, both aggregated over
+the whole ensemble, every window; it does **not** store a per-member
+burning-cell count or per-member burned area, only the ensemble mean
+used to build the ratio. So "the locked members have zero live embers"
+cannot be read off the report directly — it is the best-supported
+explanation, not a measurement, and is flagged as such below.
+
+Buck seed 3 (the seed the prediction named), window by window around
+the crossing, from `exp39_gated_reset/Buck_2017_gated_seed3.json` and
+its E33 twin `exp33_noise/Buck_2017_base_seed3.json` (`idx` counts
+observation windows from 0; the ratio is identical in both reports up
+to the crossing, since no reset has happened yet to make them differ):
+
+| idx | hours | area ratio | contained, E39 | contained, E33 twin |
+|---|---|---|---|---|
+| 6 | 216 | 1.168 | 0.81 | 0.81 |
+| 7 | 240 | **0.862** ← first below 1.0 | 0.94 | 0.94 |
+| 8 | 264 | 0.701 | 0.81 | 1.00 |
+
+The ratio first drops below the 1.0 gate at window 7 (hour 240, day
+10) — by which point 94% of members are already `contained`. The
+gate's decision *at* window 7 is exactly what makes window 8 diverge
+(E39 stays at 81% contained; the never-resetting E33 twin locks fully
+to 100%), so a reset genuinely does happen — nine days into a
+29-window run, after the population has already mostly settled into
+containment. Indirect support for "nothing left to reignite" at that
+point: the mean `burn_duration` gene (`dur_mean`) at window 7 is 13.0
+steps, and Buck's scenario runs at 2.08 steps/hour, so a cell still
+`Burning` when a member became `contained` finishes transitioning to
+`BurnedOut` in about 13 / 2.08 ≈ 6.3 real hours — well inside the ~24 h
+between assimilation windows, and far inside the 48 h between window 6
+(81% contained) and window 8. Every member contained by window 6 has
+had two full days for its last embers to finish burning out by window
+8, which is consistent with (not proof of) a reset state flag changing
+nothing the burned-area mask counts.
+
+The same two-column check, all six fires, seed 0 (the seed shared by
+E33/E38/E39), from `exp33_noise/<fire>_base_seed0.json`:
+
+| Fire | first window, ratio < 1.0 | hours | ratio there | contained fraction there | of N windows |
+|---|---|---|---|---|---|
+| Bear | 4 | 120 | 0.936 | 0.50 | 22 |
+| Brattain | 0 | 24 | 0.497 | 0.00 | 21 |
+| Buck | 8 | 264 | 0.995 | 0.94 | 29 |
+| Chimney | 0 | 24 | 0.704 | 0.00 | 15 |
+| Ferguson* | 0 | 24 | 0.217 | 0.00 | 29 |
+| Pier* | never crosses | — | (final 1.186) | (final 1.00) | 30 |
+
+This is not one story on every fire. On Brattain, Chimney and Ferguson
+the ratio is already below 1.0 at the very *first* window, with **no**
+member contained yet (0.00) — that is not lock-in, it is the ensemble's
+random initial draw briefly under-shooting a fire that is already
+growing fast on day one. The gate fires immediately there, from
+generation zero, which is close to what an ordinary (ungated)
+`immigrant_reset` would already be doing that early — consistent with
+E38 also barely moving those three fires (±0.003–0.005, all ties: it
+had nothing to fix there either). Bear sits in between (window 4, half
+the population already contained). Buck is the one fire where the
+crossing happens *late* — only after 94% of members are already
+contained, nine days in — which is the specific, narrow situation
+"embers already dead" is a hypothesis about. Pier's ratio never crosses
+in all 30 windows, so the gate is provably inert there; no hypothesis
+needed.
+
+Checked per seed, Buck crosses late on every one of its five seeds, not
+just seed 3: window 7–8 (hour 240–264), with 91–100% of members already
+contained at the crossing in every case
+(`exp33_noise/Buck_2017_base_seed{0,1,2,3,4}.json`: seed 0 idx 8/264 h/
+94%; seed 1 idx 7/240 h/100%; seed 2 idx 8/264 h/97%; seed 3 idx 7/240 h/
+94%; seed 4 idx 7/240 h/91%). Buck's late-crossing pattern is a property
+of the fire, not a lucky or unlucky seed draw, which is also why the
+gate's failure to help it is not a one-seed fluke.
+
 **The prediction, checked line by line.**
 
 - *"Buck seed 3 keeps its +0.10."* **No.** E39's Buck seed 3 is 0.527,
@@ -125,24 +208,30 @@ has genuinely stopped, not one that is locked in.
 Three of four clauses held; the one that mattered most — the reason E39
 was proposed at all — did not.
 
-**What it means.** The gate is reading the right *signal* (Pier's
-protection proves that: it never mistakes "stopped for real" for
-lock-in) but at the wrong *time*. `immigrant_reset_gate` decides whether
-to reset using the area ratio computed at that same resample step, from
-the ensemble's live burned-cell counts. By the time enough members have
-stopped growing for the population mean to visibly under-predict the
-observed area (ratio < 1), the wildfire driver has usually already run
-every `Burning` cell in those members through to `BurnedOut` — there are
-no live embers left in the grid for a cleared `contained` flag to act
-on. Clearing the *state* flag is cheap (it does change
-`contained_fraction`, visible in the table above: 0.81 under the gate on
-Buck, same as E38, not E33's 1.00) but it cannot undo *physics*: a cell
-needs a burning neighbour to catch fire, and none exist any more.
-`immigrant_reset` only ever worked because it was applied unconditionally
-from generation 1, so a share of the population always still had live
-embers when the rest locked in; gating on evidence necessarily waits
-until the evidence exists, by which point it is too late for the fix to
-reach the part of the population that needed it.
+**What it means.** The gate is reading the right *signal* on Pier (it
+never mistakes "stopped for real" for lock-in there — the ratio never
+crosses, so it never fires) and it fires immediately, from the first
+window, on Brattain/Chimney/Ferguson — but those three never needed
+fixing either, which is why the extra resets there are harmless rather
+than helpful. Buck is the fire that matters, and there the timing is
+wrong: the evidence table above shows the ratio only crosses after
+91–100% of members are already `contained`, on every one of the five
+seeds. Clearing the *state* flag on a reset immigrant at that point does
+change `contained_fraction` (visible in the results table: 0.81 under
+the gate on Buck, same as E38's unconditional reset, not E33's 1.00) but
+not the forecast — Buck seed 3's `consensus_iou` is bit-identical to its
+E33 twin at all 29 windows of the run, crossing included. The most likely reason, though the stored reports
+cannot prove it directly (no per-member burning-cell count is kept),
+is that a member contained for as long as most of Buck's population has
+been by window 7 has had far longer than `burn_duration` (≈13 steps ≈
+6.3 h, against ~24 h between windows) for every `Burning` cell to finish
+transitioning to `BurnedOut` — there is nothing left to reignite,
+whatever the state flag says. `immigrant_reset` (E38) only ever worked
+on Buck because it reset unconditionally from generation 1, so some
+lineage always still had live embers by the time the rest of the
+population locked in; gating on the evidence means waiting until the
+evidence exists, and on Buck that is nine days after the fix would have
+needed to start.
 
 **Questions this raises.**
 
