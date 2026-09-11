@@ -353,6 +353,10 @@ fn run_illuminate() {
         .unwrap_or(5);
     // Same four winds as the flat-grid speed table, so the figure (elongation
     // vs. size, both rules, four winds) can be built straight from this mode.
+    // WF_WIND_LAW overrides the law for a supplementary check (the addendum's
+    // "under Bernoulli, rear_focus still collapses with size" claim) without
+    // touching the pre-registered exponential-law default.
+    let wind_law = env::var("WF_WIND_LAW").unwrap_or_else(|_| "exponential".to_string());
     let winds = [0.0, 2.0, 5.0, 8.0];
     let max_steps = 20_000u64;
     print_report_open();
@@ -367,7 +371,7 @@ fn run_illuminate() {
                     burn_duration,
                     seed,
                     spread,
-                    "exponential",
+                    &wind_law,
                     0.131,
                     &checkpoints,
                     max_steps,
