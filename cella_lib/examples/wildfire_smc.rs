@@ -121,6 +121,13 @@ struct ObsScore {
 struct Report {
     scenario: String,
     mode: String,
+    /// Which build produced this file, so two runs can be told apart:
+    /// the short git commit hash `wildfire_smc` was compiled from
+    /// (`"unknown"` if `git` wasn't available at build time).
+    binary_git: String,
+    /// Which build produced this file, so two runs can be told apart:
+    /// the UTC timestamp `wildfire_smc` was compiled at.
+    binary_built_utc: String,
     members: usize,
     beta: f64,
     sigma: f64,
@@ -163,6 +170,13 @@ struct FitReport {
 #[derive(Serialize)]
 struct MapReport {
     scenario: String,
+    /// Which build produced this file, so two runs can be told apart:
+    /// the short git commit hash `wildfire_smc` was compiled from
+    /// (`"unknown"` if `git` wasn't available at build time).
+    binary_git: String,
+    /// Which build produced this file, so two runs can be told apart:
+    /// the UTC timestamp `wildfire_smc` was compiled at.
+    binary_built_utc: String,
     days: u64,
     steps: u64,
     genes: Vec<GeneSpec>,
@@ -548,6 +562,8 @@ fn main() {
     let report = Report {
         scenario: sc.id.clone(),
         mode: mode.clone(),
+        binary_git: env!("CELLA_GIT_SHA").to_string(),
+        binary_built_utc: env!("CELLA_BUILT_UTC").to_string(),
         members,
         beta: ens_cfg.beta,
         sigma: ens_cfg.sigma,
@@ -773,6 +789,8 @@ fn run_map(
         .collect();
     let report = MapReport {
         scenario: sc.id.clone(),
+        binary_git: env!("CELLA_GIT_SHA").to_string(),
+        binary_built_utc: env!("CELLA_BUILT_UTC").to_string(),
         days,
         steps,
         genes: genes.to_vec(),

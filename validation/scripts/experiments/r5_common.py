@@ -30,6 +30,9 @@ def run(out_dir, fire, label, env, members=32, mode="assim"):
     last = r["scores"][-1]
     row = {"fire": fire, "config": label, "members": members, "seed": int(full_env.get("SMC_SEED", "0")),
            "holdout": fire in HOLDOUT,
+           # Which binary produced this report; older reports predate these
+           # fields, so fall back to "unknown" rather than raising.
+           "binary_git": r.get("binary_git", "unknown"), "binary_built_utc": r.get("binary_built_utc", "unknown"),
            "mean_consensus_iou": r["mean_consensus_iou"], "mean_best_threshold_iou": r["mean_best_threshold_iou"],
            "mean_member_iou": r["mean_member_iou"], "mean_radial_iou": r["mean_radial_iou"],
            "final_consensus_iou": r["final_consensus_iou"], "final_radial_iou": r["final_radial_iou"],
