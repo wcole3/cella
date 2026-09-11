@@ -276,6 +276,23 @@ in `validation/results/analysis/`.
   only ties where the rear-focus version beats, the sign was doing the
   work. Same scoring, same six fires; no change to the three
   pre-registered variants' numbers.
+  Added after E41 (2026-09-11, before the E42 analysis; no new runs):
+  **E42 posterior trajectories** — the E33 five-seed reports already on
+  disk carry everything needed to ask two more questions of the filter's
+  posterior: does the learned p0 drift systematically with day-of-fire
+  across fires, and does the learned containment operator agree with
+  ICS-209's reported percent contained? Per-observation mean ± sd across
+  the five E33 seeds of p0, duration, wind × and area ratio, aligned by
+  day since the first mask; and, per fire, every member's FINAL
+  `(contain_a, contain_b)` run against the OBSERVED daily growth from
+  truth to get a daily hazard and a cumulative contained-by-day curve,
+  compared with ICS-209's `PCT_CONTAINED_COMPLETED` on the same day axis.
+  **Prediction, written before the analysis:** p0 posterior falls over
+  days 1–5 on Bear, Buck, Pier (the slow fires) and rises on Ferguson
+  (the model under-burns it); wind × is flat everywhere (E26: the kernel
+  does not listen). The learned containment curve reaches 50 % contained
+  members 5–10 days *earlier* than ICS-209 reports 50 % containment on
+  Bear and Buck (E21: the model needs stopping before crews report it).
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
