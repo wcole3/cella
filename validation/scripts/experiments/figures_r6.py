@@ -426,9 +426,98 @@ def e40_observed_immigrants():
     print("wrote e40-observed-immigrants.svg")
 
 
+def _mean_from_k1(exp_dir, fire, label_of, key, seeds=5):
+    """Mean of `scores[1:][*][key]` (k >= 1, so it is comparable with the
+    lagged nulls, which are undefined at the very first scored window),
+    averaged first within each seed's own series, then across seeds.
+    """
+    per_seed = []
+    for s in range(seeds):
+        r = _raw(exp_dir, fire, label_of(s))
+        tail = r["scores"][1:]
+        per_seed.append(sum(sc[key] for sc in tail) / len(tail))
+    return sum(per_seed) / len(per_seed)
+
+
+def _mean_lagged(exp_dir, fire, label, key):
+    """Mean of a lagged-null field over the windows where it exists (k >=
+    2); seed-independent (the lagged nulls depend only on the truth), so
+    any one report for the fire carries the number.
+    """
+    r = _raw(exp_dir, fire, label)
+    vals = [sc[key] for sc in r["scores"] if sc.get(key) is not None]
+    return sum(vals) / len(vals)
+
+
+def e40b_lagged_nulls():
+    """Controller finding (post-hoc, after E40): E40's headline comparison
+    used the wrong dummy competitor. Per fire, five bars, all means over
+    k >= 1 so they are directly comparable: E33 (no correction), E40 (20%
+    of the population state-corrected), E40b (everyone state-corrected),
+    lagged persistence, lagged Circle -- the two nulls that see exactly
+    what state correction sees (the mask one window back) and no more.
+    """
+    e33 = load("exp33_noise.json")
+    e40 = load("exp40_observed_immigrants.json")
+    e40b = load("exp40b_all_state_correction.json")
+    if e33 is None or e40 is None or e40b is None:
+        return
+    W, H = 1080, 560
+    PW, PH = 304, 200
+    variants = [
+        ("e33", "E33 (NONE)", MUTED),
+        ("e40", "E40 (IMMIGRANTS)", SOFT),
+        ("e40b", "E40b (ALL)", ACCENT),
+        ("lp", "LAGGED PERSISTENCE", INK),
+        ("lc", "LAGGED CIRCLE", "#4f8a6d"),
+    ]
+    body = []
+    for i, f in enumerate(FIRES):
+        px, py = panel_grid(6, 3, PW, PH, 40, 72, 48, 56)[i]
+        e33m = _mean_from_k1("exp33_noise", f, lambda s: f"base_seed{s}", "consensus_iou")
+        e40m = _mean_from_k1("exp40_observed_immigrants", f, lambda s: f"observed_seed{s}", "consensus_iou")
+        e40bm = _mean_from_k1("exp40b_all_state_correction", f, lambda s: f"all_seed{s}", "consensus_iou")
+        lp = _mean_lagged("exp40b_all_state_correction", f, "all_seed0", "lagged_persistence_iou")
+        lc = _mean_lagged("exp40b_all_state_correction", f, "all_seed0", "lagged_circle_iou")
+        vals = {"e33": e33m, "e40": e40m, "e40b": e40bm, "lp": lp, "lc": lc}
+        hi = max(vals.values()) + 0.06
+        sy = lambda v: py + PH - 28 - (v / hi) * (PH - 56)
+        sx = lambda k: px + 20 + k * (PW - 32) / len(variants)
+        bw = (PW - 32) / len(variants) - 10
+        holdout = f in ("Ferguson_2018", "Pier_2017")
+        for g in (0.0, hi / 2, hi):
+            body.append(f'<line x1="{px + 16}" y1="{sy(g):.1f}" x2="{px + PW}" y2="{sy(g):.1f}" '
+                        f'stroke="{RULE}" stroke-width="0.8"/>')
+            body.append(text(px + 12, sy(g) + 3, f"{g:.2f}", anchor="end"))
+        body.append(text(px, py - 8, SHORT[f] + ("*" if holdout else ""),
+                          size=12, fill=INK, font=SANS, weight=600))
+        for k, (key, label, col) in enumerate(variants):
+            x = sx(k)
+            v = vals[key]
+            body.append(f'<rect x="{x:.1f}" y="{sy(v):.1f}" width="{bw:.1f}" height="{sy(0) - sy(v):.1f}" '
+                        f'fill="{col}" fill-opacity="0.85" stroke="{INK}" stroke-width="0.6"/>')
+            body.append(text(x + bw / 2, sy(v) - 4, f"{v:.2f}", anchor="middle", size=7))
+            body.append(text(x + bw / 2, py + PH - 12, label.split()[0][:4], anchor="middle", size=6.5))
+    body.append(text(500, H - 96, "MEAN CONSENSUS IOU OVER k >= 1 (COMPARABLE TO THE LAGGED NULLS), PER FIRE",
+                      anchor="middle", extra='letter-spacing="0.10em"'))
+    body.append(legend(H - 28, W, [(lambda x, y, c=col: f'<rect x="{x}" y="{y - 6}" width="16" height="12" '
+                                     f'fill="{c}" fill-opacity="0.85" stroke="{INK}" stroke-width="0.6"/>', label)
+                                    for _, label, col in variants]))
+    (FIG / "e40b-lagged-nulls.svg").write_text(svg(
+        "e40b", "E40b vs the lagged nulls, per fire",
+        "Small multiples, one bar chart per fire: mean consensus IoU over the windows with a lagged null (k >= 1), "
+        "for E33 (no state correction), E40 (20% of the population state-corrected), E40b (everyone "
+        "state-corrected), lagged persistence (yesterday's mask, unchanged) and the lagged Circle (yesterday's "
+        "mask, grown to today's true area) -- the two dummy competitors that see exactly what state correction "
+        "sees and no more. Every fire's ensemble configuration loses to both lagged nulls.",
+        W, H, "\n".join(body)))
+    print("wrote e40b-lagged-nulls.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
     e42_posterior()
     e39_gated_reset()
     e40_observed_immigrants()
+    e40b_lagged_nulls()
