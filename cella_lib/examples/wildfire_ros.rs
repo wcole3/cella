@@ -22,8 +22,9 @@
 //! - `speed` (default, no argument needed): the original E19 table, unchanged.
 //! - `arrival_flat`: the E30a flat-grid speed table, both spread rules,
 //!   wind 0/2/5/8 m/s, p0 0.12/0.22/0.44, burn duration 5/10, 3 seeds.
-//! - `illuminate`: point ignition on a 400x400 uniform grid, 8 m/s toward
-//!   +x, elongation (E12's measure) at 2/5/10/20 % burned, both rules, 3 seeds.
+//! - `illuminate`: point ignition on a 400x400 uniform grid, wind toward +x
+//!   at 0/2/5/8 m/s (the flat-grid table's own four winds), elongation
+//!   (E12's measure) at 2/5/10/20 % burned, both rules, 3 seeds.
 //! - `lb`: length-to-breadth table on the arrival rule at 10 % size, for
 //!   2/5/8 m/s, scanning `c2` under the exponential wind law and also under
 //!   the rear-focus law, against Anderson (1983)'s `LB(U)`. Also prints the
@@ -350,36 +351,40 @@ fn run_illuminate() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
-    let wind_speed = 8.0;
+    // Same four winds as the flat-grid speed table, so the figure (elongation
+    // vs. size, both rules, four winds) can be built straight from this mode.
+    let winds = [0.0, 2.0, 5.0, 8.0];
     let max_steps = 20_000u64;
     print_report_open();
     let mut first = true;
-    for &spread in &["bernoulli", "arrival"] {
-        for seed in 0..seeds {
-            let hits = illuminate(
-                size,
-                wind_speed,
-                p0,
-                burn_duration,
-                seed,
-                spread,
-                "exponential",
-                0.131,
-                &checkpoints,
-                max_steps,
-            );
-            for (frac, steps, e) in hits {
-                if !first {
-                    println!(",");
+    for &wind_speed in &winds {
+        for &spread in &["bernoulli", "arrival"] {
+            for seed in 0..seeds {
+                let hits = illuminate(
+                    size,
+                    wind_speed,
+                    p0,
+                    burn_duration,
+                    seed,
+                    spread,
+                    "exponential",
+                    0.131,
+                    &checkpoints,
+                    max_steps,
+                );
+                for (frac, steps, e) in hits {
+                    if !first {
+                        println!(",");
+                    }
+                    first = false;
+                    print!(
+                        "{{\"spread\":\"{spread}\",\"wind_ms\":{wind_speed},\"seed\":{seed},\"size_frac\":{frac},\"steps\":{steps},\"elongation\":{e:.4}}}"
+                    );
+                    eprintln!(
+                        "wind {wind_speed:.0} {spread:9} seed {seed} size {:.0}%: {steps} steps, elongation {e:.3}",
+                        frac * 100.0
+                    );
                 }
-                first = false;
-                print!(
-                    "{{\"spread\":\"{spread}\",\"seed\":{seed},\"size_frac\":{frac},\"steps\":{steps},\"elongation\":{e:.4}}}"
-                );
-                eprintln!(
-                    "{spread:9} seed {seed} size {:.0}%: {steps} steps, elongation {e:.3}",
-                    frac * 100.0
-                );
             }
         }
     }
