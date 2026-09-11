@@ -12,8 +12,9 @@ way, day to day, on every fire (a measured version of E21's "something
 slows these fires early")? And does the containment operator's learned
 `(contain_a, contain_b)`, run against the real fire's own growth, predict
 containment sooner or later than the crews' ICS-209 reports? The
-prediction's *direction* held on both counts — p0 falls on the two
-fastest calibration fires and rises on the under-burnt holdout fire; the
+prediction's *direction* held on both counts — p0 falls on the two slow
+calibration fires it was predicted to fall on and rises on the
+under-burnt holdout fire; the
 model always reaches 50 % contained members before ICS-209 reports 50 %
 containment. But the *sizes* were off (the Bear/Buck lead is 13–18 days,
 not the predicted 5–10), "wind × flat everywhere" does not hold day 1 to
@@ -161,7 +162,7 @@ the two fires the prediction named.
   0.208 → 0.148, **falls** by 0.060, more than either endpoint's sd
   (.018–.022). **Held.** Buck: 0.199 → 0.157, **falls** by 0.042, also
   more than either sd (.010–.018). **Held.** Pier: 0.202 → 0.219,
-  *rises* by 0.017 — about 1.6–1.7× its own sd (.010–.011), small but
+  *rises* by 0.017 — about 1.5–1.7× its own sd (.010–.011), small but
   the wrong sign. **Did not hold.**
 - *"...and rises on Ferguson."* 0.273 → 0.415, rises by 0.142, far more
   than either sd (.019–.024). **Held**, clearly.
@@ -171,16 +172,18 @@ the two fires the prediction named.
   pattern is not "the slow fires fall, Ferguson rises": it is closer to
   "four of six fires rise (Brattain, Chimney tie-to-rise, Ferguson, Pier
   marginally), two fall (Bear, Buck)" — see "what it means" below.
-- *"wind × is flat everywhere."* Day 1 medians are within 0.01 of 0.73 on
-  every fire (0.688–0.741) — genuinely flat *before* any real
-  differentiation, which is what a shared, barely-moved-from-prior value
-  looks like. But day 1 → day 5, wind × *rises* on five of six fires
+- *"wind × is flat everywhere."* Day 1 medians sit in a narrow band,
+  0.688–0.741 (five of six within 0.01 of 0.735; Chimney the low
+  outlier) — genuinely flat *before* any real differentiation, which is
+  what a shared, barely-moved-from-prior value looks like. But day 1 →
+  day 5, wind × *rises* on five of six fires
   (Brattain +0.041, Buck +0.107, Chimney +0.096, Ferguson +0.138, Pier
   +0.106 — all but Brattain beyond at least one endpoint's sd) and
   *falls* on Bear (−0.082, also beyond sd). **Did not hold** over that
   window. Looking at day 1 vs the *final* value instead, Bear (0.734 →
   0.680) and Chimney (0.688 → 0.694) end within about 1 sd of where they
-  started; Brattain, Buck, Ferguson and Pier end 0.03–0.16 above day 1.
+  started; Brattain, Buck, Pier and Ferguson end 0.024–0.092 above day 1
+  (Brattain +0.033, Buck +0.043, Pier +0.024, Ferguson +0.092).
   So even by the end, wind × drifted up on four of six fires — smaller
   moves than p0's own swings, but not flat.
 - *"The learned containment curve reaches 50 % contained members 5–10
