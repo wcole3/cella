@@ -12,16 +12,90 @@
 //!
 //! Provenance is a nice-to-have, not something that should ever block a
 //! build: if `git` is missing, this checkout has no `.git` (e.g. a tarball),
-//! or the command fails for any other reason, we fall back to `"unknown"`
+//! or a command fails for any other reason, we fall back to `"unknown"`
 //! rather than erroring out.
+//!
+//! **Why the `cargo:rerun-if-changed` lines matter**: by default Cargo only
+//! re-runs a build script when a file *inside this package* changes, and a
+//! `git commit` touches no file in `cella_lib/` — so without an explicit
+//! trigger, `binary_git` would silently go stale the moment you commit
+//! (caught in review: it happened to the very commit that introduced this
+//! file). We instead watch the specific git-internal files that change when
+//! `HEAD` moves, plus `src/` and `examples/` so a source edit refreshes the
+//! dirty-tree marker below on the next build. The one gap this doesn't
+//! close: editing a tracked file *outside* `src/` or `examples/` (e.g.
+//! `Cargo.toml`) without also touching one of those dirs won't by itself
+//! trigger a rebuild, so a report from that build could under-report
+//! dirtiness until something else forces a rebuild.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The short commit hash of `HEAD`, or `"unknown"` if `git` can't answer
-/// (not installed, not a git checkout, detached weirdness, etc).
-fn git_short_sha() -> String {
+/// The absolute-or-relative path to this checkout's `.git` directory
+/// (resolved via `git rev-parse --git-dir`, run from the crate root — git
+/// walks up to find it even though `.git` actually lives at the repo root,
+/// one level above `cella_lib/`), or `None` if `git` is missing or this
+/// isn't a checkout at all.
+fn git_dir() -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(output.stdout).ok()?;
+    let path = path.trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
+}
+
+/// Every file whose contents change whenever `HEAD` moves to a new commit:
+/// the `HEAD` file itself, the branch ref it points at (when `HEAD` is a
+/// symbolic ref — i.e. we're on a branch rather than detached), and
+/// `packed-refs`, since a branch ref can live there instead of as a loose
+/// file once `git gc` has packed it.
+fn git_watch_paths(dir: &Path) -> Vec<PathBuf> {
+    let head_file = dir.join("HEAD");
+    let mut paths = vec![head_file.clone()];
+    if let Ok(head) = std::fs::read_to_string(&head_file)
+        && let Some(ref_path) = head.trim().strip_prefix("ref: ")
+    {
+        paths.push(dir.join(ref_path));
+    }
+    paths.push(dir.join("packed-refs"));
+    paths
+}
+
+/// True when the working tree has staged or unstaged changes to tracked
+/// files. Untracked files are excluded on purpose — a stray scratch file
+/// sitting in the tree shouldn't make every report claim the binary itself
+/// is dirty. `git status` looks at the whole repository regardless of the
+/// directory it's run from, so running it from the crate root (this build
+/// script's working directory) is equivalent to running it at the repo
+/// root. Any failure (no git, not a repo) reads as "not dirty" — that's
+/// already reflected in `binary_git` being `"unknown"`.
+fn is_dirty() -> bool {
     Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// The short commit hash of `HEAD`, or `"unknown"` if `git` can't answer
+/// (not installed, not a git checkout, detached weirdness, etc), with a
+/// `-dirty` suffix when the working tree has uncommitted changes to tracked
+/// files — otherwise a clean build and a build made from edited-but-not-yet-
+/// committed source would report the exact same sha.
+fn git_short_sha() -> String {
+    let sha = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
@@ -29,7 +103,12 @@ fn git_short_sha() -> String {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|sha| sha.trim().to_string())
         .filter(|sha| !sha.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    if sha != "unknown" && is_dirty() {
+        format!("{sha}-dirty")
+    } else {
+        sha
+    }
 }
 
 /// The current time as an ISO-8601 UTC timestamp, e.g. `2026-09-11T12:34:56Z`.
@@ -71,6 +150,20 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 fn main() {
+    // Re-run this script (and so refresh CELLA_GIT_SHA) whenever HEAD moves
+    // to a new commit. Silently skip this when git is unavailable: without
+    // it, CELLA_GIT_SHA is already pinned at "unknown" and there is nothing
+    // ref-related to watch.
+    if let Some(dir) = git_dir() {
+        for path in git_watch_paths(&dir) {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    // Re-run on any source edit too, so the dirty-tree marker in
+    // CELLA_GIT_SHA reflects the latest change on the next build.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=examples");
+
     println!("cargo:rustc-env=CELLA_GIT_SHA={}", git_short_sha());
     println!("cargo:rustc-env=CELLA_BUILT_UTC={}", built_utc());
 }
