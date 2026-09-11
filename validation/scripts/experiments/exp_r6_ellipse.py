@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 """E41: the Ellipse null. One `wildfire_smc ... nulls` run per fire (no
-ensemble members) gives persistence, the Circle and all three Ellipse
-variants (`ellipse_era5`, `ellipse_station`, `ellipse_era5x3`) in one
-pass. This script fans that out to all six fires and flattens the result
-into one row per fire x variant (mean/final IoU, mean Brier), so the
-experiment file and figure can read a single JSON.
+ensemble members) gives persistence, the Circle, the three pre-registered
+Ellipse variants (`ellipse_era5`, `ellipse_station`, `ellipse_era5x3`) and
+one post-hoc control (`ellipse_era5_centred`, added after seeing the
+rear-focus results — TEST_PLAN v1.8 addendum) in one pass. This script
+fans that out to all six fires and flattens the result into one row per
+fire x variant (mean/final IoU, mean Brier), so the experiment file and
+figure can read a single JSON.
 
 Usage: python exp_r6_ellipse.py
 Writes: results/experiments/exp41_ellipse.json
@@ -20,6 +22,9 @@ VARIANTS = [
     ("ellipse_era5", "ellipse_era5_iou", "brier_ellipse_era5"),
     ("ellipse_station", "ellipse_station_iou", "brier_ellipse_station"),
     ("ellipse_era5x3", "ellipse_era5x3_iou", "brier_ellipse_era5x3"),
+    # Post-hoc control, not pre-registered: same wind/LB as ellipse_era5,
+    # centred (no front/back skew). See the E41 file's "What it means".
+    ("ellipse_era5_centred", "ellipse_era5_centred_iou", "brier_ellipse_era5_centred"),
 ]
 
 

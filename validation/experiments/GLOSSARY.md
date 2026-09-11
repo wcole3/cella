@@ -88,6 +88,14 @@ a bug in this page.
   variants — `ellipse_era5` (the scenario's ERA5 wind), `ellipse_station`
   (the station log's wind), `ellipse_era5x3` (ERA5 speed × 3, a
   sensitivity probe). E41.
+- **Rear focus vs. centred (Ellipse control).** The Ellipse's ignition
+  sits at the ellipse's *rear focus* by default, which makes it faster
+  downwind than upwind *even at a small LB* — a front/back "sign" a
+  fire's true growth can match almost for free. `ellipse_era5_centred`
+  (E41, post-hoc, not pre-registered) puts the ignition at the *centre*
+  instead, so front and back are equal and only long-axis-vs-short-axis
+  stretch remains; comparing the two separates "which way the fire runs"
+  from "how stretched it is".
 - **Two score families.** Rounds 1–3 quote single-run mean IoU. Rounds
   4–5 quote consensus IoU of a 32-member ensemble that learns from each
   day's mask before forecasting the next. They are not comparable: a

@@ -212,6 +212,11 @@ struct NullObsScore {
     brier_ellipse_station: Option<f64>,
     ellipse_era5x3_iou: f64,
     brier_ellipse_era5x3: f64,
+    /// Post-hoc control (not pre-registered — TEST_PLAN v1.8 addendum):
+    /// same ERA5 wind and LB as `ellipse_era5`, but centred (no front/back
+    /// skew). Separates "which way the fire runs" from "how stretched".
+    ellipse_era5_centred_iou: f64,
+    brier_ellipse_era5_centred: f64,
 }
 
 /// The `nulls` mode report (E41): persistence, the Circle and the three
@@ -243,11 +248,16 @@ struct NullsReport {
     final_ellipse_station_iou: Option<f64>,
     mean_ellipse_era5x3_iou: f64,
     final_ellipse_era5x3_iou: f64,
+    /// Post-hoc control (not pre-registered), same wind/LB as `ellipse_era5`
+    /// but centred — see `NullObsScore.ellipse_era5_centred_iou`.
+    mean_ellipse_era5_centred_iou: f64,
+    final_ellipse_era5_centred_iou: f64,
     mean_brier_persistence: f64,
     mean_brier_radial: f64,
     mean_brier_ellipse_era5: f64,
     mean_brier_ellipse_station: Option<f64>,
     mean_brier_ellipse_era5x3: f64,
+    mean_brier_ellipse_era5_centred: f64,
 }
 
 /// Fitness for `evolve` mode: IoU against the observed perimeter at each of
@@ -494,27 +504,62 @@ fn ellipse_step_cost(dx: f64, dy: f64, wind_toward_rad: f64, lb: f64) -> f64 {
     norm / r
 }
 
-/// Grows `mask` outward to `target_area` true cells by wind-oriented
-/// minimum-travel-time Dijkstra (E41's Ellipse null): the accepted set,
-/// stopped as soon as its size reaches `target_area`, supersedes the
-/// starting mask (every starting cell is at cost 0, so it is always
-/// accepted first). `wind_toward_rad`/`lb` set the direction and shape of
-/// [`ellipse_step_cost`]; see its docs for what the ellipse template means.
+/// Post-hoc control for E41 (added after seeing the rear-focus results,
+/// not pre-registered — see the TEST_PLAN v1.8 addendum). The rear-focus
+/// template above bakes in a front/back skew — `(a + c) / (a − c)` — from
+/// LB alone, before any stretch is even visible: at `LB = 1.1` (about
+/// Ferguson's peak) that ratio is already ≈ 2.4, just from *which way*
+/// round the ellipse is pointed. This control removes that skew: the
+/// ignition sits at the ellipse's *centre*, so head and back rates are
+/// equal (`a`) and only the flank rate (`1`) differs — `LB` alone can no
+/// longer encode "front vs. back", only "long axis vs. short axis". The
+/// rate is `r(θ) = a·b / √(b²·cos²θ + a²·sin²θ)` (`a = lb`, `b = 1`):
+/// head (θ = 0) and back (θ = 180°) both equal `a`, flank (θ = 90°)
+/// equals `b`. Comparing this to [`ellipse_step_cost`]'s result on the
+/// same fire separates two different explanations for the same IoU gain:
+/// this control winning too means the *stretch* (long vs. short axis)
+/// carries signal; only the rear-focus version winning means it was the
+/// *sign* (front vs. back) all along, which a symmetric LB template can
+/// give away almost for free.
+fn centred_ellipse_step_cost(dx: f64, dy: f64, wind_toward_rad: f64, lb: f64) -> f64 {
+    let norm = (dx * dx + dy * dy).sqrt();
+    let (wx, wy) = (wind_toward_rad.cos(), wind_toward_rad.sin());
+    let cos_theta = (dx * wx + dy * wy) / norm;
+    let (a, b) = (lb, 1.0f64);
+    let r = a * b / (b * b * cos_theta * cos_theta + a * a * (1.0 - cos_theta * cos_theta)).sqrt();
+    norm / r
+}
+
+/// Grows `mask` outward to `target_area` true cells by Dijkstra over
+/// `step_cost(dx, dy) -> cost` (a step's grid offset to its travel-time
+/// cost): the accepted set, stopped as soon as its size reaches
+/// `target_area`, supersedes the starting mask (every starting cell is at
+/// cost 0, so it is always accepted first). Shared by [`grow_ellipse`] and
+/// [`grow_ellipse_centred`], which differ only in `step_cost`.
 ///
 /// Deterministic: ties in accumulated cost break on cell index, the lowest
 /// index first (`BinaryHeap<Reverse<(cost_bits, idx)>>` — `f64::to_bits`
 /// preserves numeric order for the non-negative, finite costs here).
-fn grow_ellipse(
+///
+/// `target_area` is assumed to be at least the current mask's area — the
+/// observed burned area this is matched to only grows between
+/// observations — so every seed cell is always among the accepted set;
+/// debug builds check this rather than silently returning a mask smaller
+/// than `mask` itself.
+fn dijkstra_grow(
     mask: &[bool],
     w: usize,
     h: usize,
-    wind_toward_rad: f64,
-    lb: f64,
     target_area: usize,
+    step_cost: impl Fn(f64, f64) -> f64,
 ) -> Vec<bool> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
+    debug_assert!(
+        target_area >= mask.iter().filter(|&&b| b).count(),
+        "target_area must not shrink below the current mask (observed area is monotone)"
+    );
     const OFFSETS: [(i32, i32); 8] = [
         (1, 0),
         (-1, 0),
@@ -553,11 +598,42 @@ fn grow_ellipse(
             if visited[ni] {
                 continue;
             }
-            let step = ellipse_step_cost(f64::from(dx), f64::from(dy), wind_toward_rad, lb);
+            let step = step_cost(f64::from(dx), f64::from(dy));
             heap.push(Reverse(((cost + step).to_bits(), ni)));
         }
     }
     visited
+}
+
+/// Grows `mask` by the wind-oriented, rear-focus Ellipse (E41's headline
+/// null). `wind_toward_rad`/`lb` set the direction and shape of
+/// [`ellipse_step_cost`]; see its docs for what the ellipse template means.
+fn grow_ellipse(
+    mask: &[bool],
+    w: usize,
+    h: usize,
+    wind_toward_rad: f64,
+    lb: f64,
+    target_area: usize,
+) -> Vec<bool> {
+    dijkstra_grow(mask, w, h, target_area, |dx, dy| {
+        ellipse_step_cost(dx, dy, wind_toward_rad, lb)
+    })
+}
+
+/// Grows `mask` by the centred-ellipse control ([`centred_ellipse_step_cost`]
+/// — post-hoc, see its docs). Same signature as [`grow_ellipse`].
+fn grow_ellipse_centred(
+    mask: &[bool],
+    w: usize,
+    h: usize,
+    wind_toward_rad: f64,
+    lb: f64,
+    target_area: usize,
+) -> Vec<bool> {
+    dijkstra_grow(mask, w, h, target_area, |dx, dy| {
+        centred_ellipse_step_cost(dx, dy, wind_toward_rad, lb)
+    })
 }
 
 /// The E25 prior as genes.
@@ -1119,6 +1195,7 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
     let mut ellipse_era5 = ignition.clone();
     let mut ellipse_station = ignition.clone();
     let mut ellipse_era5x3 = ignition.clone();
+    let mut ellipse_era5_centred = ignition.clone();
 
     let mut scores: Vec<NullObsScore> = Vec::new();
     let mut obs_idx = 1usize;
@@ -1155,6 +1232,16 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
             anderson_lb(cur.speed_ms * 3.0),
             obs_n,
         );
+        // Post-hoc control (not pre-registered): same wind and LB as
+        // ellipse_era5, but centred — see centred_ellipse_step_cost's docs.
+        ellipse_era5_centred = grow_ellipse_centred(
+            &ellipse_era5_centred,
+            w,
+            h,
+            toward_era5,
+            anderson_lb(cur.speed_ms),
+            obs_n,
+        );
         let (ellipse_station_iou, brier_ellipse_station) = match &station {
             Some(log) => {
                 let (speed, toward) = station_vector_mean(log, cur.hours, next.hours);
@@ -1180,9 +1267,11 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
             brier_ellipse_station,
             ellipse_era5x3_iou: iou(&ellipse_era5x3, &obs),
             brier_ellipse_era5x3: brier(&prob_of(&ellipse_era5x3), &obs),
+            ellipse_era5_centred_iou: iou(&ellipse_era5_centred, &obs),
+            brier_ellipse_era5_centred: brier(&prob_of(&ellipse_era5_centred), &obs),
         });
         eprintln!(
-            "  t={t:5.0}h obs {obs_n:7} | persistence {:.3} radial {:.3} | ellipse era5 {:.3} station {} era5x3 {:.3}",
+            "  t={t:5.0}h obs {obs_n:7} | persistence {:.3} radial {:.3} | ellipse era5 {:.3} station {} era5x3 {:.3} era5_centred {:.3}",
             iou(&ignition, &obs),
             iou(&radial, &obs),
             scores.last().unwrap().ellipse_era5_iou,
@@ -1192,6 +1281,7 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
                 .ellipse_station_iou
                 .map_or("  n/a".to_string(), |v| format!("{v:.3}")),
             scores.last().unwrap().ellipse_era5x3_iou,
+            scores.last().unwrap().ellipse_era5_centred_iou,
         );
         obs_idx += 1;
     }
@@ -1222,11 +1312,14 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
         final_ellipse_station_iou: scores.last().and_then(|s| s.ellipse_station_iou),
         mean_ellipse_era5x3_iou: mean(&|s| s.ellipse_era5x3_iou),
         final_ellipse_era5x3_iou: scores.last().map_or(0.0, |s| s.ellipse_era5x3_iou),
+        mean_ellipse_era5_centred_iou: mean(&|s| s.ellipse_era5_centred_iou),
+        final_ellipse_era5_centred_iou: scores.last().map_or(0.0, |s| s.ellipse_era5_centred_iou),
         mean_brier_persistence: mean(&|s| s.brier_persistence),
         mean_brier_radial: mean(&|s| s.brier_radial),
         mean_brier_ellipse_era5: mean(&|s| s.brier_ellipse_era5),
         mean_brier_ellipse_station: mean_opt(&|s| s.brier_ellipse_station),
         mean_brier_ellipse_era5x3: mean(&|s| s.brier_ellipse_era5x3),
+        mean_brier_ellipse_era5_centred: mean(&|s| s.brier_ellipse_era5_centred),
         scores,
     };
     if let Some(parent) = out.parent() {
@@ -1234,13 +1327,14 @@ fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out: &Path) {
     }
     std::fs::write(out, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     eprintln!(
-        "{}: nulls in {:.1}s | mean IoU persistence {:.3} radial {:.3} ellipse_era5 {:.3} ellipse_era5x3 {:.3} ellipse_station {} -> {}",
+        "{}: nulls in {:.1}s | mean IoU persistence {:.3} radial {:.3} ellipse_era5 {:.3} ellipse_era5x3 {:.3} ellipse_era5_centred {:.3} ellipse_station {} -> {}",
         sc.id,
         report.wall_time_secs,
         report.mean_persistence_iou,
         report.mean_radial_iou,
         report.mean_ellipse_era5_iou,
         report.mean_ellipse_era5x3_iou,
+        report.mean_ellipse_era5_centred_iou,
         report
             .mean_ellipse_station_iou
             .map_or("n/a".to_string(), |v| format!("{v:.3}")),
@@ -1313,6 +1407,33 @@ mod ellipse_null_tests {
         assert!(
             x_extent_right as f64 >= 2.0 * y_extent as f64,
             "x-extent right {x_extent_right} should be >= 2x the y-extent {y_extent}"
+        );
+    }
+
+    #[test]
+    fn centred_ellipse_has_no_front_back_skew() {
+        // The rear-focus ellipse (grow_ellipse) is asymmetric front to
+        // back by construction; the centred control must not be. Same
+        // wind toward +x, same LB = 3: left extent and right extent
+        // should come out within 10% of each other.
+        let (w, h) = (200, 200);
+        let (cx, cy) = (100, 100);
+        let seed = seed_mask(w, h, cx, cy);
+        let grown = grow_ellipse_centred(&seed, w, h, 0.0, 3.0, 4000);
+
+        let (mut left, mut right) = (0i64, 0i64);
+        for (i, &b) in grown.iter().enumerate() {
+            if !b {
+                continue;
+            }
+            let x = (i % w) as i64;
+            right = right.max(x - cx as i64);
+            left = left.max(cx as i64 - x);
+        }
+        let (left, right) = (left as f64, right as f64);
+        assert!(
+            (left - right).abs() <= 0.10 * right.max(left),
+            "left extent {left} should be within 10% of right extent {right}"
         );
     }
 

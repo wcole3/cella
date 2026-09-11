@@ -259,6 +259,23 @@ in `validation/results/analysis/`.
   and the kernel work E30 would spend on it is worth its cost; if every
   variant only ties the Circle on those three, the *inputs* are the
   blocker and E30 is not.
+  **Post-hoc addendum (2026-09-11, after seeing the E41 results, before
+  any further run):** review of the rear-focus results found that the
+  template alone bakes in a front/back rate skew, `(a + c) / (a − c)`,
+  from `LB` before any visible stretch — at `LB = 1.1` (about Ferguson's
+  own peak) that ratio is already ≈ 2.4. A win on Brattain or Ferguson
+  could therefore come from the ellipse encoding "which way the fire
+  runs" (a sign) rather than "how stretched" (a magnitude). One control
+  variant is added, **not pre-registered**, to separate the two:
+  `ellipse_era5_centred` — same ERA5 wind and the same `LB(U)`, but the
+  ignition at the ellipse's *centre* instead of its rear focus, so head
+  and back rates are equal (both `a`) and only the flank rate (`1`)
+  differs: `r(θ) = a·b / √(b²·cos²θ + a²·sin²θ)`. It cannot express a
+  front/back sign at all — if it still beats the Circle where the
+  rear-focus version does, the stretch itself carries signal; if it
+  only ties where the rear-focus version beats, the sign was doing the
+  work. Same scoring, same six fires; no change to the three
+  pre-registered variants' numbers.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

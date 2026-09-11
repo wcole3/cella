@@ -34,6 +34,7 @@ def run_nulls(out_dir, fire, env=None):
         f"{fire:14s} nulls  {r['wall_time_secs']:5.1f}s | mean IoU "
         f"persistence {r['mean_persistence_iou']:.3f} circle {r['mean_radial_iou']:.3f} "
         f"ellipse_era5 {r['mean_ellipse_era5_iou']:.3f} era5x3 {r['mean_ellipse_era5x3_iou']:.3f} "
+        f"era5_centred {r['mean_ellipse_era5_centred_iou']:.3f} (post-hoc) "
         f"station {r['mean_ellipse_station_iou']}",
         flush=True,
     )

@@ -63,22 +63,24 @@ def panel_grid(n, cols, pw, ph, x_gap, y_gap, top, left):
 
 
 def e41_ellipse():
-    """Per fire: mean IoU bars for persistence, Circle, and the three
-    Ellipse variants, with the E33 ±1 sd band drawn around the Circle bar
-    — the bar a variant has to clear (or fall under) to be more than
-    noise, on that fire.
+    """Per fire: mean IoU bars for persistence, Circle, the three
+    pre-registered Ellipse variants, and the post-hoc centred-ellipse
+    control (dashed outline — not pre-registered), with the E33 ±1 sd
+    band drawn around the Circle bar — the bar a variant has to clear (or
+    fall under) to be more than noise, on that fire.
     """
     rows = load("exp41_ellipse.json")
     if rows is None:
         return
-    W, H = 1000, 560
-    PW, PH = 272, 200
+    W, H = 1080, 560
+    PW, PH = 304, 200
     variants = [("persistence", "PERSISTENCE", MUTED), ("circle", "CIRCLE", INK),
                 ("ellipse_era5", "ELLIPSE ERA5", ACCENT), ("ellipse_station", "ELLIPSE STATION", "#4f8a6d"),
-                ("ellipse_era5x3", "ELLIPSE ERA5×3", "#a0522d")]
+                ("ellipse_era5x3", "ELLIPSE ERA5×3", "#a0522d"),
+                ("ellipse_era5_centred", "CENTRED (POST-HOC)", "#6b5b95")]
     body = []
     for i, f in enumerate(FIRES):
-        px, py = panel_grid(6, 3, PW, PH, 48, 72, 48, 56)[i]
+        px, py = panel_grid(6, 3, PW, PH, 40, 72, 48, 56)[i]
         by_variant = {r["variant"]: r for r in rows if r["fire"] == f}
         circle_row = by_variant["circle"]
         vals = [(key, by_variant[key]["mean_iou"], label, col) for key, label, col in variants
@@ -102,11 +104,13 @@ def e41_ellipse():
         body.append(text(px + PW, py - 8, f"sd {sd:.3f}", anchor="end"))
         for k, (key, v, label, col) in enumerate(vals):
             x = sx(k)
+            post_hoc = key == "ellipse_era5_centred"
             beyond = key not in ("persistence", "circle") and abs(v - cm) > sd
             fill = f'{col}' if key in ("persistence", "circle") else (col if beyond else SOFT)
             opacity = "0.85" if key in ("persistence", "circle") or beyond else "0.35"
+            dash = ' stroke-dasharray="3,2"' if post_hoc else ""
             body.append(f'<rect x="{x:.1f}" y="{sy(v):.1f}" width="{bw:.1f}" height="{sy(0) - sy(v):.1f}" '
-                        f'fill="{fill}" fill-opacity="{opacity}" stroke="{INK}" stroke-width="0.6"/>')
+                        f'fill="{fill}" fill-opacity="{opacity}" stroke="{INK}" stroke-width="0.6"{dash}/>')
             body.append(text(x + bw / 2, sy(v) - 4, f"{v:.2f}", anchor="middle", size=7))
         for k, (key, v, label, col) in enumerate(vals):
             body.append(text(sx(k) + bw / 2, py + PH - 12, label.split()[0][:4], anchor="middle", size=6.5))
@@ -116,12 +120,14 @@ def e41_ellipse():
         (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "Circle ±1 sd (E33)"),
         (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="{SOFT}" fill-opacity="0.35" stroke="{INK}" stroke-width="0.6"/>', "Ellipse variant, tie"),
         (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="{ACCENT}" fill-opacity="0.85" stroke="{INK}" stroke-width="0.6"/>', "Ellipse variant, beyond sd"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="none" stroke="{INK}" stroke-width="0.6" stroke-dasharray="3,2"/>', "post-hoc control (not pre-registered)"),
     ]))
     (FIG / "e41-ellipse-null.svg").write_text(svg(
         "e41", "E41 Ellipse null: mean IoU per fire",
-        "Small multiples, one bar chart per fire, of mean IoU for persistence, the Circle, and the three Ellipse "
-        "variants (ERA5, station, ERA5 wind x3), with the Circle's E33 ±1 sd band so a real gain or loss over the "
-        "Circle can be told from noise.", W, H, "\n".join(body)))
+        "Small multiples, one bar chart per fire, of mean IoU for persistence, the Circle, the three pre-registered "
+        "Ellipse variants (ERA5, station, ERA5 wind x3) and a post-hoc centred-ellipse control (dashed outline), "
+        "with the Circle's E33 ±1 sd band so a real gain or loss over the Circle can be told from noise.",
+        W, H, "\n".join(body)))
     print("wrote e41-ellipse-null.svg")
 
 
