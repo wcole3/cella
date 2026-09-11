@@ -226,6 +226,39 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.8 (2026-09-11, before the E41 run): a third dummy forecaster, the
+  **Ellipse null**, declared alongside persistence and the Circle. The
+  Circle grows a chamfer distance field from the ignition and thresholds
+  it to match the observed area each day; the Ellipse does the same with
+  a wind-oriented minimum-travel-time growth (Dijkstra, cost
+  `|offset| / r(θ)`, `r(θ) = b² / (a − c·cos θ)`, `a = LB(U)`, `b = 1`,
+  ignition at the rear focus), so it answers a narrower question than the
+  fire model itself: does wind *direction*, in the inputs this campaign
+  actually has, carry any shape signal at all? Three variants, all
+  pre-registered: **ellipse_era5** (the scenario's ERA5 daily wind — the
+  campaign's default input), **ellipse_station** (vector mean of
+  `station_hourly.json` over the window; `None` where that file is
+  absent), **ellipse_era5x3** (ERA5 wind speed × 3, direction unchanged —
+  a sensitivity probe, not a forecaster, following E9c's finding that
+  strengthened wind is what Chimney wanted). `LB(U) =
+  0.936·e^{0.2566U} + 0.461·e^{−0.1548U} − 0.397` (Anderson 1983, U at
+  10 m, clamped to [1, 8]). Scored exactly as the Circle: IoU and binary
+  Brier at each observation, mean and final over the series. New `nulls`
+  mode in `wildfire_smc` (no ensemble members) reports all three
+  variants plus persistence and the Circle for all six fires; the Circle
+  and persistence continue to be computed inside `open`/`assim` mode as
+  before, joined there by `ellipse_era5` only (as `ellipse_iou` /
+  `brier_ellipse`) so every future ensemble table carries it too.
+  **Prediction, written before the run:** ERA5 winds on these six fires
+  are 0.5–0.7 m/s so `LB ≈ 1.1` — ellipse_era5 ties the Circle (inside
+  the E33 sd) on all six fires. ellipse_station moves Chimney and
+  Brattain by more than sd, in *some* direction (station wind is real
+  but measured 40–70 km from the fire). ellipse_era5x3 beats the Circle
+  on Chimney only. If instead ellipse_station or ellipse_era5x3 beats
+  the Circle on Brattain, Ferguson or Pier, wind direction carries shape
+  and the kernel work E30 would spend on it is worth its cost; if every
+  variant only ties the Circle on those three, the *inputs* are the
+  blocker and E30 is not.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

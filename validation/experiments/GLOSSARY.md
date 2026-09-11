@@ -79,6 +79,15 @@ a bug in this page.
   means the model knows *where*. Printed beside every score.
 - **Persistence.** A dumber forecaster: the ignition never grows. A model
   below persistence is destroying information.
+- **The Ellipse (wind-oriented, area-matched null).** A third dumb
+  forecaster, next to the Circle: instead of growing a plain disc, it
+  grows an ellipse stretched along the window's wind, sized each day to
+  the observed burned area exactly, same as the Circle. It answers a
+  narrower question than the fire model: does wind *direction*, in the
+  inputs this campaign has, carry any shape signal at all? Three
+  variants — `ellipse_era5` (the scenario's ERA5 wind), `ellipse_station`
+  (the station log's wind), `ellipse_era5x3` (ERA5 speed × 3, a
+  sensitivity probe). E41.
 - **Two score families.** Rounds 1–3 quote single-run mean IoU. Rounds
   4–5 quote consensus IoU of a 32-member ensemble that learns from each
   day's mask before forecasting the next. They are not comparable: a
