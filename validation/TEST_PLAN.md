@@ -413,6 +413,57 @@ in `validation/results/analysis/`.
   largest-component fraction of the best at-size elites is < 0.7 and
   their largest-component elongation falls below the observed value; on
   Brattain it is unchanged.
+  Added after E43 (2026-09-11, before the E30a run): **E30a arrival-time
+  kernel** — E37 found large fires come out round under the Bernoulli
+  rule because it gives every unburned cell one ignition-probability
+  roll per tick per burning neighbour, which saturates in every
+  direction once enough neighbours are burning. `WildfireParams` gains
+  `spread: "bernoulli" | "arrival"` (default `bernoulli`, nothing
+  existing changes): under `arrival`, the same per-direction wind/slope
+  factor is used as a rate instead of a probability, accumulated into a
+  new per-cell `heat` buffer (0 at attach) until it reaches 1, so
+  direction sets ignition *time* and the head:flank *speed* ratio
+  (`dir[head] / dir[flank]`) survives regardless of size or burn
+  duration. `arrival_jitter` (default 0.2) is a per-cell log-normal
+  multiplier, one draw per cell for the whole run, keeping ensembles
+  diverse without breaking reproducibility. Independently,
+  `WildfireParams` gains `wind_law: "exponential" | "rear_focus"`
+  (default `exponential`): the existing law
+  `exp(c1·v)·exp(c2·v·(cosθ−1))` is kept for E30a's own c2 scan;
+  `rear_focus` is a new Anderson-1983 ellipse template, `dir[j] =
+  exp(c1·v) · r(θ_j)/r_max`, `r(θ) = 1/(a−c·cosθ)`, `a = LB(v)` (this
+  plan's own `LB(U)` formula, clamped [1, 8]), `c = √(a²−1)`, `r_max =
+  a+c` — at `v = 0`, `a = 1`, `c = 0`, so it reduces to the exponential
+  law's own no-wind case exactly. Added per a controller ruling after
+  E41 (`task-7-addendum.md`): the exponential law's head:back ratio is
+  only `exp(2·c2·v)` = 1.17 at 0.6 m/s, far too weak to reproduce the
+  front/back rate skew (≈ 2.4 at `LB ≈ 1.1`) that E41 found actually
+  carries the wind-direction shape signal in the six fires' real (ERA5)
+  wind. Three measurements, all on a flat/uniform grid so terrain and
+  fuel heterogeneity cannot contribute shape (isolating the wind kernel
+  alone): (1) the E19 flat-grid front-speed table (`wildfire_ros`, 240×120,
+  full-height burning column), both spread rules, wind 0/2/5/8 m/s, p0
+  0.12/0.22/0.44, burn duration 5/10, 3 seeds; (2) point-ignition
+  elongation (E12's second-moment measure) vs. size: a 3×3 ignition at
+  the centre of a 400×400 uniform grid, 8 m/s toward +x, elongation
+  recorded at 2/5/10/20 % burned, both spread rules, 3 seeds; (3) a
+  length-to-breadth table on the arrival rule at 10 % size for 2/5/8
+  m/s: `c2` ∈ {0.131, 0.2, 0.3, 0.45} under the exponential law, plus
+  the rear-focus law, against this plan's own `LB(U)`, and the
+  closed-form head:back ratio at 0.6 m/s for both laws (no simulation
+  needed for that number). Runner `exp_r6_arrival_flat.py`; figure
+  `e30a()` in `figures_r6.py`.
+  **Prediction, written before the run (from the task brief):** Bernoulli
+  elongation at 8 m/s falls from > 1.5 at 2 % to < 1.3 at 20 %; arrival
+  elongation stays within ± 0.15 across sizes at every wind. The default
+  c2 (0.131) gives LB ≈ 1.6 at 8 m/s (Anderson: 7.9); c2 ≈ 0.3–0.45 is
+  needed to approach Anderson at 5 m/s, and no single c2 matches at all
+  three winds because the factor is exponential in v.
+  **Prediction, written before the run (addendum, after the controller
+  ruling that added the rear-focus law):** the rear-focus law gives
+  head:back ≥ 2 already at 0.6 m/s, and its LB is within 20 % of
+  Anderson at 2, 5 and 8 m/s at every size, under the arrival rule;
+  under the Bernoulli rule its elongation still collapses with size.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
