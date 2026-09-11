@@ -191,6 +191,19 @@ a bug in this page.
   "Narrow" and "very broad" variants in E35.
 - **Posterior.** Where the knobs end up after learning. "Learned p0"
   means the population's median p0 at the end of a run.
+- **Posterior trajectory.** The posterior tracked day by day instead of
+  only at the end — the population's median (and cross-seed sd) of a
+  knob at each observation, from day 1 through the final day. E42.
+- **Hazard.** One day's own probability of something happening — here,
+  the chance *that specific day* rolls a member "contained" — as
+  opposed to the running total, see Cumulative probability. E42.
+- **Cumulative probability (of containment, here).** The running total
+  built from every day's hazard so far: the chance of having been
+  contained *by* day d, the way "chance you've flipped heads at least
+  once by the fifth flip" is built from five coin flips, not just the
+  fifth one. `1 − Π(1 − hazard_i)` over the days so far, since
+  containment only goes one way (once contained, always contained).
+  E42.
 - **Genome / gene.** A member's full set of knob values / one knob. GA
   vocabulary, used because the learning operators come from genetic
   algorithms.

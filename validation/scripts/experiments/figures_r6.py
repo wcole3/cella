@@ -131,6 +131,112 @@ def e41_ellipse():
     print("wrote e41-ellipse-null.svg")
 
 
+def e42_posterior():
+    """Row 1: per fire, the learned p0 posterior (cross-seed median ± sd)
+    over days since the first mask, with day 1 and day 5 marked — the
+    numbers behind the "does p0 drift the same way on every fire"
+    question. Row 2: the model containment curve (each member's FINAL
+    genome against the real fire's observed growth) against ICS-209's reported
+    percent contained, both on the same day axis, each with its 50 %
+    crossing marked — the ICS-209 check. X-axis is clipped per panel to
+    keep both crossings legible; the full curves and exact crossing days
+    are in the E42 table, not just this figure.
+    """
+    rows = load("exp42_posterior.json")
+    if rows is None:
+        return
+    W, H = 1080, 900
+    PW, PH = 152, 340
+    body = []
+    grid = panel_grid(12, 6, PW, PH, 24, 96, 48, 40)
+    for i, f in enumerate(FIRES):
+        r = rows[f]
+        obs = r["obs"]
+        days = [o["day"] for o in obs]
+        med = [o["p0_mean_median"] for o in obs]
+        sd = [o["p0_mean_sd"] for o in obs]
+        final_day = days[-1]
+
+        # --- Row 1: p0 posterior trajectory ---
+        px, py = grid[i]
+        lo = min(m - s for m, s in zip(med, sd)) - 0.02
+        hi = max(m + s for m, s in zip(med, sd)) + 0.02
+        sx = lambda d: px + 20 + d / final_day * (PW - 28)
+        sy = lambda v: py + PH - 24 - (v - lo) / (hi - lo) * (PH - 44)
+        for g in (lo, (lo + hi) / 2, hi):
+            body.append(f'<line x1="{px + 16}" y1="{sy(g):.1f}" x2="{px + PW}" y2="{sy(g):.1f}" '
+                        f'stroke="{RULE}" stroke-width="0.8"/>')
+            body.append(text(px + 12, sy(g) + 3, f"{g:.2f}", size=6.5, anchor="end"))
+        band = (" ".join(f"{sx(d):.1f},{sy(m + s):.1f}" for d, m, s in zip(days, med, sd)) + " " +
+                " ".join(f"{sx(d):.1f},{sy(m - s):.1f}" for d, m, s in reversed(list(zip(days, med, sd)))))
+        body.append(f'<polygon points="{band}" fill="{ACCENT}" fill-opacity="0.15"/>')
+        body.append(f'<polyline points="{" ".join(f"{sx(d):.1f},{sy(m):.1f}" for d, m in zip(days, med))}" '
+                    f'fill="none" stroke="{ACCENT}" stroke-width="1.8" stroke-linejoin="round"/>')
+        for mark_day in (1, 5):
+            if mark_day <= final_day:
+                j = min(range(len(days)), key=lambda k: abs(days[k] - mark_day))
+                body.append(f'<circle cx="{sx(days[j]):.1f}" cy="{sy(med[j]):.1f}" r="2.6" '
+                            f'fill="{PAPER}" stroke="{ACCENT}" stroke-width="1.4"/>')
+        body.append(text(px, py - 8, SHORT[f] + ("*" if r["holdout"] else ""),
+                          size=12, fill=INK, font=SANS, weight=600))
+        body.append(text(px + PW, py - 8, "p0 posterior", anchor="end", size=6.5))
+        body.append(text(px, py + PH + 10, "day 0", size=6.5))
+        body.append(text(px + PW, py + PH + 10, f"day {final_day:.0f}", anchor="end", size=6.5))
+
+        # --- Row 2: model containment curve vs ICS-209 ---
+        px2, py2 = grid[i + 6]
+        model_curve = r["model_containment_curve"]
+        mdays = [c["day"] for c in model_curve]
+        mvals = [c["contained_fraction_model"] for c in model_curve]
+        idays = r["ics209"]["days"]
+        ivals = [p / 100.0 for p in r["ics209"]["pct_contained"]]
+        xmax = max(mdays[-1], r["model_day50"] or 0, r["ics_day50"] or mdays[-1])
+        xmax = max(xmax, (r["ics_day50"] or 0) * 1.25, mdays[-1])
+        xmax = max(xmax, 1.0)
+        sx2 = lambda d: px2 + 20 + min(max(d, 0), xmax) / xmax * (PW - 28)
+        sy2 = lambda v: py2 + PH - 24 - v * (PH - 44)
+        for g in (0.0, 0.5, 1.0):
+            dash = ' stroke-dasharray="2,2"' if g == 0.5 else ""
+            body.append(f'<line x1="{px2 + 16}" y1="{sy2(g):.1f}" x2="{px2 + PW}" y2="{sy2(g):.1f}" '
+                        f'stroke="{RULE}" stroke-width="0.8"{dash}/>')
+            body.append(text(px2 + 12, sy2(g) + 3, f"{g:.1f}", size=6.5, anchor="end"))
+        clipped_i = [(d, v) for d, v in zip(idays, ivals) if 0 <= d <= xmax]
+        if clipped_i:
+            body.append(f'<polyline points="{" ".join(f"{sx2(d):.1f},{sy2(v):.1f}" for d, v in clipped_i)}" '
+                        f'fill="none" stroke="{MUTED}" stroke-width="1.6" stroke-linejoin="round"/>')
+        clipped_m = [(d, v) for d, v in zip(mdays, mvals) if d <= xmax]
+        body.append(f'<polyline points="{" ".join(f"{sx2(d):.1f},{sy2(v):.1f}" for d, v in clipped_m)}" '
+                    f'fill="none" stroke="{INK}" stroke-width="1.8" stroke-linejoin="round"/>')
+        if r["model_day50"] is not None and r["model_day50"] <= xmax:
+            body.append(f'<circle cx="{sx2(r["model_day50"]):.1f}" cy="{sy2(0.5):.1f}" r="3" '
+                        f'fill="{INK}"/>')
+        if r["ics_day50"] is not None and r["ics_day50"] <= xmax:
+            body.append(f'<circle cx="{sx2(r["ics_day50"]):.1f}" cy="{sy2(0.5):.1f}" r="3" '
+                        f'fill="{PAPER}" stroke="{MUTED}" stroke-width="1.6"/>')
+        body.append(text(px2 + PW, py2 - 8, "containment", anchor="end", size=6.5))
+        body.append(text(px2, py2 + PH + 10, "day 0", size=6.5))
+        body.append(text(px2 + PW, py2 + PH + 10, f"day {xmax:.0f}", anchor="end", size=6.5))
+    body.append(text(540, 30, "ROW 1: LEARNED p0 POSTERIOR (MEDIAN ± SD, 5 SEEDS) · "
+                      "ROW 2: MODEL CONTAINMENT CURVE VS ICS-209, DOTS AT 50 % CROSSING",
+                      anchor="middle", extra='letter-spacing="0.06em"'))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{ACCENT}" stroke-width="1.8"/>', "p0 posterior median ± sd"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{INK}" stroke-width="1.8"/>', "model containment curve"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{MUTED}" stroke-width="1.6"/>', "ICS-209 percent contained"),
+        (lambda x, y: f'<circle cx="{x + 8}" cy="{y}" r="3" fill="{INK}"/>', "model 50 % day"),
+        (lambda x, y: f'<circle cx="{x + 8}" cy="{y}" r="3" fill="{PAPER}" stroke="{MUTED}" stroke-width="1.6"/>', "ICS-209 50 % day"),
+    ]))
+    (FIG / "e42-posterior.svg").write_text(svg(
+        "e42", "E42 posterior trajectories and the ICS-209 containment check",
+        "Twelve small multiples, two rows of six fires. Row 1: each fire's learned p0 posterior (median and "
+        "cross-seed sd band) over days since the first mask, with day 1 and day 5 marked. Row 2: the model "
+        "containment curve, built from every member's final genome run against the fire's observed growth, "
+        "against ICS-209's reported percent contained, with a dot at each curve's 50 % crossing day.",
+        W, H, "\n".join(body)))
+    print("wrote e42-posterior.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
+    e42_posterior()
