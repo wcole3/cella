@@ -236,7 +236,76 @@ def e42_posterior():
     print("wrote e42-posterior.svg")
 
 
+def e39_gated_reset():
+    """Dot strip per fire, one seed at a time: E38's plain reset and E39's
+    area-ratio-gated reset, both as (config − E33 twin) mean consensus
+    IoU, joined by a thin line so the same seed's movement from one to
+    the other reads at a glance, against the E33 ±1 sd band.
+    """
+    rows39 = load("exp39_gated_reset.json")
+    rows38 = load("exp38_immreset.json")
+    noise = load("exp33_noise.json")
+    if rows39 is None or rows38 is None or noise is None:
+        return
+    W, H = 1000, 464
+    x0, x1, lo, hi = 200, 920, -0.06, 0.12
+    sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
+    body = []
+    for v in (-0.05, 0.0, 0.05, 0.10):
+        w = 1.2 if v == 0.0 else 0.8
+        body.append(f'<line x1="{sx(v):.0f}" y1="56" x2="{sx(v):.0f}" y2="376" '
+                     f'stroke="{INK if v == 0.0 else RULE}" stroke-width="{w}" '
+                     f'stroke-opacity="{0.4 if v == 0.0 else 1}"/>')
+        body.append(text(sx(v), 392, f"{v:+.2f}", anchor="middle"))
+    body.append(text(560, 408, "E38 (MUTED) / E39 (ACCENT) MINUS E33 TWIN, MEAN CONSENSUS IOU, PER SEED",
+                      anchor="middle", extra='letter-spacing="0.08em"'))
+    for i, f in enumerate(FIRES):
+        y = 80 + i * 52
+        sd = E33_SD[f]
+        row0 = next((x for x in noise if x["fire"] == f and x["seed"] == 0), None)
+        if row0 is None:
+            continue
+        body.append(text(184, y + 4, SHORT[f] + ("*" if row0["holdout"] else ""),
+                          size=12, fill=INK, font=SANS, anchor="end", weight=600))
+        body.append(f'<rect x="{sx(-sd):.1f}" y="{y - 14}" width="{sx(sd) - sx(-sd):.1f}" height="28" '
+                     f'fill="rgba(45,49,66,0.08)"/>')
+        for s_ in range(5):
+            b = next((x for x in noise if x["fire"] == f and x["seed"] == s_), None)
+            a38 = next((x for x in rows38 if x["fire"] == f and x["seed"] == s_), None)
+            a39 = next((x for x in rows39 if x["fire"] == f and x["seed"] == s_), None)
+            if not (a38 and a39 and b):
+                continue
+            base = b["mean_consensus_iou"]
+            d38, d39 = a38["mean_consensus_iou"] - base, a39["mean_consensus_iou"] - base
+            focal = f == "Buck_2017" and s_ == 3
+            y38, y39 = y - 8, y + 8
+            body.append(f'<line x1="{sx(d38):.1f}" y1="{y38}" x2="{sx(d39):.1f}" y2="{y39}" '
+                        f'stroke="{RULE}" stroke-width="1"/>')
+            body.append(f'<circle cx="{sx(d38):.1f}" cy="{y38}" r="4.2" fill="{PAPER}"/>'
+                        f'<circle cx="{sx(d38):.1f}" cy="{y38}" r="4.2" fill="rgba(79,93,117,0.22)" '
+                        f'stroke="{MUTED}" stroke-width="{1.4 if focal else 1}"/>')
+            body.append(f'<circle cx="{sx(d39):.1f}" cy="{y39}" r="4.2" fill="{PAPER}"/>'
+                        f'<circle cx="{sx(d39):.1f}" cy="{y39}" r="4.2" fill="rgba(235,108,54,0.22)" '
+                        f'stroke="{ACCENT}" stroke-width="{1.4 if focal else 1}"/>')
+            if focal:
+                body.append(text(sx(d38), y38 - 10, f"BUCK 3 E38 {d38:+.3f}", anchor="middle", fill=MUTED, size=7))
+                body.append(text(sx(d39), y39 + 14, f"E39 {d39:+.3f}", anchor="middle", fill=ACCENT, size=7))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="4.2" fill="rgba(79,93,117,0.22)" stroke="{MUTED}"/>', "E38 (plain reset) minus E33"),
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="4.2" fill="rgba(235,108,54,0.22)" stroke="{ACCENT}"/>', "E39 (gated) minus E33"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "±1 sd (E33)"),
+    ]))
+    (FIG / "e39-gated-reset.svg").write_text(svg(
+        "e39", "E39 gated immigrant reset: change per seed vs E38",
+        "Dot strip per fire, one seed at a time: the change in mean forecast IoU from the E33 twin for the plain "
+        "E38 reset (muted) and the area-ratio-gated E39 reset (accent), joined by a thin line so the same seed's "
+        "movement from one to the other reads at a glance, against the E33 noise band.",
+        W, H, "\n".join(body)))
+    print("wrote e39-gated-reset.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
     e42_posterior()
+    e39_gated_reset()

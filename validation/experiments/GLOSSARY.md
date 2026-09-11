@@ -230,6 +230,12 @@ a bug in this page.
   flag) unless `immigrant_reset` is on.
 - **immigrant_reset.** Option (E38): immigrants start with a fresh driver
   state, uncontained. Repairs lock-in. Default off.
+- **Area-ratio gate.** Option (E39): `immigrant_reset_gate`. Only resets
+  an immigrant while the population's own Area ratio (see Scores) at the
+  last learning step is below the gate value (1.0 pre-registered) —
+  under-predicting the observed area, the lock-in signature — instead of
+  resetting every time. `None` (the default) leaves the plain
+  `immigrant_reset` in charge.
 - **Crossover.** A child takes each knob from one of two parents.
   Standard in genetic algorithms; added to the filter as an option in
   E34.
