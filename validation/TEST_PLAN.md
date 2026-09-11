@@ -366,6 +366,30 @@ in `validation/results/analysis/`.
   state-corrected, consensus IoU ≥ lagged persistence on every window
   where the fire grew, and it beats the lagged Circle on Ferguson and
   Brattain, ties elsewhere.
+  Added after E42 (2026-09-11, before the E43 run): **E43 spotting
+  illumination** — E37 found the model's reachable growth × elongation
+  region is a wedge (small fires can be any shape, large fires are
+  round) and left open whether spotting (E7) is a mechanism that gives a
+  *large* fire more reach, i.e. moves the wedge. `wildfire_smc`'s `map`
+  mode gains `SMC_SPOT=1`: switches spotting on in the config's wildfire
+  model and adds two genes to the existing spread genes (p0,
+  burn_duration, wind ×): `model.spotting.p_spot`, log-uniform
+  0.001–0.005 (E7's pre-registered spotting space, `exp_spotting.py`'s
+  SPOT_GRID: lo 0.001, mid 0.005, far 0.002 — already shown to move
+  burned area 2–4×, so wide enough to show an effect without
+  extrapolating past what has been tested), and
+  `model.spotting.median_distance`, linear 2–20 cells (E7 tested 5–20;
+  widened down to 2 to also cover a jump barely ahead of the front),
+  both within `SpottingParams`'s declared bounds. Same MAP-Elites
+  settings as E37: batch 32, 30 generations, iso + line emitter, 5 days
+  of the scenario's own weather, growth axis 0–0.10 (20 bins),
+  elongation axis 1–4 (20 bins), no stopping rule, no objective. All six
+  fires (including the holdout pair); E37's own archive numbers are
+  reused for the comparison rather than re-run.
+  **Prediction, written before the run:** Coverage of the archive rises
+  on every fire (spotting adds growth), but the maximum elongation at
+  the observed size rises by < 0.2 on Brattain/Ferguson/Pier: spot fires
+  merge into a rounder mass. The three dots stay outside the wedge.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
