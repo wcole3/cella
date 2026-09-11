@@ -167,12 +167,57 @@ pub fn bbox_fraction(sim: &Sim, types: &[CellType]) -> f64 {
 /// Largest elongation reported; a single row of cells would be infinite.
 pub const MAX_ELONGATION: f64 = 10.0;
 
+/// The elongation formula, given the raw second-moment sums of a set of
+/// unit-square cells (`n` cells, `sx`/`sy` their coordinate sums, `sxx`/
+/// `syy`/`sxy` their coordinate cross-sums). Shared by [`elongation`]
+/// (the whole tracked set) and [`largest_component_stats`] (one connected
+/// component of it), so the two can never silently disagree on the
+/// formula. 1.0 when fewer than two cells are in the set.
+fn elongation_from_moments(n: f64, sx: f64, sy: f64, sxx: f64, syy: f64, sxy: f64) -> f64 {
+    if n < 2.0 {
+        return 1.0;
+    }
+    let (mx, my) = (sx / n, sy / n);
+    // Add a twelfth per axis: each cell is a unit square, not a point, so a
+    // straight line of cells has a finite width.
+    let cxx = sxx / n - mx * mx + 1.0 / 12.0;
+    let cyy = syy / n - my * my + 1.0 / 12.0;
+    let cxy = sxy / n - mx * my;
+    let tr = cxx + cyy;
+    let det = (cxx * cyy - cxy * cxy).max(0.0);
+    let disc = (tr * tr / 4.0 - det).max(0.0).sqrt();
+    let (l1, l2) = (tr / 2.0 + disc, (tr / 2.0 - disc).max(1e-12));
+    (l1 / l2).sqrt().clamp(1.0, MAX_ELONGATION)
+}
+
+/// Second-moment sums `(n, sx, sy, sxx, syy, sxy)` of a list of grid
+/// coordinates, feeding [`elongation_from_moments`].
+fn moments_of(points: &[(usize, usize)]) -> (f64, f64, f64, f64, f64, f64) {
+    let (mut n, mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
+    for &(x, y) in points {
+        let (x, y) = (x as f64, y as f64);
+        n += 1.0;
+        sx += x;
+        sy += y;
+        sxx += x * x;
+        syy += y * y;
+        sxy += x * y;
+    }
+    (n, sx, sy, sxx, syy, sxy)
+}
+
 /// How stretched the set of tracked cells is: the square root of the ratio
 /// of the two eigenvalues of its second-moment matrix (the same measure the
 /// wildfire validation calls "elongation", experiment E12). 1 means as wide
 /// as it is long in every direction (a disc, a square); 2 means twice as
 /// long as wide, whichever way it points. Clamped to `[1, MAX_ELONGATION]`;
 /// 1 when fewer than two cells are tracked.
+///
+/// This treats the whole set as one shape regardless of connectivity: a
+/// round core plus a handful of cells scattered far away (e.g. spot-fire
+/// embers) reads as "elongated" exactly as a single stretched blob of the
+/// same second moments would. See [`largest_component_stats`] for a
+/// connectivity-aware alternative.
 pub fn elongation(sim: &Sim, types: &[CellType]) -> f64 {
     let (w, _) = sim.dims();
     if w == 0 {
@@ -190,20 +235,113 @@ pub fn elongation(sim: &Sim, types: &[CellType]) -> f64 {
             sxy += x * y;
         }
     }
-    if n < 2.0 {
-        return 1.0;
+    elongation_from_moments(n, sx, sy, sxx, syy, sxy)
+}
+
+/// [`elongation`], split by 8-connected component: how much of the tracked
+/// set is one connected blob, and how stretched that blob alone is.
+///
+/// Built for exactly the case [`elongation`]'s doc warns about: a fire
+/// model with spotting can grow a round main body plus a few cells landed
+/// far downwind, and the *whole-set* elongation of that reads as stretched
+/// even though nothing about the fire's own shape changed. `largest`/
+/// `total` (< 1 whenever any cell sits outside the largest component) and
+/// `largest_elongation` (computed from the largest component's cells
+/// alone) tell "one stretched shape" from "a round core plus outliers"
+/// apart. `components` counts every component, not just the largest.
+///
+/// All fields default to the "nothing tracked" case (`total = 0`,
+/// `components = 0`, `largest = 0`, `largest_fraction = 1.0`,
+/// `largest_elongation = 1.0`) when no cell matches `types`, so a caller
+/// dividing by `total` should check it first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComponentStats {
+    /// Cells in `types`, across every component.
+    pub total: usize,
+    /// How many separate 8-connected components there are.
+    pub components: usize,
+    /// Cells in the largest component alone.
+    pub largest: usize,
+    /// `largest / total`; `1.0` when `total == 0` (nothing to be a
+    /// fraction of, treated as "fully one piece" rather than undefined).
+    pub largest_fraction: f64,
+    /// [`elongation`]'s formula, applied to the largest component's cells
+    /// only.
+    pub largest_elongation: f64,
+}
+
+/// [`ComponentStats`] for the cells of `types` in `sim`, connected
+/// 8-ways (a shared edge or corner joins two cells into one component —
+/// the natural choice for a fire spread model, since Alexandridis-style
+/// kernels themselves spread across corners).
+pub fn largest_component_stats(sim: &Sim, types: &[CellType]) -> ComponentStats {
+    let (w, h) = sim.dims();
+    if w == 0 || h == 0 {
+        return ComponentStats {
+            total: 0,
+            components: 0,
+            largest: 0,
+            largest_fraction: 1.0,
+            largest_elongation: 1.0,
+        };
     }
-    let (mx, my) = (sx / n, sy / n);
-    // Add a twelfth per axis: each cell is a unit square, not a point, so a
-    // straight line of cells has a finite width.
-    let cxx = sxx / n - mx * mx + 1.0 / 12.0;
-    let cyy = syy / n - my * my + 1.0 / 12.0;
-    let cxy = sxy / n - mx * my;
-    let tr = cxx + cyy;
-    let det = (cxx * cyy - cxy * cxy).max(0.0);
-    let disc = (tr * tr / 4.0 - det).max(0.0).sqrt();
-    let (l1, l2) = (tr / 2.0 + disc, (tr / 2.0 - disc).max(1e-12));
-    (l1 / l2).sqrt().clamp(1.0, MAX_ELONGATION)
+    let cells = sim.cells();
+    let mask: Vec<bool> = cells.iter().map(|c| types.contains(c)).collect();
+    let total = mask.iter().filter(|&&b| b).count();
+    if total == 0 {
+        return ComponentStats {
+            total: 0,
+            components: 0,
+            largest: 0,
+            largest_fraction: 1.0,
+            largest_elongation: 1.0,
+        };
+    }
+    let mut visited = vec![false; mask.len()];
+    let mut components = 0usize;
+    let mut largest_points: Vec<(usize, usize)> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    for start in 0..mask.len() {
+        if !mask[start] || visited[start] {
+            continue;
+        }
+        components += 1;
+        visited[start] = true;
+        stack.push(start);
+        let mut comp: Vec<(usize, usize)> = Vec::new();
+        while let Some(idx) = stack.pop() {
+            let (x, y) = (idx % w, idx / w);
+            comp.push((x, y));
+            for dy in -1i64..=1 {
+                for dx in -1i64..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                    if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                        continue;
+                    }
+                    let nidx = ny as usize * w + nx as usize;
+                    if mask[nidx] && !visited[nidx] {
+                        visited[nidx] = true;
+                        stack.push(nidx);
+                    }
+                }
+            }
+        }
+        if comp.len() > largest_points.len() {
+            largest_points = comp;
+        }
+    }
+    let largest = largest_points.len();
+    let (n, sx, sy, sxx, syy, sxy) = moments_of(&largest_points);
+    ComponentStats {
+        total,
+        components,
+        largest,
+        largest_fraction: largest as f64 / total as f64,
+        largest_elongation: elongation_from_moments(n, sx, sy, sxx, syy, sxy),
+    }
 }
 
 /// Centre of mass `(x, y)` of the cells in `types`, or `None` if there are none.
@@ -1100,5 +1238,68 @@ mod tests {
         assert_eq!(m.range(&life(12, 12, &row), 10), [1.0, MAX_ELONGATION]);
         assert_eq!(m.sample(&life(12, 12, &row)), e_row);
         assert_eq!(m.type_names(), vec!["Alive"]);
+    }
+
+    #[test]
+    fn largest_component_stats_tells_one_blob_from_scattered_outliers() {
+        let alive = CellType::from("Alive");
+        // A single 4x4 block: one component, all of it, elongation 1
+        // (a square), matching plain `elongation` on the same set.
+        let block: Vec<(usize, usize)> = (2..6).flat_map(|y| (2..6).map(move |x| (x, y))).collect();
+        let sim = life(20, 20, &block);
+        let s = largest_component_stats(&sim, &[alive]);
+        assert_eq!(s.total, 16);
+        assert_eq!(s.components, 1);
+        assert_eq!(s.largest, 16);
+        assert_eq!(s.largest_fraction, 1.0);
+        assert!((s.largest_elongation - 1.0).abs() < 1e-9);
+        assert_eq!(s.largest_elongation, elongation(&sim, &[alive]));
+
+        // Two separate 4x4 blocks, far enough apart that they do not touch
+        // even diagonally: two components, the largest is half the total,
+        // and the largest component's own elongation is still ~1 (a
+        // square) even though the *whole set*'s elongation (both blocks
+        // together) is stretched by the gap between them -- the exact
+        // "round core plus a detached outlier" case this stat exists for.
+        let block_a: Vec<(usize, usize)> = (2..6).flat_map(|y| (2..6).map(move |x| (x, y))).collect();
+        let block_b: Vec<(usize, usize)> = (2..6).flat_map(|y| (14..18).map(move |x| (x, y))).collect();
+        let both: Vec<(usize, usize)> = block_a.iter().chain(block_b.iter()).copied().collect();
+        let sim2 = life(20, 20, &both);
+        let s2 = largest_component_stats(&sim2, &[alive]);
+        assert_eq!(s2.total, 32);
+        assert_eq!(s2.components, 2);
+        assert_eq!(s2.largest, 16);
+        assert!((s2.largest_fraction - 0.5).abs() < 1e-9, "{}", s2.largest_fraction);
+        assert!(
+            (s2.largest_elongation - 1.0).abs() < 1e-9,
+            "the largest component alone is still a square: {}",
+            s2.largest_elongation
+        );
+        let whole_set_elongation = elongation(&sim2, &[alive]);
+        assert!(
+            whole_set_elongation > s2.largest_elongation + 1.0,
+            "the whole set (both blocks) reads as far more elongated than \
+             either block alone: whole {whole_set_elongation}, largest component {}",
+            s2.largest_elongation
+        );
+
+        // 8-connectivity: two blocks touching only at a corner are one
+        // component, not two.
+        let corner_a: Vec<(usize, usize)> = vec![(5, 5)];
+        let corner_b: Vec<(usize, usize)> = vec![(6, 6)];
+        let touching: Vec<(usize, usize)> =
+            corner_a.iter().chain(corner_b.iter()).copied().collect();
+        let sim3 = life(20, 20, &touching);
+        let s3 = largest_component_stats(&sim3, &[alive]);
+        assert_eq!(s3.components, 1, "corner-touching cells are 8-connected");
+        assert_eq!(s3.largest, 2);
+
+        // No tracked cells: the "nothing to be a fraction of" defaults.
+        let empty = largest_component_stats(&life(20, 20, &[]), &[alive]);
+        assert_eq!(empty.total, 0);
+        assert_eq!(empty.components, 0);
+        assert_eq!(empty.largest, 0);
+        assert_eq!(empty.largest_fraction, 1.0);
+        assert_eq!(empty.largest_elongation, 1.0);
     }
 }

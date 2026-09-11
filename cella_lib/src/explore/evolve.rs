@@ -649,6 +649,51 @@ impl Evolution {
         self.evaluate_full(genome, generation, index).score
     }
 
+    /// Re-run one genome for `self.config.steps` steps (one pass, no
+    /// repeats) and return the final grid, for diagnostics that need the
+    /// actual simulated state rather than a scalar score or descriptor —
+    /// e.g. connected-component stats on the burned set an archive elite
+    /// produced, which [`Metric::Elongation`](super::metrics::Metric::Elongation)
+    /// alone cannot distinguish from a round core plus scattered outliers.
+    ///
+    /// An archive elite does not record which `(generation, index, repeat)`
+    /// [`Self::evaluate`] used when it first found that genome (see
+    /// [`super::archive::ArchiveReportElite`]), so there is no seed to
+    /// recover here. `seed` is a fresh value the caller supplies instead —
+    /// pass 0, 1, 2 for three independent replays of the same genome — and
+    /// this is a **re-evaluation**, not a reproduction of whatever
+    /// stochastic run originally placed the genome in the archive.
+    ///
+    /// Errors exactly when [`Self::evaluate`] would have scored the
+    /// genome `-inf`: a grid that refuses the genome, or a driver that
+    /// rejects it.
+    pub fn evaluate_genome_sim(&self, genome: &Genome, seed: u64) -> Result<Sim, ModelError> {
+        let mut sim = self.template.clone();
+        let ic_seed = mix(seed ^ 0x1C);
+        if let Some(cells) = self.initial_cells(ic_seed) {
+            sim.reset_cells(cells)?;
+        }
+        sim.set_seed(mix(seed ^ 0xE1E5));
+        self.space.apply(&mut sim, genome)?;
+        let mut state = MemberState::default();
+        if let Some(d) = &self.config.driver {
+            d.apply(&mut sim, genome, &self.space, &self.config.forcing, &mut state)?;
+        }
+        let period = self.config.driver.as_ref().and_then(|d| d.period_steps());
+        let mut period_rng = Rng::new(mix(seed ^ 0x9E));
+        for t in 1..=self.config.steps {
+            sim.step();
+            if let (Some(d), Some(n)) = (&self.config.driver, period)
+                && n > 0
+                && t.is_multiple_of(n)
+            {
+                d.period_end(&mut sim, genome, &self.space, &mut state, &mut period_rng)?;
+                d.apply(&mut sim, genome, &self.space, &self.config.forcing, &mut state)?;
+            }
+        }
+        Ok(sim)
+    }
+
     /// The starting cells for an evaluation, or `None` to keep the template's.
     fn initial_cells(&self, ic_seed: u64) -> Option<Vec<CellType>> {
         let n = self.template.len();
@@ -1466,6 +1511,147 @@ mod tests {
         assert_eq!(r.invalid, r.evaluations);
         assert_eq!(r.best, f64::NEG_INFINITY);
         assert_eq!(evo2.population().len(), 8);
+    }
+
+    #[test]
+    fn evaluate_genome_sim_is_deterministic_per_seed_and_reports_the_final_grid() {
+        // Built for E43's replay diagnostic (validation/experiments/45):
+        // an archive elite's genome, but no way back to the exact
+        // (generation, index, repeat) that first evaluated it, so a
+        // caller needs a way to re-run that genome and inspect the actual
+        // grid it produces, not just a scalar score or descriptor.
+        let cfg = small(EvolveConfig {
+            genes: life_genes(),
+            objective: Some(fraction_target(0.3)),
+            seed: 3,
+            ..EvolveConfig::default()
+        });
+        let mut evo = Evolution::new(life_soup(12, 12), &cfg).unwrap();
+        // A freshly-drawn, unevaluated genome can be invalid for this rule
+        // (that is what `step_generation` and `evaluate` are for); step
+        // once and take the best-scoring genome, which is valid by
+        // construction (an invalid genome scores `-inf` and cannot win).
+        evo.step_generation();
+        let g = evo.best().expect("some genome scored").genome.clone();
+
+        let sim_a = evo.evaluate_genome_sim(&g, 0).unwrap();
+        let sim_b = evo.evaluate_genome_sim(&g, 0).unwrap();
+        assert_eq!(
+            sim_a.cells(),
+            sim_b.cells(),
+            "same seed, same genome: identical final grid"
+        );
+        assert_eq!(
+            sim_a.step_count(),
+            cfg.steps,
+            "ran the configured number of steps"
+        );
+        let alive = CellType::from("Alive");
+        let fraction_a = crate::explore::metrics::fraction(&sim_a, &[alive]);
+        assert!((0.0..=1.0).contains(&fraction_a), "{fraction_a}");
+
+        // A genome the grid refuses errors instead of panicking -- the
+        // same invalid (count, limit) pairing
+        // `a_refused_genome_scores_minus_infinity_and_is_counted_not_fatal`
+        // uses above, where `evaluate` (the score-only path) reports
+        // `-inf`.
+        let cfg2 = EvolveConfig {
+            genes: vec![GeneSpec::range("rule.subrules[1].limit", 0.0, 8.0)],
+            ..cfg
+        };
+        let evo2 = Evolution::new(life_soup(6, 6), &cfg2).unwrap();
+        let bad = Genome(vec![ParamValue::Int(1)]);
+        assert!(evo2.evaluate_genome_sim(&bad, 0).is_err());
+    }
+
+    /// A driver used only to exercise `evaluate_genome_sim`'s driver-owned
+    /// code paths (the initial `apply` and the periodic `period_end` +
+    /// re-`apply`) without pulling in the wildfire model. Counts how many
+    /// times each hook ran in `MemberState`, and can be told to fail its
+    /// `period_end` on a given period so both outcomes are covered.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct CountingDriver {
+        period: u64,
+        fail_at_period: Option<u64>,
+    }
+
+    #[typetag::serde(name = "counting_test_driver")]
+    impl MemberDriver for CountingDriver {
+        fn apply(
+            &self,
+            _sim: &mut Sim,
+            _genome: &Genome,
+            _space: &GeneSpace,
+            _forcing: &Forcing,
+            state: &mut MemberState,
+        ) -> Result<(), ModelError> {
+            state.set("applies", state.get("applies").unwrap_or(0.0) + 1.0);
+            Ok(())
+        }
+
+        fn period_steps(&self) -> Option<u64> {
+            Some(self.period)
+        }
+
+        fn period_end(
+            &self,
+            _sim: &mut Sim,
+            _genome: &Genome,
+            _space: &GeneSpace,
+            state: &mut MemberState,
+            _rng: &mut Rng,
+        ) -> Result<(), ModelError> {
+            let n = state.get("periods").unwrap_or(0.0) + 1.0;
+            state.set("periods", n);
+            if self.fail_at_period == Some(n as u64) {
+                return Err(ModelError::InvalidParam("forced failure for testing".into()));
+            }
+            Ok(())
+        }
+
+        fn boxed_clone(&self) -> Box<dyn MemberDriver> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn evaluate_genome_sim_re_applies_the_driver_at_each_period_and_propagates_its_error() {
+        let cfg = EvolveConfig {
+            population: 4,
+            steps: 9,
+            repeats: 1,
+            genes: life_genes(),
+            objective: Some(fraction_target(0.3)),
+            driver: Some(Box::new(CountingDriver {
+                period: 3,
+                fail_at_period: None,
+            })),
+            ..EvolveConfig::default()
+        };
+        let mut evo = Evolution::new(life_soup(10, 10), &cfg).unwrap();
+        evo.step_generation();
+        let g = evo.best().expect("some genome scored").genome.clone();
+
+        let sim = evo.evaluate_genome_sim(&g, 0).unwrap();
+        assert_eq!(sim.step_count(), 9, "ran every step");
+        // 9 steps at period 3: period_end fires at t = 3, 6, 9, and the
+        // driver is re-applied each of those times plus once up front.
+        let sim_b = evo.evaluate_genome_sim(&g, 0).unwrap();
+        assert_eq!(sim.cells(), sim_b.cells(), "deterministic per seed");
+
+        // Same genome and steps, but the driver fails on the second
+        // period: the whole call errors instead of returning a partial
+        // grid.
+        let cfg_fail = EvolveConfig {
+            driver: Some(Box::new(CountingDriver {
+                period: 3,
+                fail_at_period: Some(2),
+            })),
+            ..cfg
+        };
+        let evo_fail = Evolution::new(life_soup(10, 10), &cfg_fail).unwrap();
+        assert!(evo_fail.evaluate_genome_sim(&g, 0).is_err());
     }
 
     #[test]
