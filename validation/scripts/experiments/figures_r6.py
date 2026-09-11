@@ -514,6 +514,85 @@ def e40b_lagged_nulls():
     print("wrote e40b-lagged-nulls.svg")
 
 
+def e43_spot_illuminate():
+    """Six MAP-Elites archives, one per fire, same layout as E37's own
+    figure (figures_r5.py's e37_illuminate), but with the spotting genes
+    added (SMC_SPOT=1): the filled cells are E43's own reachable region.
+    A dashed stepped line traces the *top* of E37's reachable region at
+    each growth bin -- its wedge boundary, spotting off -- so a reader can
+    see at a glance whether spotting pushes elongation past what the
+    model could already reach at that size. The observed daily dots are
+    E43's own (same five days of weather and the same truth as E37, so
+    they land in the same place).
+    """
+    rows = load("exp43_spot_illuminate.json")
+    if rows is None:
+        return
+    W, H = 1000, 560
+    PW, PH = 272, 200
+    body = []
+    for i, f in enumerate(FIRES):
+        px, py = panel_grid(6, 3, PW, PH, 48, 40, 48, 56)[i]
+        r = [x for x in rows if x["fire"] == f][0]
+        rep = json.loads((EXP / "exp43_spot_illuminate" / f"{f}.json").read_text())
+        a = rep["archive"]
+        (gx, gy), (rx, ry) = a["dims"], a["ranges"]
+        cw, ch = (PW - 40) / gx, (PH - 40) / gy
+        body.append(text(px, py - 8, f"{SHORT[f]} · {a['stats']['elites']} elites, coverage {a['stats']['coverage']:.2f}",
+                          size=12, fill=INK, font=SANS, weight=600))
+        body.append(f'<rect x="{px + 32}" y="{py}" width="{PW - 40}" height="{PH - 40}" fill="none" stroke="{RULE}"/>')
+        # E43's own filled cells (spotting on).
+        for e in a["elites"]:
+            cx, cy = e["coords"]
+            body.append(f'<rect x="{px + 32 + cx * cw:.1f}" y="{py + (gy - 1 - cy) * ch:.1f}" '
+                        f'width="{cw:.1f}" height="{ch:.1f}" fill="rgba(45,49,66,0.28)"/>')
+        # E37's own wedge boundary (spotting off): for each growth column
+        # E37 reached, the top of its highest filled cell.
+        e37_path = EXP / "exp37_illuminate" / f"{f}.json"
+        if e37_path.exists():
+            e37_archive = json.loads(e37_path.read_text())["archive"]
+            col_max = {}
+            for e in e37_archive["elites"]:
+                cx37, cy37 = e["coords"]
+                col_max[cx37] = max(col_max.get(cx37, -1), cy37)
+            pts = []
+            for cx37 in sorted(col_max):
+                top_y = py + (gy - 1 - col_max[cx37]) * ch
+                x_left = px + 32 + cx37 * cw
+                x_right = px + 32 + (cx37 + 1) * cw
+                pts.append(f"{x_left:.1f},{top_y:.1f}")
+                pts.append(f"{x_right:.1f},{top_y:.1f}")
+            if pts:
+                body.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="{ACCENT}" '
+                            f'stroke-width="1.6" stroke-dasharray="4,2" stroke-linejoin="miter"/>')
+        for (hh, g, el) in rep["observed"]:
+            ox = px + 32 + (g - rx[0]) / (rx[1] - rx[0]) * (PW - 40)
+            oy = py + (PH - 40) - (el - ry[0]) / (ry[1] - ry[0]) * (PH - 40)
+            ox, oy = min(max(ox, px + 32), px + PW - 8), min(max(oy, py), py + PH - 40)
+            body.append(f'<circle cx="{ox:.1f}" cy="{oy:.1f}" r="4" fill="{PAPER}"/>'
+                        f'<circle cx="{ox:.1f}" cy="{oy:.1f}" r="4" fill="rgba(45,49,66,0.15)" stroke="{INK}" stroke-width="1.2"/>')
+        body.append(text(px + 32, py + PH - 24, f"{rx[0]:.2f}", anchor="start"))
+        body.append(text(px + PW - 8, py + PH - 24, f"growth {rx[1]:.2f}", anchor="end"))
+        body.append(text(px + 28, py + PH - 40, f"{ry[0]:.0f}", anchor="end"))
+        body.append(text(px + 28, py + 8, f"{ry[1]:.0f}", anchor="end"))
+        body.append(text(px + 28, py + PH / 2 - 20, "elong.", anchor="end"))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.28)"/>',
+         "E43 (spotting on): a knob setting the model can produce"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{ACCENT}" stroke-width="1.6" stroke-dasharray="4,2"/>',
+         "E37 wedge boundary (spotting off)"),
+        (lambda x, y: f'<circle cx="{x + 8}" cy="{y}" r="4" fill="rgba(45,49,66,0.15)" stroke="{INK}" stroke-width="1.2"/>',
+         "the observed fire, one dot per day"),
+    ]))
+    (FIG / "e43-spot-illuminate.svg").write_text(svg(
+        "e43", "E43 does spotting extend the reachable shape region",
+        "Six MAP-Elites archives, one per fire, over growth and elongation of the burned area after five days with "
+        "spotting genes added (SMC_SPOT=1), with E37's own reachable-region boundary (spotting off) overlaid as a "
+        "dashed line and the observed fire's growth and elongation marked day by day.",
+        W, H, "\n".join(body)))
+    print("wrote e43-spot-illuminate.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
@@ -521,3 +600,4 @@ if __name__ == "__main__":
     e39_gated_reset()
     e40_observed_immigrants()
     e40b_lagged_nulls()
+    e43_spot_illuminate()

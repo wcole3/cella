@@ -143,7 +143,13 @@ a bug in this page.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
   The weather-report convention, used everywhere since Round 2.
 - **Spotting.** Embers igniting cells far ahead of the front. Supported,
-  off after E7.
+  off after E7; switched back on, as illumination genes only, in E43.
+- **Spotting genes.** `model.spotting.p_spot` (per-step chance a burning
+  cell throws a firebrand, log-uniform 0.001–0.005, E7's pre-registered
+  range) and `model.spotting.median_distance` (typical landing distance
+  in cells, linear 2–20). `SMC_SPOT=1` in `wildfire_smc` adds both to the
+  gene list and switches spotting on in the config (it is otherwise
+  disabled, so a `spotting.*` knob has nothing to write into). E43.
 - **Tick / steps per day.** One model step. The scenarios declare 50
   ticks per day (28.8 minutes each). Fire can move one cell (30 m) per
   tick, so 1.5 km/day is the hard front-speed cap.
