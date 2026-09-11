@@ -89,6 +89,28 @@ pub struct EnsembleConfig {
     /// `model.p0` from the gene, so that gene must be present).
     #[serde(default)]
     pub immigrant_reset: bool,
+    /// Gate on [`Self::immigrant_reset`]: when set, an immigrant is given a
+    /// fresh state only if the *area ratio* at the last
+    /// [`Ensemble::assimilate`] call — mean member burned area over
+    /// observed burned area, computed there and cached for this — is
+    /// strictly below this value. Below 1 means the population is
+    /// under-predicting the observed area: every member's forecast is
+    /// smaller than what actually burned, which is what a population that
+    /// has stopped growing while the real fire has not looks like, exactly
+    /// the situation `immigrant_reset` exists to repair. Above 1 the
+    /// population is keeping up or over-predicting, and resetting would
+    /// only spend probability re-igniting members where nothing more is
+    /// going to burn.
+    ///
+    /// `None` (the default) leaves the plain `immigrant_reset` bool in
+    /// charge, unmodified: this is how E38's behaviour survives as an
+    /// option. Set the gate and the bare bool is ignored — the gate alone
+    /// decides. Before the first call to [`Ensemble::assimilate`] (or when
+    /// a caller only ever uses [`Ensemble::assimilate_scores`], which does
+    /// not touch the area ratio) there is no ratio to compare, so the gate
+    /// treats that as "do not reset".
+    #[serde(default)]
+    pub immigrant_reset_gate: Option<f64>,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Box<dyn MemberDriver>>,
@@ -119,6 +141,7 @@ impl Default for EnsembleConfig {
             immigrants: default_immigrants(),
             crossover: 0.0,
             immigrant_reset: false,
+            immigrant_reset_gate: None,
             driver: None,
         }
     }
@@ -161,6 +184,13 @@ pub struct Ensemble {
     generation: usize,
     forcing: Forcing,
     total: usize,
+    /// Mean member burned area over observed burned area at the last
+    /// [`Ensemble::assimilate`] call; `None` until the first one. See
+    /// [`EnsembleConfig::immigrant_reset_gate`] for why this lives here
+    /// rather than being passed in from outside: the engine already holds
+    /// both burned counts at scoring time, and computing the ratio right
+    /// there is simpler than threading it through the caller.
+    last_area_ratio: Option<f64>,
 }
 
 impl std::fmt::Debug for Ensemble {
@@ -267,6 +297,7 @@ impl Ensemble {
             generation: 0,
             forcing,
             total,
+            last_area_ratio: None,
         })
     }
 
@@ -487,6 +518,13 @@ impl Ensemble {
     /// the IoU between its `types` mask and `observed`, then
     /// [`Self::assimilate_scores`] does the rest. Score your forecast against
     /// `observed` *before* calling this, never after.
+    ///
+    /// Along the way this also computes the *area ratio* — mean member
+    /// burned area over observed burned area, the same number the wildfire
+    /// runner reports as `area_ratio_mean` — and caches it for
+    /// [`EnsembleConfig::immigrant_reset_gate`] to read inside
+    /// [`Self::assimilate_scores`]. A direct call to `assimilate_scores`
+    /// never updates it.
     pub fn assimilate(
         &mut self,
         observed: &[bool],
@@ -499,9 +537,15 @@ impl Ensemble {
                 got: observed.len(),
             });
         }
-        let scores: Vec<f64> = (0..self.members.len())
-            .map(|i| iou(&self.member_mask(i, types), observed))
-            .collect();
+        let obs_area = observed.iter().filter(|&&b| b).count() as f64;
+        let mut scores = Vec::with_capacity(self.members.len());
+        let mut area_sum = 0.0;
+        for i in 0..self.members.len() {
+            let mask = self.member_mask(i, types);
+            scores.push(iou(&mask, observed));
+            area_sum += mask.iter().filter(|&&b| b).count() as f64;
+        }
+        self.last_area_ratio = Some(area_sum / self.members.len() as f64 / obs_area.max(1.0));
         self.assimilate_scores(&scores)
     }
 
@@ -541,6 +585,15 @@ impl Ensemble {
             parents.push(j);
         }
         let n_imm = (self.config.immigrants * m as f64).round() as usize;
+        // Whether *this generation's* immigrants get a fresh state. The
+        // gate, when set, overrides the plain bool: it resets only while
+        // the last-observed area ratio says the population is under-
+        // predicting (see `EnsembleConfig::immigrant_reset_gate`). No ratio
+        // yet is treated as "do not reset" — there is no evidence for it.
+        let reset_immigrants = match self.config.immigrant_reset_gate {
+            Some(gate) => self.last_area_ratio.is_some_and(|ratio| ratio < gate),
+            None => self.config.immigrant_reset,
+        };
 
         // The first children of a parent clone its grid; the last one moves
         // it, saving one full copy per surviving parent.
@@ -583,7 +636,7 @@ impl Ensemble {
                     .clone()
             };
             sim.set_seed(self.next_seed);
-            let mut state = if ci < n_imm && self.config.immigrant_reset {
+            let mut state = if ci < n_imm && reset_immigrants {
                 MemberState::default()
             } else {
                 parent_state.clone()
@@ -984,5 +1037,126 @@ mod tests {
         // Off by default, and a config that says nothing about it parses.
         let cfg: EnsembleConfig = serde_json::from_str(r#"{"members": 4}"#).unwrap();
         assert_eq!(cfg.crossover, 0.0);
+    }
+
+    /// Build an 8-member ensemble, mark every member "contained" (as the
+    /// wildfire driver would after a fire has stopped), and hand back its
+    /// per-member ignition area so a test can build an `observed` mask with
+    /// a chosen area ratio in mind.
+    fn contained_population(c: &EnsembleConfig) -> (Ensemble, f64) {
+        let mut e = Ensemble::new(soup(16, 16), c).unwrap();
+        let alive = CellType::from("Alive");
+        let area = e.member_mask(0, &[alive]).iter().filter(|&&b| b).count() as f64;
+        assert!(area > 0.0, "the soup must not be empty for this test to mean anything");
+        for m in e.members_mut() {
+            m.state.set("contained", 1.0);
+        }
+        (e, area)
+    }
+
+    #[test]
+    fn gate_below_one_resets_immigrants_even_though_they_were_contained() {
+        let c = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            immigrant_reset_gate: Some(1.0),
+            ..cfg(8)
+        };
+        let (mut e, area) = contained_population(&c);
+        let alive = CellType::from("Alive");
+        // Observed area is 3x every member's: area ratio ~= 1/3, below the
+        // gate, so the population is under-predicting what actually burned.
+        let obs_area = ((area * 3.0).ceil() as usize).min(e.member_mask(0, &[alive]).len() - 1);
+        let mut observed = vec![false; e.member_mask(0, &[alive]).len()];
+        observed[..obs_area].fill(true);
+        let rep = e.assimilate(&observed, &[alive]).unwrap();
+        assert!(rep.immigrants >= 1, "the test needs at least one immigrant");
+        for i in 0..rep.immigrants {
+            assert!(
+                !e.members()[i].state.flag("contained"),
+                "immigrant {i} should have a fresh, uncontained state below the gate"
+            );
+        }
+        // A non-immigrant child still inherits its parent's contained flag:
+        // the gate only ever changes immigrants, never the rest.
+        for i in rep.immigrants..e.len() {
+            assert!(
+                e.members()[i].state.flag("contained"),
+                "non-immigrant {i} must keep inheriting parent state"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_above_one_leaves_immigrants_inheriting_contained() {
+        let c = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            // The bare bool says reset; the gate must override it to "no"
+            // once the ratio sits above 1 — this is the Pier-cost fix E39
+            // exists for.
+            immigrant_reset: true,
+            immigrant_reset_gate: Some(1.0),
+            ..cfg(8)
+        };
+        let (mut e, area) = contained_population(&c);
+        let alive = CellType::from("Alive");
+        // Observed area is a third of every member's: area ratio ~= 3, above
+        // the gate, so the population is not under-predicting: no reset.
+        let obs_area = ((area / 3.0).ceil() as usize).max(1);
+        let mut observed = vec![false; e.member_mask(0, &[alive]).len()];
+        observed[..obs_area].fill(true);
+        let rep = e.assimilate(&observed, &[alive]).unwrap();
+        assert!(rep.immigrants >= 1, "the test needs at least one immigrant");
+        for i in 0..e.len() {
+            assert!(
+                e.members()[i].state.flag("contained"),
+                "member {i} should inherit contained: the gate found no evidence to reset"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_none_leaves_the_plain_bool_in_charge() {
+        // gate None + immigrant_reset true must behave exactly like E38:
+        // every immigrant resets, whatever the area ratio would have been.
+        let c = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            immigrant_reset: true,
+            immigrant_reset_gate: None,
+            ..cfg(8)
+        };
+        let (mut e, area) = contained_population(&c);
+        let alive = CellType::from("Alive");
+        // An observed area that would sit *above* the gate if one were set,
+        // so this only passes if the gate is truly not consulted.
+        let obs_area = ((area / 3.0).ceil() as usize).max(1);
+        let mut observed = vec![false; e.member_mask(0, &[alive]).len()];
+        observed[..obs_area].fill(true);
+        let rep = e.assimilate(&observed, &[alive]).unwrap();
+        assert!(rep.immigrants >= 1, "the test needs at least one immigrant");
+        for i in 0..rep.immigrants {
+            assert!(
+                !e.members()[i].state.flag("contained"),
+                "immigrant {i} must reset: immigrant_reset is true and no gate overrides it"
+            );
+        }
+
+        // gate None + immigrant_reset false: nobody resets, area ratio or
+        // not (this is the pre-E38, pre-E39 default).
+        let c2 = EnsembleConfig {
+            immigrant_reset: false,
+            immigrant_reset_gate: None,
+            ..c
+        };
+        let (mut e2, _) = contained_population(&c2);
+        let rep2 = e2.assimilate(&observed, &[alive]).unwrap();
+        for i in 0..rep2.immigrants {
+            assert!(
+                e2.members()[i].state.flag("contained"),
+                "immigrant {i} must not reset: both the gate and the bool are off"
+            );
+        }
     }
 }

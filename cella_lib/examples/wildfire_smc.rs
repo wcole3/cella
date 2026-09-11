@@ -32,6 +32,12 @@
 //!   cargo run --release --example wildfire_smc -- <scenario_dir> <members> <open|assim|evolve|map> <out.json>
 //! Env: SMC_BETA (10), SMC_SIGMA (0.2), SMC_IMMIGRANTS (0), SMC_CROSSOVER (0), SMC_SEED (0),
 //!      SMC_IMM_RESET=1 (immigrants start uncontained, with p0 from their own genome),
+//!      SMC_IMM_RESET_GATE=<f64> (E39: gate the reset above on evidence — an
+//!      immigrant is reset only while the last assimilation's area ratio
+//!      (mean member burned area / observed burned area) is below this
+//!      value, i.e. only while the population is under-predicting the
+//!      observed area; setting this takes the decision away from
+//!      SMC_IMM_RESET, which is then ignored),
 //!      SMC_WIND_ROT_DEG (0), SMC_ASSIM_EVERY (1),
 //!      SMC_PRIOR=path.json (a JSON array of genes replacing the default list),
 //!      SMC_CONTAIN=1 (add the containment genes `contain_a`/`contain_b`, so
@@ -748,6 +754,9 @@ fn main() {
         immigrants: envf("SMC_IMMIGRANTS", 0.0),
         crossover: envf("SMC_CROSSOVER", 0.0),
         immigrant_reset: envf("SMC_IMM_RESET", 0.0) > 0.0,
+        immigrant_reset_gate: std::env::var("SMC_IMM_RESET_GATE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok()),
         driver: Some(Box::new(WildfireDriver {
             // One containment draw per simulated day.
             steps_per_day,

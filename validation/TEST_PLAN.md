@@ -293,6 +293,23 @@ in `validation/results/analysis/`.
   does not listen). The learned containment curve reaches 50 % contained
   members 5–10 days *earlier* than ICS-209 reports 50 % containment on
   Bear and Buck (E21: the model needs stopping before crews report it).
+  Added after E38 ran (2026-09-11, before the E39 run): **E39
+  area-ratio-gated immigrant reset** — E38's plain reset repaired Buck
+  seed 3's lock-in (+0.105) but cost Pier a small mean loss (−0.008, 4/5
+  seeds) and a little Brier on four fires, because it re-ignites
+  immigrants even where the fire has genuinely stopped. `EnsembleConfig`
+  gains `immigrant_reset_gate: Option<f64>` (default `None`): when set,
+  an immigrant gets a fresh state only if the last assimilation's area
+  ratio (mean member burned area over observed burned area) is **below**
+  the gate value; `None` leaves the plain `immigrant_reset` bool in
+  charge unmodified, so E38's run is reproduced bit-for-bit. Gate value
+  pre-registered at **1.0**. Env knob in `wildfire_smc`:
+  `SMC_IMM_RESET_GATE=1.0` (implies reset on, subject to the gate).
+  Five seeds matched to E33/E38, all six fires.
+  **Prediction, written before the run:** Buck seed 3 keeps its +0.10;
+  Pier's mean loss (−0.008, 4/5 seeds) disappears (inside sd); Brier
+  cost of E38 on Brattain/Chimney/Pier halves or vanishes; everywhere
+  else ties E33.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

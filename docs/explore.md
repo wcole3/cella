@@ -259,6 +259,7 @@ rules.
 | `immigrants` | 0.2 | Share of the population re-drawn from scratch after each learning step. Keeps diversity: with 0 the population can converge on one wrong idea and never recover. |
 | `crossover` | 0 | Chance a resampled child takes each gene from either of two parents before mutation. Off by default: the classic particle filter copies one parent. Experiment E34 measures whether it helps. |
 | `immigrant_reset` | false | Give immigrants a fresh driver state instead of their parent's. For the wildfire driver that means an immigrant is uncontained and takes `p0` from its own genome, so a population in which every member has stopped can start again (E33 found the lock-in; E38 tests the fix). Needs the `model.p0` gene. |
+| `immigrant_reset_gate` | none | Gate on `immigrant_reset`: reset an immigrant only if the *area ratio* at the last `assimilate` call (mean member burned area over observed burned area) is below this value — evidence the population is under-predicting, not just any immigrant. Set it and the plain `immigrant_reset` bool stops mattering. `None` (the default) leaves the bool in charge unmodified: E38's behaviour reproduces bit-for-bit. E39 tests whether the gate keeps E38's Buck fix without its Pier cost. |
 | `driver` | none | A model-specific helper (§13); the wildfire one applies wind schedules and decides when a member is contained. Leave it out for rules. |
 
 What you get back (see the CLI report and the Rust API in §11):
