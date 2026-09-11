@@ -310,6 +310,32 @@ in `validation/results/analysis/`.
   Pier's mean loss (−0.008, 4/5 seeds) disappears (inside sd); Brier
   cost of E38 on Brattain/Chimney/Pier halves or vanishes; everywhere
   else ties E33.
+  Added after E39 (2026-09-11, before the E40 run): **E40
+  observed-perimeter immigrants** — E38 showed that immigrants starting
+  *uncontained* can repair a locked-in population (+0.105 on Buck seed
+  3) but E39 showed that gating that reset on the area ratio makes it
+  inert: by the time the population under-predicts, the members' grids
+  already have no burning cells left, so an uncontained flag on a
+  copied burnt-out grid cannot restart anything. The missing piece is
+  the *state*, not the flag: an immigrant needs a grid with a live
+  burning rim, and the only honest source of one at assimilation time is
+  the observed perimeter itself — standard particle-filter state
+  correction (Rochoux et al. 2014; Xue, Gu & Hu 2012). Engine config
+  `immigrant_source: Prior | Observed` (default `Prior`). With
+  `Observed`, at each assimilation the immigrants' grid state is built
+  from the observed mask: burned cells → the model's burned type;
+  burned cells with at least one unburned fuel neighbour (the rim) → the
+  burning type with age 0; everything else untouched from a fresh
+  scenario grid. Genome fresh from the prior, driver state fresh
+  (uncontained). The `assim` runner already builds an observed `Sim`
+  (`observed_sim`) for scoring — reuse it. Env: `SMC_IMM_SOURCE=observed`.
+  Five seeds matched to E33, all six fires, reset and gate (E38/E39)
+  left off so the effect is isolated.
+  **Prediction, written before the run:** Bear mean forecast IoU up by
+  > sd (its late-day stall repaired), Ferguson up by > sd (days 4–7
+  catch-up); Chimney and Buck ties; Brier worse by ≤ 0.005 on Pier (rim
+  members disagree on where nothing will burn). Consensus never falls
+  below persistence on any day.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

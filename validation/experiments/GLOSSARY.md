@@ -236,6 +236,20 @@ a bug in this page.
   under-predicting the observed area, the lock-in signature — instead of
   resetting every time. `None` (the default) leaves the plain
   `immigrant_reset` in charge.
+- **State correction.** The standard particle-filter move (Rochoux et al.
+  2014; Xue, Gu & Hu 2012) of rebuilding a member's whole state — not
+  just its knobs — from the observation itself, instead of only carrying
+  a parent's history forward. E40's `immigrant_source: Observed` is this,
+  applied to immigrants only.
+- **Immigrant source.** Option (E40): `immigrant_source`, `Prior`
+  (default) or `Observed`. `Prior` is the pre-E40 behaviour — an
+  immigrant's grid is a clone of a resampled parent, like any other
+  child. `Observed` rebuilds an immigrant's grid from the observed mask
+  just scored (burned interior → burned; the rim of still-unburned fuel
+  next to a burned cell → burning, age 0; everything else untouched) and
+  always gives it a fresh, uncontained driver state — `immigrant_reset`
+  and the area-ratio gate are not consulted for these immigrants, only
+  for `Prior` ones.
 - **Crossover.** A child takes each knob from one of two parents.
   Standard in genetic algorithms; added to the filter as an option in
   E34.
