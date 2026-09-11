@@ -59,6 +59,10 @@
 //!      SMC_TAU_OFF=1 (drop the `tau_days` gene so containment is the only stop),
 //!      SMC_FIT_DAYS (3), SMC_GENERATIONS (20 evolve / 30 map), SMC_POP (24 evolve /
 //!      32 map batch), SMC_REPEATS (2), SMC_MAP_DAYS (5).
+//!      SMC_SPOT=1 (E43: switch spotting on in the config's wildfire model
+//!      — see [`enable_spotting`] — and add `model.spotting.p_spot` and
+//!      `model.spotting.median_distance` to the gene list, so `map` mode
+//!      illuminates the spread genes *and* spotting together).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -79,6 +83,7 @@ use cella_lib::wildfire::driver::{
     GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow, WildfireDriver,
 };
 use cella_lib::wildfire::wind_toward_grid_deg;
+use cella_lib::wildfire::{SpottingParams, WildfireModel};
 use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue, StateCorrection};
 use cella_lib::{Evolution, EvolveConfig, Grid2D, Metric, Rule2D};
 use serde::{Deserialize, Serialize};
@@ -707,6 +712,81 @@ fn default_genes() -> Vec<GeneSpec> {
     ]
 }
 
+/// Spotting genes (validation E43), added only under `SMC_SPOT=1`. The
+/// model key is `spotting.p_spot` / `spotting.median_distance` (see
+/// [`enable_spotting`]); the `model.` prefix routes a gene at the attached
+/// model the way `model.p0` already does (see the module's gene-key docs).
+const GENE_SPOT_P: &str = "model.spotting.p_spot";
+const GENE_SPOT_DIST: &str = "model.spotting.median_distance";
+
+/// `p_spot` is a per-step probability (struct doc: "chance per step that a
+/// burning cell launches a firebrand"), so it spans orders of magnitude and
+/// is drawn log-uniform, like the other probability-shaped genes here
+/// (`model.p0`). The range is E7's pre-registered spotting space verbatim
+/// (`exp_spotting.py`'s SPOT_GRID: lo 0.001, mid 0.005, far 0.002) — already
+/// shown to move burned area 2-4x on these fires, so it is wide enough to
+/// show whether spotting reaches new archive shapes without extrapolating
+/// past what has actually been tested.
+const SPOT_P_LO: f64 = 0.001;
+const SPOT_P_HI: f64 = 0.005;
+
+/// Median landing distance in cells, linear (not log: this is a spatial
+/// scale, not a rate). E7 tested 5-20 cells; the task brief widens the
+/// floor to 2 cells (a jump barely ahead of the front) to also cover
+/// short-range spotting, still well inside `SpottingParams::median_distance`'s
+/// declared bounds of [0.5, 100] cells.
+const SPOT_DIST_LO: f64 = 2.0;
+const SPOT_DIST_HI: f64 = 20.0;
+
+/// The full gene list for a run: the prior (default or `SMC_PRIOR`), plus
+/// the containment genes under `SMC_CONTAIN`, minus `tau_days` under
+/// `SMC_TAU_OFF`, plus the spotting genes under `SMC_SPOT`. Split out of
+/// `main` so `SMC_SPOT`'s effect on the gene list is unit-testable without
+/// an env var or a scenario directory.
+fn build_genes(prior: Vec<GeneSpec>, contain: bool, tau_off: bool, spot: bool) -> Vec<GeneSpec> {
+    let mut genes = prior;
+    if contain {
+        genes.push(GeneSpec::new(GENE_CONTAIN_A));
+        genes.push(GeneSpec::new(GENE_CONTAIN_B));
+    }
+    if tau_off {
+        genes.retain(|g| g.key != GENE_TAU_DAYS);
+    }
+    if spot {
+        genes.push(GeneSpec::log_range(GENE_SPOT_P, SPOT_P_LO, SPOT_P_HI));
+        genes.push(GeneSpec::range(GENE_SPOT_DIST, SPOT_DIST_LO, SPOT_DIST_HI));
+    }
+    genes
+}
+
+/// Switch spotting on in the config's wildfire model (`SMC_SPOT=1`, E43),
+/// so the `model.spotting.*` genes [`build_genes`] adds have something to
+/// write into: [`Grid2D::set_model_param`] and the gene machinery both
+/// refuse a `spotting.*` key while `WildfireParams::spotting` is `None`
+/// (see the `set_param` tests in `cella_lib/src/wildfire/mod.rs`), so this
+/// must run before the config is turned into a `Sim`.
+///
+/// `p_spot` and `median_distance` are genes and are overwritten per genome;
+/// `sigma` and `angle_jitter_deg` stay fixed at E7's low setting.
+fn enable_spotting(cfg: &mut CellaConfig) {
+    let CellaConfig::D2(c) = cfg else {
+        panic!("SMC_SPOT needs a 2D scenario config");
+    };
+    let model = c
+        .model
+        .as_deref_mut()
+        .expect("SMC_SPOT needs a config with a model attached")
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .expect("SMC_SPOT needs the wildfire model");
+    model.params.spotting = Some(SpottingParams {
+        p_spot: SPOT_P_LO,
+        median_distance: SPOT_DIST_LO,
+        sigma: 0.5,
+        angle_jitter_deg: 15.0,
+    });
+}
+
 /// Mean of a numeric gene over the members, or `fallback` when the gene is
 /// not part of this run (e.g. `tau_days` with SMC_TAU_OFF).
 fn gene_mean_sd(ens: &Ensemble, key: &str, fallback: f64) -> (f64, f64) {
@@ -742,22 +822,25 @@ fn main() {
     };
     let rot = envf("SMC_WIND_ROT_DEG", 0.0);
     let assim_every = envf("SMC_ASSIM_EVERY", 1.0).max(1.0) as usize;
-    let mut genes: Vec<GeneSpec> = std::env::var("SMC_PRIOR")
+    let prior: Vec<GeneSpec> = std::env::var("SMC_PRIOR")
         .ok()
         .map(|p| load(Path::new(&p)))
         .unwrap_or_else(default_genes);
-    if envf("SMC_CONTAIN", 0.0) > 0.0 {
-        genes.push(GeneSpec::new(GENE_CONTAIN_A));
-        genes.push(GeneSpec::new(GENE_CONTAIN_B));
-    }
-    if envf("SMC_TAU_OFF", 0.0) > 0.0 {
-        genes.retain(|g| g.key != GENE_TAU_DAYS);
-    }
+    let spot_on = envf("SMC_SPOT", 0.0) > 0.0;
+    let mut genes = build_genes(
+        prior,
+        envf("SMC_CONTAIN", 0.0) > 0.0,
+        envf("SMC_TAU_OFF", 0.0) > 0.0,
+        spot_on,
+    );
     let assim = mode == "assim";
 
     let sc: Scenario = load(&dir.join("scenario.json"));
     let truth: Truth = load(&dir.join("truth.json"));
-    let cfg: CellaConfig = load(&dir.join("config.json"));
+    let mut cfg: CellaConfig = load(&dir.join("config.json"));
+    if spot_on {
+        enable_spotting(&mut cfg);
+    }
     assert_eq!(sc.format_version, 2, "unknown scenario format");
     assert_eq!(truth.format_version, 2, "unknown truth format");
     let total = sc.grid.width * sc.grid.height;
@@ -1625,5 +1708,123 @@ mod ellipse_null_tests {
         // Every seed cell is included (it's at distance 0, so it's always
         // among the closest `target` cells).
         assert!(wide_seed.iter().zip(&grown).all(|(&s, &g)| !s || g));
+    }
+}
+
+/// E43: `SMC_SPOT=1` must add the spotting genes to the gene list and
+/// switch spotting on in the config the runner builds. See `build_genes`
+/// and `enable_spotting`.
+#[cfg(test)]
+mod spot_gene_tests {
+    use super::*;
+    use cella_lib::config::Config2D;
+    use cella_lib::explore::Scale;
+    use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireParams};
+
+    fn tiny_wildfire_params() -> WildfireParams {
+        WildfireParams {
+            seed: 0,
+            p0: 0.3,
+            fuels: vec![FuelClass {
+                name: "Forest".into(),
+                veg_factor: 1.0,
+            }],
+            wind_speed: 0.0,
+            wind_from_deg: 0.0,
+            c1: 0.045,
+            c2: 0.131,
+            slope_a: 0.078,
+            cell_size: 30.0,
+            burn_duration: 5,
+            spotting: None,
+            burning_name: None,
+            burned_name: None,
+        }
+    }
+
+    /// A minimal 2D config with a wildfire model attached and spotting off,
+    /// standing in for a scenario's `config.json` after it is loaded.
+    fn tiny_config() -> CellaConfig {
+        let model = WildfireModel::new(tiny_wildfire_params(), WildfireEnv::default());
+        CellaConfig::D2(Config2D {
+            width: 2,
+            height: 2,
+            history_limit: 1,
+            initial: vec!["Forest".into(); 4],
+            rule: Rule2D { subrules: vec![] },
+            model: Some(Box::new(model)),
+            ..Config2D::default()
+        })
+    }
+
+    #[test]
+    fn without_smc_spot_the_gene_list_and_config_are_unchanged() {
+        let genes = build_genes(default_genes(), false, false, false);
+        assert!(genes.iter().all(|g| g.key != GENE_SPOT_P && g.key != GENE_SPOT_DIST));
+
+        let cfg = tiny_config();
+        let CellaConfig::D2(c) = &cfg else {
+            unreachable!()
+        };
+        let model = c.model.as_ref().expect("model attached");
+        assert!(
+            model.get_param("spotting.p_spot").is_none(),
+            "spotting must stay off unless SMC_SPOT=1"
+        );
+    }
+
+    #[test]
+    fn smc_spot_adds_both_spotting_genes_with_the_documented_ranges() {
+        let genes = build_genes(default_genes(), false, false, true);
+        let p_spot = genes
+            .iter()
+            .find(|g| g.key == GENE_SPOT_P)
+            .expect("p_spot gene present");
+        assert_eq!(p_spot.range, Some([SPOT_P_LO, SPOT_P_HI]));
+        assert_eq!(p_spot.scale, Scale::Log, "p_spot is drawn log-uniform");
+
+        let dist = genes
+            .iter()
+            .find(|g| g.key == GENE_SPOT_DIST)
+            .expect("median_distance gene present");
+        assert_eq!(dist.range, Some([SPOT_DIST_LO, SPOT_DIST_HI]));
+        assert_eq!(dist.scale, Scale::Linear);
+
+        // SMC_SPOT does not disturb the default genes or SMC_CONTAIN/TAU_OFF.
+        assert_eq!(genes.len(), default_genes().len() + 2);
+    }
+
+    #[test]
+    fn smc_spot_combines_with_contain_and_tau_off() {
+        let genes = build_genes(default_genes(), true, true, true);
+        let keys: Vec<&str> = genes.iter().map(|g| g.key.as_str()).collect();
+        assert!(keys.contains(&GENE_CONTAIN_A));
+        assert!(keys.contains(&GENE_CONTAIN_B));
+        assert!(keys.contains(&GENE_SPOT_P));
+        assert!(keys.contains(&GENE_SPOT_DIST));
+        assert!(
+            !keys.contains(&GENE_TAU_DAYS),
+            "SMC_TAU_OFF still drops tau_days"
+        );
+    }
+
+    #[test]
+    fn enable_spotting_turns_spotting_on_in_the_config() {
+        let mut cfg = tiny_config();
+        enable_spotting(&mut cfg);
+        let CellaConfig::D2(c) = &cfg else {
+            unreachable!()
+        };
+        let model = c.model.as_ref().expect("model attached");
+        // get_param only returns Some for spotting.* once spotting is on
+        // (see the wildfire model's own set_param/get_param tests).
+        assert_eq!(
+            model.get_param("spotting.p_spot"),
+            Some(ParamValue::Float(SPOT_P_LO))
+        );
+        assert_eq!(
+            model.get_param("spotting.median_distance"),
+            Some(ParamValue::Float(SPOT_DIST_LO))
+        );
     }
 }
