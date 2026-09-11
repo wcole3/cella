@@ -111,37 +111,48 @@ pub struct EnsembleConfig {
     /// treats that as "do not reset".
     #[serde(default)]
     pub immigrant_reset_gate: Option<f64>,
-    /// Where an immigrant's *grid* comes from. `Prior` (default) is the
-    /// classic particle filter: an immigrant is a clone of a resampled
-    /// parent, exactly like every other child, and only `immigrant_reset` /
-    /// `immigrant_reset_gate` decide whether its driver *state* also
-    /// carries over. `Observed` is state correction (Rochoux et al. 2014;
-    /// Xue, Gu & Hu 2012): an immigrant's grid is rebuilt from the
-    /// observation itself, via [`MemberDriver::seed_from_observation`],
-    /// instead of inherited from any parent. An `Observed` immigrant's
-    /// driver state is always fresh — it is uncontained by construction,
-    /// having no history to have been contained *in* — so for these
-    /// immigrants `immigrant_reset_gate` and `immigrant_reset` are not
-    /// consulted at all; they still govern `Prior` immigrants exactly as
-    /// before.
+    /// Which children get their *grid* rebuilt from the observation
+    /// (state correction: Rochoux et al. 2014; Xue, Gu & Hu 2012) instead
+    /// of inheriting a resampled parent's, via
+    /// [`MemberDriver::seed_from_observation`].
+    ///
+    /// - `None` (default): nobody does — a child's grid is always a clone
+    ///   of its resampled parent, exactly the particle filter before E40.
+    ///   Only `immigrant_reset` / `immigrant_reset_gate` decide whether an
+    ///   immigrant's driver *state* also carries over.
+    /// - `Immigrants`: only the immigrants (E40) — the rest of the
+    ///   population still inherits a parent's grid untouched.
+    /// - `All`: every resampled child (E40b) — a child still keeps its own
+    ///   resampled-and-mutated genome (or, for an immigrant, its fresh
+    ///   draw from the prior), so learning continues exactly as before;
+    ///   only the *grid* is corrected, every window, for everyone.
+    ///
+    /// A child whose grid is rebuilt this way (`Immigrants` for an
+    /// immigrant, `All` for anyone) always gets a fresh, uncontained
+    /// driver state too — it has no history to have been contained *in* —
+    /// so `immigrant_reset_gate` and `immigrant_reset` are not consulted
+    /// for it at all. They still govern an immigrant under `None`, and
+    /// (since `All` only ever corrects immigrants the same way `Immigrants`
+    /// does) are never consulted under `All` either — every child is
+    /// covered by the correction directly.
     #[serde(default)]
-    pub immigrant_source: ImmigrantSource,
+    pub state_correction: StateCorrection,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver: Option<Box<dyn MemberDriver>>,
 }
 
-/// See [`EnsembleConfig::immigrant_source`].
+/// See [`EnsembleConfig::state_correction`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ImmigrantSource {
-    /// An immigrant's grid is a clone of a resampled parent, like any other
-    /// child. Default.
+pub enum StateCorrection {
+    /// Nobody's grid is rebuilt from the observation. Default.
     #[default]
-    Prior,
-    /// An immigrant's grid is rebuilt from the observation via
-    /// [`MemberDriver::seed_from_observation`].
-    Observed,
+    None,
+    /// Only the immigrants' grids are rebuilt from the observation (E40).
+    Immigrants,
+    /// Every resampled child's grid is rebuilt from the observation (E40b).
+    All,
 }
 
 fn default_members() -> usize {
@@ -170,7 +181,7 @@ impl Default for EnsembleConfig {
             crossover: 0.0,
             immigrant_reset: false,
             immigrant_reset_gate: None,
-            immigrant_source: ImmigrantSource::Prior,
+            state_correction: StateCorrection::None,
             driver: None,
         }
     }
@@ -222,9 +233,9 @@ pub struct Ensemble {
     last_area_ratio: Option<f64>,
     /// The observation from the last [`Self::assimilate`] call, as a
     /// throwaway [`Sim`] (see [`MemberDriver::seed_from_observation`]);
-    /// `None` until the first call, and never built at all unless
-    /// [`EnsembleConfig::immigrant_source`] is `Observed` (building it
-    /// clones a member, so a config that never needs it never pays for it).
+    /// `None` until the first call, and never built at all when
+    /// [`EnsembleConfig::state_correction`] is `None` (building it clones a
+    /// member, so a config that never needs it never pays for it).
     /// A direct call to [`Self::assimilate_scores`] never updates it, same
     /// as `last_area_ratio`.
     last_observed: Option<Sim>,
@@ -584,7 +595,7 @@ impl Ensemble {
             area_sum += mask.iter().filter(|&&b| b).count() as f64;
         }
         self.last_area_ratio = Some(area_sum / self.members.len() as f64 / obs_area.max(1.0));
-        self.last_observed = (self.config.immigrant_source == ImmigrantSource::Observed)
+        self.last_observed = (self.config.state_correction != StateCorrection::None)
             .then(|| self.observed_as_sim(observed, types));
         self.assimilate_scores(&scores)
     }
@@ -648,19 +659,23 @@ impl Ensemble {
             parents.push(j);
         }
         let n_imm = (self.config.immigrants * m as f64).round() as usize;
-        // Whether *this generation's* immigrants get a fresh state, for
-        // `Prior`-source immigrants only. The gate, when set, overrides the
-        // plain bool: it resets only while the last-observed area ratio
-        // says the population is under-predicting (see
-        // `EnsembleConfig::immigrant_reset_gate`). No ratio yet is treated
-        // as "do not reset" — there is no evidence for it. An `Observed`
-        // immigrant never consults this: it always gets a fresh state (see
-        // `EnsembleConfig::immigrant_source`).
+        // Whether *this generation's* immigrants get a fresh state, when
+        // `state_correction` is `None` for them (see below). The gate, when
+        // set, overrides the plain bool: it resets only while the
+        // last-observed area ratio says the population is under-predicting
+        // (see `EnsembleConfig::immigrant_reset_gate`). No ratio yet is
+        // treated as "do not reset" — there is no evidence for it.
         let reset_immigrants = match self.config.immigrant_reset_gate {
             Some(gate) => self.last_area_ratio.is_some_and(|ratio| ratio < gate),
             None => self.config.immigrant_reset,
         };
-        let observed_source = self.config.immigrant_source == ImmigrantSource::Observed;
+        // `All` corrects every child's grid; `Immigrants` corrects only an
+        // immigrant's; either way a corrected child always gets a fresh
+        // state too, and the gate/bool above are never consulted for it
+        // (see `EnsembleConfig::state_correction`).
+        let correct_all = self.config.state_correction == StateCorrection::All;
+        let correct_immigrants =
+            matches!(self.config.state_correction, StateCorrection::Immigrants) || correct_all;
 
         // The first children of a parent clone its grid; the last one moves
         // it, saving one full copy per surviving parent.
@@ -704,7 +719,8 @@ impl Ensemble {
             };
             sim.set_seed(self.next_seed);
             let is_immigrant = ci < n_imm;
-            let mut state = if is_immigrant && (observed_source || reset_immigrants) {
+            let corrected = correct_all || (is_immigrant && correct_immigrants);
+            let mut state = if corrected || (is_immigrant && reset_immigrants) {
                 MemberState::default()
             } else {
                 parent_state.clone()
@@ -720,15 +736,15 @@ impl Ensemble {
             };
             if let Some(d) = &self.config.driver {
                 d.apply(&mut sim, &genome, &self.space, &self.forcing, &mut state)?;
-                if is_immigrant && observed_source {
+                if corrected {
                     if let Some(observed) = &self.last_observed {
                         d.seed_from_observation(&mut sim, observed)?;
                     }
                     // No observation yet (a bare `assimilate_scores` call,
-                    // or `Observed` set before the first `assimilate`): no
-                    // evidence to seed from, so the immigrant's grid is
-                    // left as the parent's, exactly like `Prior` — the same
-                    // "no evidence yet" fallback `immigrant_reset_gate` uses.
+                    // or correction set before the first `assimilate`): no
+                    // evidence to seed from, so the grid is left as the
+                    // parent's, exactly like `None` — the same "no evidence
+                    // yet" fallback `immigrant_reset_gate` uses.
                 }
             }
             children.push(Member {
@@ -1266,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn observed_source_seeds_only_immigrants_and_prior_source_is_unaffected() {
+    fn immigrants_correction_seeds_only_immigrants_and_none_is_unaffected() {
         let base = EnsembleConfig {
             beta: 0.0,
             immigrants: 0.25,
@@ -1277,11 +1293,11 @@ mod tests {
         let mut observed = vec![false; 16 * 16];
         observed[..40].fill(true);
 
-        // Two ensembles, identical seed and config except `immigrant_source`.
+        // Two ensembles, identical seed and config except `state_correction`.
         let mut prior = Ensemble::new(
             soup(16, 16),
             &EnsembleConfig {
-                immigrant_source: ImmigrantSource::Prior,
+                state_correction: StateCorrection::None,
                 ..base.clone()
             },
         )
@@ -1292,7 +1308,7 @@ mod tests {
         let mut obs = Ensemble::new(
             soup(16, 16),
             &EnsembleConfig {
-                immigrant_source: ImmigrantSource::Observed,
+                state_correction: StateCorrection::Immigrants,
                 ..base
             },
         )
@@ -1311,28 +1327,28 @@ mod tests {
         );
 
         // The default `seed_from_observation` copies the observation
-        // verbatim, so an Observed immigrant's tracked mask must equal the
+        // verbatim, so a corrected immigrant's tracked mask must equal the
         // observation exactly.
         for i in 0..rep_o.immigrants {
             assert_eq!(
                 obs.member_mask(i, &[alive]),
                 observed,
-                "Observed immigrant {i} must equal the observation exactly"
+                "corrected immigrant {i} must equal the observation exactly"
             );
         }
-        // Every non-immigrant child, and every part of an Observed run that
-        // Prior also produces, must be byte-for-byte the same run: this is
-        // "Prior is unaffected" checked directly, not asserted.
+        // Every non-immigrant child, and every part of an `Immigrants` run
+        // that `None` also produces, must be byte-for-byte the same run:
+        // this is "None is unaffected" checked directly, not asserted.
         for i in rep_o.immigrants..obs.len() {
             assert_eq!(
                 obs.members()[i].sim.cells(),
                 prior.members()[i].sim.cells(),
                 "non-immigrant {i} must be identical whether or not \
-                 immigrant_source is Observed"
+                 state_correction is Immigrants"
             );
         }
 
-        // With no observation yet, an Observed config falls back to
+        // With no observation yet, an `Immigrants` config falls back to
         // leaving the immigrant's grid as the parent's — the same "no
         // evidence" fallback the reset gate uses (see
         // `EnsembleConfig::immigrant_reset_gate`) — rather than erroring.
@@ -1341,7 +1357,7 @@ mod tests {
             &EnsembleConfig {
                 members: 8,
                 immigrants: 0.25,
-                immigrant_source: ImmigrantSource::Observed,
+                state_correction: StateCorrection::Immigrants,
                 driver: Some(Box::new(NoopDriver)),
                 ..cfg(8)
             },
@@ -1354,5 +1370,64 @@ mod tests {
             &before[..],
             "no observation yet: an immigrant's grid is left untouched"
         );
+    }
+
+    #[test]
+    fn all_correction_seeds_every_member_and_keeps_learned_genomes() {
+        // `All` must correct every child's grid (not just immigrants) while
+        // leaving genomes exactly as ordinary resampling/mutation would —
+        // the point of E40b: learning continues, only the grid is fixed.
+        let base = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            driver: Some(Box::new(NoopDriver)),
+            ..cfg(8)
+        };
+        let alive = CellType::from("Alive");
+        let mut observed = vec![false; 16 * 16];
+        observed[..40].fill(true);
+
+        let mut none_run = Ensemble::new(
+            soup(16, 16),
+            &EnsembleConfig {
+                state_correction: StateCorrection::None,
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        none_run.step_n(6).unwrap();
+        let rep_n = none_run.assimilate(&observed, &[alive]).unwrap();
+
+        let mut all_run = Ensemble::new(
+            soup(16, 16),
+            &EnsembleConfig {
+                state_correction: StateCorrection::All,
+                ..base
+            },
+        )
+        .unwrap();
+        all_run.step_n(6).unwrap();
+        let rep_a = all_run.assimilate(&observed, &[alive]).unwrap();
+
+        // Genomes are still the resampled/mutated ones: identical resampling
+        // and identical genomes between `None` and `All`, since seeding the
+        // grid draws no random numbers and never touches a gene.
+        assert_eq!(rep_n.parents, rep_a.parents);
+        assert_eq!(
+            none_run.genomes(),
+            all_run.genomes(),
+            "state correction must not change a single learned gene"
+        );
+
+        // Every member's burned set equals the observed mask exactly —
+        // immigrant or not.
+        for i in 0..all_run.len() {
+            assert_eq!(
+                all_run.member_mask(i, &[alive]),
+                observed,
+                "member {i} must equal the observation exactly under All"
+            );
+        }
+        assert!(rep_a.immigrants >= 1, "the test needs at least one immigrant");
     }
 }

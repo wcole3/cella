@@ -116,12 +116,13 @@ pub trait MemberDriver: Send + Sync + std::fmt::Debug {
         Vec::new()
     }
 
-    /// Rebuild an immigrant's grid from the observation just scored, rather
-    /// than letting it inherit a parent's grid (state correction: Rochoux et
-    /// al. 2014; Xue, Gu & Hu 2012). Called only when
-    /// [`super::ensemble::EnsembleConfig::immigrant_source`] is
-    /// `Observed`, once per immigrant, on a `sim` that already has its
-    /// fresh genome and driver state applied.
+    /// Rebuild a resampled child's grid from the observation just scored,
+    /// rather than letting it inherit a parent's grid (state correction:
+    /// Rochoux et al. 2014; Xue, Gu & Hu 2012). Called only when
+    /// [`super::ensemble::EnsembleConfig::state_correction`] is not `None`,
+    /// on every child it applies to — just the immigrants under
+    /// `Immigrants`, everyone under `All` — after that child's fresh
+    /// genome and driver state are already applied to `sim`.
     ///
     /// `observed` is a throwaway grid the engine builds purely to carry the
     /// observation's *shape* in this ensemble's own cell types: cell `i` is

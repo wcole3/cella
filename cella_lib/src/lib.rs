@@ -51,8 +51,8 @@ pub use rules::{
     neighborhood_contains,
 };
 pub use explore::{
-    Ensemble, EnsembleConfig, Evolution, EvolveConfig, GeneSpec, ImmigrantSource, MemberDriver,
-    Metric, Objective, Sim,
+    Ensemble, EnsembleConfig, Evolution, EvolveConfig, GeneSpec, MemberDriver, Metric, Objective,
+    Sim, StateCorrection,
 };
 pub use state::{GridState, grid2d_to_json};
 pub use types::{CellState, CellType, INACTIVE};

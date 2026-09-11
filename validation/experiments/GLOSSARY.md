@@ -237,19 +237,34 @@ a bug in this page.
   resetting every time. `None` (the default) leaves the plain
   `immigrant_reset` in charge.
 - **State correction.** The standard particle-filter move (Rochoux et al.
-  2014; Xue, Gu & Hu 2012) of rebuilding a member's whole state — not
-  just its knobs — from the observation itself, instead of only carrying
-  a parent's history forward. E40's `immigrant_source: Observed` is this,
-  applied to immigrants only.
-- **Immigrant source.** Option (E40): `immigrant_source`, `Prior`
-  (default) or `Observed`. `Prior` is the pre-E40 behaviour — an
-  immigrant's grid is a clone of a resampled parent, like any other
-  child. `Observed` rebuilds an immigrant's grid from the observed mask
-  just scored (burned interior → burned; the rim of still-unburned fuel
-  next to a burned cell → burning, age 0; everything else untouched) and
-  always gives it a fresh, uncontained driver state — `immigrant_reset`
-  and the area-ratio gate are not consulted for these immigrants, only
-  for `Prior` ones.
+  2014; Xue, Gu & Hu 2012) of rebuilding a member's whole grid — not just
+  its knobs — from the observation itself, instead of only carrying a
+  parent's history forward. `state_correction: Immigrants` (E40) applies
+  it to the immigrants only; `state_correction: All` (E40b, post-hoc)
+  applies it to every resampled child, which keeps its own
+  learned/mutated genome, so learning continues while the grid is
+  corrected every window.
+- **state_correction.** Option: `None` (default, the pre-E40 behaviour —
+  every child's grid is a clone of a resampled parent), `Immigrants`
+  (E40) or `All` (E40b). A corrected child's grid is rebuilt from the
+  observed mask just scored (burned interior → burned; the rim of
+  still-unburned fuel next to a burned cell → burning, age 0; everything
+  else untouched) and it always gets a fresh, uncontained driver state —
+  `immigrant_reset` and the area-ratio gate are not consulted for it.
+  Renamed from `immigrant_source: Prior | Observed` when `All` was added;
+  `Observed` is what `Immigrants` used to be called.
+- **Lagged persistence.** Null: the observed mask at t_{k−1}, unchanged,
+  scored as the forecast for t_k (as opposed to plain persistence, which
+  freezes the *ignition* mask forever). The fair dummy competitor for any
+  state-corrected mode, since both see exactly the same thing — the mask
+  one window back — and no more. On nested (monotonically growing) masks
+  its IoU is exactly |A_{k−1}| / |A_k|. `None` at the very first scored
+  window (there is no earlier *observed* mask to lag from yet). E40.
+- **Lagged Circle.** Null: the Circle's own construction (chamfer growth,
+  area-matched) but re-seeded from the observed mask at t_{k−1} instead
+  of the fixed ignition mask, every window — "if you already knew
+  yesterday's exact perimeter, grow it the Circle's way to today's true
+  area." The other fair dummy competitor for a state-corrected mode. E40.
 - **Crossover.** A child takes each knob from one of two parents.
   Standard in genetic algorithms; added to the filter as an option in
   E34.

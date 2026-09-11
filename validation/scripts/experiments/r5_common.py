@@ -37,6 +37,13 @@ def run(out_dir, fire, label, env, members=32, mode="assim"):
            "mean_member_iou": r["mean_member_iou"], "mean_radial_iou": r["mean_radial_iou"],
            "final_consensus_iou": r["final_consensus_iou"], "final_radial_iou": r["final_radial_iou"],
            "mean_brier_ensemble": r["mean_brier_ensemble"], "mean_brier_radial": r["mean_brier_radial"],
+           # Lagged nulls (E40 controller finding): "yesterday's mask, as
+           # is, is today's forecast" / "...grown to today's true area".
+           # Absent in reports from before this field existed.
+           "mean_lagged_persistence_iou": r.get("mean_lagged_persistence_iou"),
+           "mean_brier_lagged_persistence": r.get("mean_brier_lagged_persistence"),
+           "mean_lagged_circle_iou": r.get("mean_lagged_circle_iou"),
+           "mean_brier_lagged_circle": r.get("mean_brier_lagged_circle"),
            "mean_ess": sum(s["ess"] for s in r["scores"]) / len(r["scores"]),
            "final_p0_mean": last["p0_mean"], "final_dur_mean": last["dur_mean"],
            "final_wind_scale_mean": last["wind_scale_mean"], "final_contained": last["contained_fraction"],

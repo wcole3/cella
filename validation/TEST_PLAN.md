@@ -336,6 +336,36 @@ in `validation/results/analysis/`.
   catch-up); Chimney and Buck ties; Brier worse by ≤ 0.005 on Pier (rim
   members disagree on where nothing will burn). Consensus never falls
   below persistence on any day.
+  **Post-hoc addendum (2026-09-11, after seeing the E40 results, before
+  the E40b run):** review of E40's own results found that its headline
+  comparison (E40 vs the E33 twin, both scored against *plain*
+  persistence — the frozen ignition mask) was the wrong dummy competitor
+  for a mode that reseeds part of its population from the mask at
+  t_{k−1} every window. The fair competitor sees exactly that and no
+  more: **lagged persistence** (the observed mask at t_{k−1}, unchanged,
+  scored at t_k) and **lagged Circle** (the Circle's own chamfer growth,
+  area-matched, but re-seeded from the mask at t_{k−1} instead of the
+  fixed ignition mask every window). Both computed only for the second
+  scored window on: `lagged_persistence_iou`, `brier_lagged_persistence`,
+  `lagged_circle_iou`, `brier_lagged_circle` in `wildfire_smc`'s per-window
+  report (`assim` and `open` modes), plus their series means. Checked
+  against E40's own raw reports (no rerun needed — both nulls depend only
+  on the truth, not the ensemble): lagged persistence alone (0.88–0.96
+  mean IoU across the six fires) beats E40's own consensus (0.50–0.67) by
+  0.3–0.4 on every fire, because E40 only ever corrects 20 % of the
+  population (`immigrant_source: Observed`, renamed `state_correction:
+  Immigrants` in the same change that adds this) — the other 80 % is an
+  uncorrected forecast dragging the consensus down. **E40b** (post-hoc,
+  not itself pre-registered as a headline result): a new
+  `state_correction: All` applies the same grid rebuild to *every*
+  resampled child, each keeping its own learned/mutated genome, so
+  learning continues while the state is corrected every window. Env:
+  `SMC_STATE_CORRECTION=all`. Five seeds matched to E33/E40, all six
+  fires, reset and gate left off, same base configuration.
+  **Prediction, written before the E40b run:** with every child
+  state-corrected, consensus IoU ≥ lagged persistence on every window
+  where the fire grew, and it beats the lagged Circle on Ferguson and
+  Brattain, ties elsewhere.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

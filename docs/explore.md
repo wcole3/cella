@@ -260,7 +260,7 @@ rules.
 | `crossover` | 0 | Chance a resampled child takes each gene from either of two parents before mutation. Off by default: the classic particle filter copies one parent. Experiment E34 measures whether it helps. |
 | `immigrant_reset` | false | Give immigrants a fresh driver state instead of their parent's. For the wildfire driver that means an immigrant is uncontained and takes `p0` from its own genome, so a population in which every member has stopped can start again (E33 found the lock-in; E38 tests the fix). Needs the `model.p0` gene. |
 | `immigrant_reset_gate` | none | Gate on `immigrant_reset`: reset an immigrant only if the *area ratio* at the last `assimilate` call (mean member burned area over observed burned area) is below this value — evidence the population is under-predicting, not just any immigrant. Set it and the plain `immigrant_reset` bool stops mattering. `None` (the default) leaves the bool in charge unmodified: E38's behaviour reproduces bit-for-bit. E39 tests whether the gate keeps E38's Buck fix without its Pier cost. |
-| `immigrant_source` | `Prior` | Where an immigrant's *grid* comes from, not just its state. `Prior` is every run before E40: a clone of a resampled parent, like any other child. `Observed` rebuilds the grid from the observation just scored, via [`MemberDriver::seed_from_observation`](#13-write-a-driver-for-your-model) — state correction, not just a fresh flag — and always gives the immigrant a fresh, uncontained driver state (`immigrant_reset`/`immigrant_reset_gate` are not consulted for these immigrants). E40 tests whether that repairs what E39's gate could not. |
+| `state_correction` | `None` | Which children get their *grid* rebuilt from the observation, not just their state: `None` (every run before E40 — a clone of a resampled parent, like any other child), `Immigrants` (E40 — only the immigrants), or `All` (E40b — every resampled child, keeping its own learned genome). Rebuilding is via [`MemberDriver::seed_from_observation`](#13-write-a-driver-for-your-model) — state correction, not just a fresh flag — and always gives a corrected child a fresh, uncontained driver state (`immigrant_reset`/`immigrant_reset_gate` are not consulted for it). E40 tested whether `Immigrants` repairs what E39's gate could not; the controller's own lagged-null check found E40's *consensus* still loses badly to a trivial "yesterday's mask" forecast, since 80% of the population is still uncorrected — E40b asks whether `All` closes that gap. |
 | `driver` | none | A model-specific helper (§13); the wildfire one applies wind schedules and decides when a member is contained. Leave it out for rules. |
 
 What you get back (see the CLI report and the Rust API in §11):
@@ -533,15 +533,16 @@ pub trait MemberDriver: Send + Sync + Debug {
   applies decay on top of the genome's value).
 - `state` is a per-member scratch map (`MemberState`) that survives steps
   and resampling copies.
-- `seed_from_observation` runs only on an immigrant, only when
-  `immigrant_source` is `Observed` (§3): rebuild its grid from the
-  observation the last `assimilate` call just scored, instead of letting
-  it inherit a parent's. `observed` is a throwaway grid the engine builds
-  by cloning a member — `observed.cells()[i] != observed.inactive()`
-  means "cell `i` was observed on", model or not. The default copies it
-  onto `sim` verbatim with `Sim::paint` (never `reset_cells` — that would
-  zero the step counter and desync the ensemble); the wildfire driver
-  overrides it to tell a burned interior from the still-live rim (E40).
+- `seed_from_observation` runs on a child only when `state_correction`
+  applies to it (§3) — the immigrants under `Immigrants`, everyone under
+  `All`: rebuild its grid from the observation the last `assimilate` call
+  just scored, instead of letting it inherit a parent's. `observed` is a
+  throwaway grid the engine builds by cloning a member —
+  `observed.cells()[i] != observed.inactive()` means "cell `i` was
+  observed on", model or not. The default copies it onto `sim` verbatim
+  with `Sim::paint` (never `reset_cells` — that would zero the step
+  counter and desync the ensemble); the wildfire driver overrides it to
+  tell a burned interior from the still-live rim (E40).
 
 **`WildfireDriver`, line by line** (`cella_lib/src/wildfire/driver.rs`):
 

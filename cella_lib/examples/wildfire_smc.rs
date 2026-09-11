@@ -38,14 +38,20 @@
 //!      value, i.e. only while the population is under-predicting the
 //!      observed area; setting this takes the decision away from
 //!      SMC_IMM_RESET, which is then ignored),
-//!      SMC_IMM_SOURCE=observed (E40: an immigrant's *grid*, not just its
-//!      state, is rebuilt from the observed perimeter — burned cells become
-//!      the model's burned type, the rim of still-unburned fuel next to a
-//!      burned cell becomes burning at age 0, everything else is untouched
-//!      from a fresh scenario grid; ignores SMC_IMM_RESET/SMC_IMM_RESET_GATE
-//!      for the immigrants it seeds, which are always uncontained. Default:
-//!      "prior", the pre-E40 behaviour — an immigrant's grid is a clone of
-//!      a resampled parent, like any other child),
+//!      SMC_STATE_CORRECTION=immigrants|all (E40/E40b: a child's *grid*, not
+//!      just its state, is rebuilt from the observed perimeter — burned
+//!      cells become the model's burned type, the rim of still-unburned
+//!      fuel next to a burned cell becomes burning at age 0, everything
+//!      else is untouched from a fresh scenario grid; ignores
+//!      SMC_IMM_RESET/SMC_IMM_RESET_GATE for the children it corrects,
+//!      which are always uncontained. "immigrants" (E40) corrects only the
+//!      immigrants; "all" (E40b) corrects every resampled child, which
+//!      keeps its own learned/mutated genome, so learning continues while
+//!      the grid is corrected every window. Default (and any other value):
+//!      "none", the pre-E40 behaviour — a child's grid is a clone of a
+//!      resampled parent, like any other child. SMC_IMM_SOURCE=observed is
+//!      kept as an alias for SMC_STATE_CORRECTION=immigrants (E40's
+//!      original runner uses it); SMC_STATE_CORRECTION wins if both are set,
 //!      SMC_WIND_ROT_DEG (0), SMC_ASSIM_EVERY (1),
 //!      SMC_PRIOR=path.json (a JSON array of genes replacing the default list),
 //!      SMC_CONTAIN=1 (add the containment genes `contain_a`/`contain_b`, so
@@ -73,7 +79,7 @@ use cella_lib::wildfire::driver::{
     GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow, WildfireDriver,
 };
 use cella_lib::wildfire::wind_toward_grid_deg;
-use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ImmigrantSource, ParamValue};
+use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue, StateCorrection};
 use cella_lib::{Evolution, EvolveConfig, Grid2D, Metric, Rule2D};
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +132,22 @@ struct ObsScore {
     /// Circle in every ensemble mode so future tables carry it for free.
     ellipse_iou: f64,
     brier_ellipse: f64,
+    /// The two *lagged* nulls (E40 controller finding): "yesterday's
+    /// perimeter, as is, is today's forecast" (lagged persistence) and
+    /// "grow yesterday's perimeter, matched to today's true area" (lagged
+    /// Circle) — the fair dummy competitors for any state-corrected mode,
+    /// since both see exactly what state correction sees (the mask at
+    /// t_{k-1}), no more. `None` at the very first scored observation,
+    /// where there is no previous *observed* window to lag from (only the
+    /// ignition mask, already reported as `persistence_iou`/`radial_iou`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lagged_persistence_iou: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brier_lagged_persistence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lagged_circle_iou: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brier_lagged_circle: Option<f64>,
     ess: f64,
     p0_mean: f64,
     p0_std: f64,
@@ -163,6 +185,13 @@ struct Report {
     mean_radial_iou: f64,
     mean_brier_ensemble: f64,
     mean_brier_radial: f64,
+    /// Means over every window with a lagged null (k >= 1, see `ObsScore`);
+    /// `0.0` if the series never had one (a scenario with a single
+    /// observation).
+    mean_lagged_persistence_iou: f64,
+    mean_brier_lagged_persistence: f64,
+    mean_lagged_circle_iou: f64,
+    mean_brier_lagged_circle: f64,
     final_genomes: Vec<BTreeMap<String, ParamValue>>,
     /// Present in `evolve` mode: what the fit found before the forecast ran.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -392,6 +421,24 @@ fn chamfer_from(seed_mask: &[bool], w: usize, h: usize) -> Vec<u32> {
         }
     }
     d
+}
+
+/// Grows `seed_mask` outward by chamfer distance to exactly `target_area`
+/// true cells — the Circle null's own construction (`chamfer_from` plus a
+/// distance-then-index sort), generalised to any seed instead of only the
+/// fixed ignition mask, so it can be re-seeded from a moving observation
+/// (the *lagged* Circle: grown from the observed mask at t_{k-1}, matched
+/// to the observed area at t_k, the fair dummy competitor for a
+/// state-corrected forecast that also only ever sees t_{k-1}).
+fn radial_mask_from(seed_mask: &[bool], w: usize, h: usize, target_area: usize) -> Vec<bool> {
+    let dist = chamfer_from(seed_mask, w, h);
+    let mut order: Vec<usize> = (0..w * h).collect();
+    order.sort_by_key(|&i| (dist[i], i));
+    let mut out = vec![false; w * h];
+    for &i in order.iter().take(target_area) {
+        out[i] = true;
+    }
+    out
 }
 
 /// One hourly reading from `station_hourly.json` (E41's `ellipse_station`
@@ -765,9 +812,17 @@ fn main() {
         immigrant_reset_gate: std::env::var("SMC_IMM_RESET_GATE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok()),
-        immigrant_source: match std::env::var("SMC_IMM_SOURCE").as_deref() {
-            Ok("observed") => ImmigrantSource::Observed,
-            _ => ImmigrantSource::Prior,
+        state_correction: match std::env::var("SMC_STATE_CORRECTION").as_deref() {
+            Ok("all") => StateCorrection::All,
+            Ok("immigrants") => StateCorrection::Immigrants,
+            Ok("none") => StateCorrection::None,
+            // SMC_STATE_CORRECTION unset or unrecognised: fall back to the
+            // older SMC_IMM_SOURCE knob (E40's original runner sets it),
+            // then to no correction at all.
+            _ => match std::env::var("SMC_IMM_SOURCE").as_deref() {
+                Ok("observed") => StateCorrection::Immigrants,
+                _ => StateCorrection::None,
+            },
         },
         driver: Some(Box::new(WildfireDriver {
             // One containment draw per simulated day.
@@ -791,6 +846,10 @@ fn main() {
     // changes window to window, so (unlike the Circle's fixed `order`) the
     // mask genuinely has to be carried forward rather than recomputed.
     let mut ellipse_mask = ignition.clone();
+    // The observed mask one window back, for the lagged nulls below;
+    // starts at the ignition mask, same as `ellipse_mask`, and is only
+    // ever read as "yesterday's true perimeter", never grown from itself.
+    let mut prev_obs = ignition.clone();
 
     eprintln!(
         "{}: {}x{}, {} members, mode {mode}, beta {}, sigma {}, immigrants {}, genes {:?}",
@@ -858,6 +917,33 @@ fn main() {
                 obs_n as usize,
             );
             let ellipse_prob: Vec<f32> = ellipse_mask.iter().map(|&b| b as u8 as f32).collect();
+            // Lagged nulls (controller finding on E40): the fair dummy
+            // competitors for a mode that also only ever sees the mask at
+            // t_{k-1}. `None` at the very first scored window, where the
+            // only "previous" mask is the ignition one already reported as
+            // persistence/radial.
+            let is_first_obs = obs_idx == 1;
+            let (lagged_persistence_iou, brier_lagged_persistence, lagged_circle_iou, brier_lagged_circle) =
+                if is_first_obs {
+                    (None, None, None, None)
+                } else {
+                    let lagged_persistence_prob: Vec<f32> =
+                        prev_obs.iter().map(|&b| b as u8 as f32).collect();
+                    let lagged_circle = radial_mask_from(
+                        &prev_obs,
+                        sc.grid.width,
+                        sc.grid.height,
+                        obs_n as usize,
+                    );
+                    let lagged_circle_prob: Vec<f32> =
+                        lagged_circle.iter().map(|&b| b as u8 as f32).collect();
+                    (
+                        Some(iou(&prev_obs, &obs)),
+                        Some(brier(&lagged_persistence_prob, &obs)),
+                        Some(iou(&lagged_circle, &obs)),
+                        Some(brier(&lagged_circle_prob, &obs)),
+                    )
+                };
             let max_iou = ious.iter().cloned().fold(0.0, f64::max);
             let w: Vec<f64> = ious
                 .iter()
@@ -889,6 +975,10 @@ fn main() {
                 persistence_iou: iou(&ignition, &obs),
                 ellipse_iou: iou(&ellipse_mask, &obs),
                 brier_ellipse: brier(&ellipse_prob, &obs),
+                lagged_persistence_iou,
+                brier_lagged_persistence,
+                lagged_circle_iou,
+                brier_lagged_circle,
                 ess,
                 p0_mean: p0m,
                 p0_std: p0s,
@@ -923,12 +1013,23 @@ fn main() {
                 ens.assimilate(&obs, &burnt)
                     .expect("observation matches the grid");
             }
+            prev_obs = obs;
             obs_idx += 1;
         }
     }
 
     let n = scores.len() as f64;
     let mean = |f: &dyn Fn(&ObsScore) -> f64| scores.iter().map(f).sum::<f64>() / n;
+    // Lagged-null means, over the windows that have one (k >= 1); 0.0 if
+    // the series never had a second observation.
+    let mean_lagged = |f: &dyn Fn(&ObsScore) -> Option<f64>| -> f64 {
+        let vals: Vec<f64> = scores.iter().filter_map(f).collect();
+        if vals.is_empty() {
+            0.0
+        } else {
+            vals.iter().sum::<f64>() / vals.len() as f64
+        }
+    };
     let report = Report {
         scenario: sc.id.clone(),
         mode: mode.clone(),
@@ -949,6 +1050,10 @@ fn main() {
         mean_radial_iou: mean(&|s| s.radial_iou),
         mean_brier_ensemble: mean(&|s| s.brier_ensemble),
         mean_brier_radial: mean(&|s| s.brier_radial),
+        mean_lagged_persistence_iou: mean_lagged(&|s| s.lagged_persistence_iou),
+        mean_brier_lagged_persistence: mean_lagged(&|s| s.brier_lagged_persistence),
+        mean_lagged_circle_iou: mean_lagged(&|s| s.lagged_circle_iou),
+        mean_brier_lagged_circle: mean_lagged(&|s| s.brier_lagged_circle),
         final_genomes: ens.genomes(),
         scores,
         fit,
@@ -958,10 +1063,12 @@ fn main() {
     }
     std::fs::write(&out, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     eprintln!(
-        "mean consensus IoU {:.3} | best-threshold {:.3} | radial {:.3} | Brier ens {:.4} vs radial {:.4} -> {}",
+        "mean consensus IoU {:.3} | best-threshold {:.3} | radial {:.3} | lagged persistence {:.3} lagged circle {:.3} | Brier ens {:.4} vs radial {:.4} -> {}",
         report.mean_consensus_iou,
         report.mean_best_threshold_iou,
         report.mean_radial_iou,
+        report.mean_lagged_persistence_iou,
+        report.mean_lagged_circle_iou,
         report.mean_brier_ensemble,
         report.mean_brier_radial,
         out.display()
@@ -1467,5 +1574,56 @@ mod ellipse_null_tests {
             let count = grown.iter().filter(|&&b| b).count();
             assert_eq!(count, target.max(1), "target area {target}");
         }
+    }
+
+    /// Lagged persistence on a toy pair of nested masks (real arrival-time
+    /// masks are always nested: burned cells stay burned): IoU of a subset
+    /// against its superset reduces to |subset| / |superset|, since the
+    /// intersection is the subset itself and the union is the superset.
+    #[test]
+    fn lagged_persistence_iou_is_the_nested_area_ratio() {
+        let (w, h) = (20, 20);
+        let total = w * h;
+        // A_{k-1}: the first 30 cells burned. A_k: the first 70 (a superset).
+        let a_prev = {
+            let mut m = vec![false; total];
+            m[..30].fill(true);
+            m
+        };
+        let a_now = {
+            let mut m = vec![false; total];
+            m[..70].fill(true);
+            m
+        };
+        let lagged_persistence_iou = iou(&a_prev, &a_now);
+        assert!((lagged_persistence_iou - 30.0 / 70.0).abs() < 1e-12);
+
+        // Degenerate case: no growth at all (A_{k-1} == A_k) is a perfect
+        // lagged forecast, IoU 1.0 -- the ratio formula agrees (70/70).
+        assert!((iou(&a_now, &a_now) - 1.0).abs() < 1e-12);
+    }
+
+    /// The lagged Circle's defining property: whatever seed it grows from,
+    /// the result has exactly the target area -- including a seed that is
+    /// itself already bigger than the target (can't happen with a truly
+    /// monotone observed series, but the function must not panic or
+    /// silently shrink below the seed either way, matching how
+    /// `dijkstra_grow`'s own debug assertion treats the Circle/Ellipse).
+    #[test]
+    fn lagged_circle_area_equals_the_target() {
+        let (w, h) = (40, 40);
+        let seed = seed_mask(w, h, 20, 20);
+        for &target in &[1usize, 50, 800, 1600] {
+            let grown = radial_mask_from(&seed, w, h, target);
+            assert_eq!(grown.iter().filter(|&&b| b).count(), target);
+        }
+        // A non-trivial seed (not just one cell) works the same way.
+        let mut wide_seed = vec![false; w * h];
+        wide_seed[..40].fill(true);
+        let grown = radial_mask_from(&wide_seed, w, h, 200);
+        assert_eq!(grown.iter().filter(|&&b| b).count(), 200);
+        // Every seed cell is included (it's at distance 0, so it's always
+        // among the closest `target` cells).
+        assert!(wide_seed.iter().zip(&grown).all(|(&s, &g)| !s || g));
     }
 }
