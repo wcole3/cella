@@ -593,6 +593,82 @@ def e43_spot_illuminate():
     print("wrote e43-spot-illuminate.svg")
 
 
+def e30a():
+    """E30a: elongation (E12's measure) vs. burned-area size, one panel per
+    wind speed, one line per spread rule (Bernoulli vs. arrival). The
+    prediction this figure checks at a glance: the Bernoulli line should
+    fall from > 1.5 (2 % burned) to < 1.3 (20 % burned) at 8 m/s; the
+    arrival line should stay flat (within +-0.15) at every wind. Each point
+    is the mean over 3 seeds; the shaded band is the seed min-max.
+    """
+    data = load("exp30a_arrival_flat.json")
+    if data is None:
+        return
+    rows = data["illuminate"]
+    winds = sorted({r["wind_ms"] for r in rows})
+    sizes = sorted({r["size_frac"] for r in rows})
+    rules = [("bernoulli", "BERNOULLI", MUTED), ("arrival", "ARRIVAL", ACCENT)]
+
+    W, H = 1000, 320
+    PW, PH = 200, 200
+    body = []
+    grid = panel_grid(len(winds), len(winds), PW, PH, 32, 0, 56, 48)
+    for i, wind in enumerate(winds):
+        px, py = grid[i]
+        # y-axis fixed 1.0-2.0 across all four panels so the eye can compare
+        # panels directly; the model never approaches MAX_ELONGATION (10) here.
+        lo, hi = 1.0, 2.0
+        sx = lambda s: px + 24 + (s - sizes[0]) / (sizes[-1] - sizes[0]) * (PW - 32)
+        sy = lambda v: py + PH - 24 - (min(max(v, lo), hi) - lo) / (hi - lo) * (PH - 40)
+        for g in (1.0, 1.3, 1.5, 2.0):
+            body.append(f'<line x1="{px + 16}" y1="{sy(g):.1f}" x2="{px + PW}" y2="{sy(g):.1f}" '
+                        f'stroke="{RULE}" stroke-width="0.8"/>')
+            body.append(text(px + 12, sy(g) + 3, f"{g:.1f}", size=6.5, anchor="end"))
+        body.append(text(px, py - 8, f"{wind:.0f} m/s", size=12, fill=INK, font=SANS, weight=600))
+        for key, label, col in rules:
+            by_size = {}
+            for r in rows:
+                if r["wind_ms"] == wind and r["spread"] == key:
+                    by_size.setdefault(r["size_frac"], []).append(r["elongation"])
+            pts_mean, pts_lo, pts_hi = [], [], []
+            for s in sizes:
+                vs = by_size.get(s, [])
+                if not vs:
+                    continue
+                pts_mean.append((s, sum(vs) / len(vs)))
+                pts_lo.append((s, min(vs)))
+                pts_hi.append((s, max(vs)))
+            if not pts_mean:
+                continue
+            band = (" ".join(f"{sx(s):.1f},{sy(v):.1f}" for s, v in pts_hi) + " " +
+                    " ".join(f"{sx(s):.1f},{sy(v):.1f}" for s, v in reversed(pts_lo)))
+            body.append(f'<polygon points="{band}" fill="{col}" fill-opacity="0.12"/>')
+            body.append(f'<polyline points="{" ".join(f"{sx(s):.1f},{sy(v):.1f}" for s, v in pts_mean)}" '
+                        f'fill="none" stroke="{col}" stroke-width="1.8" stroke-linejoin="round"/>')
+            for s, v in pts_mean:
+                body.append(f'<circle cx="{sx(s):.1f}" cy="{sy(v):.1f}" r="2.6" fill="{PAPER}" '
+                            f'stroke="{col}" stroke-width="1.4"/>')
+        for s in sizes:
+            body.append(text(sx(s), py + PH - 8, f"{s * 100:.0f}%", size=6.5, anchor="middle"))
+    body.append(text(500, 24, "E12 ELONGATION VS. BURNED-AREA SIZE, ONE PANEL PER WIND SPEED",
+                      anchor="middle", extra='letter-spacing="0.10em"'))
+    body.append(legend(H - 28, W, [
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{MUTED}" stroke-width="1.8"/>',
+         "bernoulli (probability rule)"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{ACCENT}" stroke-width="1.8"/>',
+         "arrival (heat-accumulator rule)"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="{MUTED}" fill-opacity="0.12"/>',
+         "3-seed min-max band"),
+    ]))
+    (FIG / "e30a-arrival-flat.svg").write_text(svg(
+        "e30a", "E30a arrival-time kernel: elongation vs. size",
+        "Four panels, one per wind speed (0, 2, 5, 8 m/s), each plotting E12's elongation measure against the "
+        "burned-area size (2, 5, 10, 20 percent) for a point ignition on a 400x400 uniform grid, one line for "
+        "the Bernoulli spread rule and one for the arrival-time rule, mean over 3 seeds with a min-max band.",
+        W, H, "\n".join(body)))
+    print("wrote e30a-arrival-flat.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
@@ -601,3 +677,4 @@ if __name__ == "__main__":
     e40_observed_immigrants()
     e40b_lagged_nulls()
     e43_spot_illuminate()
+    e30a()

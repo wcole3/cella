@@ -138,6 +138,39 @@ a bug in this page.
   `exp(c1 × speed)` in the downwind direction, with c1 = 0.045 and
   c2 = 0.131 from Alexandridis 2008. At 1 m/s it is a 5 % nudge. It
   changes speed a little and shape almost not at all (E19, E37).
+- **Spread rule (`model.spread`).** Which mechanism decides *when* a
+  fuel cell catches fire. `"bernoulli"` (default): every tick, every
+  unburned neighbour of a burning cell rolls independent dice, one per
+  burning neighbour, at a *probability*. A probability saturates at 1,
+  so a cell with enough burning neighbours ignites almost immediately no
+  matter which direction they are in — the mechanical reason E37's large
+  fires come out round. `"arrival"`: the same per-direction wind/slope
+  factor is used as a *rate* instead, added every tick to a **heat**
+  accumulator until it reaches 1 — direction sets ignition *time*, not
+  chance, so a slow direction just takes longer rather than eventually
+  catching up. E30a.
+- **Heat.** The arrival rule's per-cell accumulator (`f32`, 0 at attach
+  or reset). Each tick, for a fuel cell with a burning neighbour,
+  `heat += p_base × dir[j] × slope[j] × jitter` per burning neighbour
+  `j`; the cell ignites once `heat >= 1`. Stored as `AtomicU32` bit
+  patterns internally so the chunk-parallel stepper can write it behind
+  a shared reference — each chunk only ever touches the cells inside its
+  own contiguous range, so there is no race. `arrival_jitter` (default
+  0.2) is a per-cell log-normal multiplier on the rate, one draw for the
+  whole run (not per tick), keeping ensembles diverse without breaking
+  reproducibility. E30a.
+- **Wind law (`model.wind_law`).** Which formula produces the eight
+  per-direction wind factors the spread rule (Bernoulli or arrival)
+  reads. `"exponential"` (default): the wind kernel above; its head:back
+  ratio is only `exp(2 × c2 × v)`, 1.17 at 0.6 m/s — too weak to
+  reproduce the front/back rate skew E41 found in the six fires' real
+  wind. `"rear_focus"`: an Anderson-1983 ellipse template — not the same
+  object as the Ellipse *null forecaster*'s own rear-focus/centred pair
+  above, though it is the same idea (ignition at the rear focus gives a
+  faster head than tail even at a modest length-to-breadth ratio) now
+  built into the fire model's own kernel instead of a diagnostic
+  forecaster. At 0.6 m/s its head:back ratio is already ≈ 2.4–2.6. E30a,
+  per the controller ruling in `task-7-addendum.md` after E41.
 - **Wind multiplier (wind ×).** Scales the input wind speed before the
   kernel. ×0 = wind off.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
@@ -311,3 +344,9 @@ a bug in this page.
   whether the fire followed the wind.
 - **Wedge.** E37's finding: the reachable region is small-and-any-shape
   or big-and-round. Big and elongated is unreachable.
+- **LB(U), length-to-breadth ratio.** Anderson (1983)'s empirical fire
+  ellipse aspect ratio as a function of 10 m wind speed `U`: `LB =
+  0.936·e^0.2566U + 0.461·e^-0.1548U − 0.397`, clamped to `[1, 8]`
+  (`LB(0) = 1` exactly — a circle at no wind). Used by the Ellipse null
+  (E41, TEST_PLAN v1.8) and, independently, by the fire model's own
+  `rear_focus` wind law (E30a): `cella_lib::wildfire::anderson_lb`.
