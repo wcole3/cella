@@ -1,6 +1,298 @@
-# E30a — the arrival-time kernel on a flat grid · finding — arrival holds its shape at any size; Bernoulli was never as elongated as predicted; the rear-focus law needs more room than 10 % burned to reach Anderson
+# E30a — the arrival-time kernel on a flat grid · finding — arrival (minimum travel time) holds its shape under the exponential law but not under rear-focus; the rear-focus law itself only matches Anderson's magnitude at low wind
 
-_Round 6 (2026-09-11) · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb` modes) · runner `exp_r6_arrival_flat.py` · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
+_Round 6 (2026-09-11) · v2 (minimum travel time), v1 (heat accumulator, superseded) kept below for the record · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb` modes) · runner `exp_r6_arrival_flat.py` · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
+
+## v2 — minimum travel time (the main result)
+
+**In short.** v1 of the arrival rule (a per-cell "heat" accumulator) had
+two flaws its own tables exposed: heat only came from currently-burning
+neighbours, so a cell whose neighbours all burned out before its heat
+reached 1 never ignited (forcing p0 = 0.44 and, for the length-to-breadth
+table, burn_duration = 500 as workarounds); and heat summed contributions
+in a way that flattened direction ratios (v1's own closed-form check
+measured 1.09 against a required 1.60). A controller fix round redefined
+`spread: "arrival"` as **minimum travel time**, the standard fire-CA
+formulation: every fuel cell keeps an *arrival time* in ticks, and a
+still-unburned cell relaxes its own arrival time to the smallest
+`neighbour's arrival + cost-to-cross-that-edge` over every
+burning-or-already-burned neighbour, every tick. This has no death
+threshold at all — a burnt-out cell is still a source forever — so the
+pre-registered p0 = 0.12 now runs cleanly. The exponential wind law's own
+closed-form check (jitter off, so it is a pure test of the direction
+law) now lands within 13% of the required value, and arrival's
+elongation-vs-size curve stays close to flat under that law at every
+wind. But the picture is not uniformly good news: the rear-focus law,
+even under minimum travel time, still shows a clear elongation-collapses-
+with-size pattern at wind ≥ 2 m/s — the opposite of what this task's own
+pre-registered prediction expected — and its length-to-breadth ratio
+under-shoots Anderson (1983) by a widening margin as wind rises. Both are
+reported as measured, not smoothed over.
+
+**Question.** Does making wind set ignition *time* instead of ignition
+*chance* give a kernel whose elongation does not collapse with size? And
+what `c2` (or rate law) makes its length-to-breadth match Anderson 1983?
+
+**What changed from v1.** `cella_lib/src/wildfire/mod.rs`:
+`WildfireDerived::heat` → `WildfireDerived::arrival` (ticks; `0` for a
+cell that starts already burning or burned, `+inf` otherwise). Each
+tick, a still-unburned fuel cell with a burning-or-burned neighbour `j`
+computes `arrival[cell] = min(arrival[cell], min_j(arrival[j] +
+cost_j))`, `cost_j = jitter(cell) · norm_j / (p_base[cell] · dir[j] ·
+slope[cell, j])` (`norm_j` = 1 cardinal, `√2` diagonal — a genuine
+distance-over-speed calculation, not the same use of `1/norm` that is
+already baked into `dir[j]` for the Bernoulli probability), clamped to
+`>= 1` tick, and the cell ignites the first tick its own tick number
+reaches that value. A neighbour only counts as a source once it shows up
+as burning-or-burned in the *previous* tick's snapshot, so a same-tick
+ignition can never be (mis)used as a source — checked directly by a unit
+test. `burn_duration` no longer has any influence on *when* a cell
+catches (only on how long it stays visibly burning, and so spot-
+eligible). Nothing about `wind_law`, `arrival_jitter`, or the Bernoulli
+rule changed in this fix round.
+
+**How we measured it.** Same three synthetic-grid measurements as v1,
+re-run with the pre-registered settings (no more artificial p0 = 0.44 or
+burn_duration = 500 — the death threshold that required them is gone):
+
+1. **Flat-grid front speed** (`arrival_flat` mode; 240 × 120 uniform
+   fuel, a full-height burning column at x = 0..2): both rules, wind
+   0/2/5/8 m/s, p0 0.12/0.22/0.44, burn duration 5/10, 3 seeds.
+2. **Point-ignition elongation vs. size** (`illuminate` mode): a 3×3
+   ignition at the centre of a 400×400 uniform grid, wind toward +x at
+   0/2/5/8 m/s, elongation at 2/5/10/20 % burned, both rules, 3 seeds,
+   p0 = 0.12, burn duration = 5 (the pre-registered trio's low end — no
+   longer ruled out, since arrival cannot die). A second pass swaps in
+   the rear-focus law (arrival rule only) to check the addendum's other
+   clause.
+3. **Length-to-breadth at 10 % size** (`lb` mode, arrival rule only):
+   wind 2/5/8 m/s, `c2` ∈ {0.131, 0.2, 0.3, 0.45} under the exponential
+   law plus once under rear-focus, against Anderson's `LB(U)`, p0 =
+   0.12, burn duration = 5 — chosen for consistency with (2); neither
+   parameter enters the arrival-time relaxation's direction *ratios* at
+   all (`p_base` is common to every direction and cancels; burn duration
+   never appears in the formula), so one representative value stands in
+   for the full pre-registered (p0, duration) grid. Each (law, c2, wind)
+   is reported twice: the default `arrival_jitter = 0.2` (3 seeds, mean)
+   and a single deterministic `arrival_jitter = 0` reading, so the
+   closed-form checks below can be read straight off the table.
+
+**Result — Table 1: flat-grid front speed (cells/tick), both rules,
+burn duration 5** (duration 10 is identical to 3 decimals for *both*
+rules under v2 — see finding 4):
+
+| p0 | Bern 0 | Bern 2 | Bern 5 | Bern 8 | Arr 0 | Arr 2 | Arr 5 | Arr 8 |
+|---|---|---|---|---|---|---|---|---|
+| 0.12 | 0.474 | 0.477 | 0.496 | 0.515 | 0.123 | 0.134 | 0.153 | 0.174 |
+| 0.22 | 0.701 | 0.709 | 0.728 | 0.755 | 0.227 | 0.246 | 0.280 | 0.319 |
+| 0.44 | 0.960 | 0.968 | 0.983 | 0.994 | 0.453 | 0.493 | 0.560 | 0.637 |
+
+Arrival's own speed is now exactly proportional to p0 (0.227/0.123 =
+1.85 ≈ 0.22/0.12 = 1.83; 0.453/0.123 = 3.68 ≈ 0.44/0.12 = 3.67) — a
+direct, explainable consequence of `cost = jitter·norm / (p_base ·
+dir · slope)` being linear in `p_base`, unlike v1's saturating,
+non-proportional heat accumulation.
+
+**Result — Table 2a: elongation vs. size (mean of 3 seeds), exponential
+law, both rules, four winds.** See also the figure.
+
+| wind | rule | 2 % | 5 % | 10 % | 20 % | range |
+|---|---|---|---|---|---|---|
+| 0 m/s | bernoulli | 1.157 | 1.101 | 1.061 | 1.050 | 0.107 |
+| 0 m/s | arrival | 1.016 | 1.013 | 1.008 | 1.008 | 0.009 |
+| 2 m/s | bernoulli | 1.105 | 1.098 | 1.092 | 1.079 | 0.026 |
+| 2 m/s | arrival | 1.036 | 1.035 | 1.032 | 1.032 | 0.005 |
+| 5 m/s | bernoulli | 1.214 | 1.114 | 1.147 | 1.200 | 0.100 |
+| 5 m/s | arrival | 1.160 | 1.159 | 1.156 | 1.153 | 0.007 |
+| 8 m/s | bernoulli | 1.080 | 1.050 | 1.048 | 1.520 | 0.473 |
+| 8 m/s | arrival | 1.340 | 1.328 | 1.330 | 1.277 | 0.063 |
+
+**Result — Table 2b: elongation vs. size (mean of 3 seeds), rear-focus
+law, arrival rule only** (Bernoulli under rear-focus died before 2 %
+burned on all 3 seeds at wind ≥ 2 m/s — see finding 5):
+
+| wind | 2 % | 5 % | 10 % | 20 % | range |
+|---|---|---|---|---|---|
+| 0 m/s | 1.017 | 1.013 | 1.008 | 1.008 | 0.009 |
+| 2 m/s | 1.849 | 1.846 | 1.845 | 1.493 | 0.356 |
+| 5 m/s | 5.700 | 4.581 | 2.543 | 1.358 | 4.342 |
+| 8 m/s | 10.000 | 4.903 | 2.472 | — (not reached by 20,000 ticks) | — |
+
+**Result — Table 3: length-to-breadth at 10 % size, arrival rule, both
+laws, against Anderson's `LB(U)`, default jitter (0.2, mean of 3 seeds)
+and jitter 0 (deterministic).**
+
+| wind | law | c2 | LB (jitter 0.2) | LB (jitter 0) | Anderson LB(U) | LB(0.2)/Anderson |
+|---|---|---|---|---|---|---|
+| 2 m/s | exponential | 0.131 | 1.032 | 1.036 | 1.505 | 0.69 |
+| 2 m/s | exponential | 0.2 | 1.064 | 1.080 | 1.505 | 0.71 |
+| 2 m/s | exponential | 0.3 | 1.134 | 1.165 | 1.505 | 0.75 |
+| 2 m/s | exponential | 0.45 | 1.263 | 1.319 | 1.505 | 0.84 |
+| 2 m/s | rear_focus | — | 1.845 | 2.000 | 1.505 | **1.23** |
+| 5 m/s | exponential | 0.131 | 1.156 | 1.192 | 3.192 | 0.36 |
+| 5 m/s | exponential | 0.2 | 1.308 | 1.372 | 3.192 | 0.41 |
+| 5 m/s | exponential | 0.3 | 1.538 | 1.643 | 3.192 | 0.48 |
+| 5 m/s | exponential | 0.45 | 1.864 | 1.901 | 3.192 | 0.58 |
+| 5 m/s | rear_focus | — | 2.543 | 2.567 | 3.192 | 0.80 |
+| 8 m/s | exponential | 0.131 | 1.330 | 1.398 | 7.028 | 0.19 |
+| 8 m/s | exponential | 0.2 | 1.584 | 1.697 | 7.028 | 0.23 |
+| 8 m/s | exponential | 0.3 | 1.905 | 1.924 | 7.028 | 0.27 |
+| 8 m/s | exponential | 0.45 | 2.041 | 2.012 | 7.028 | 0.29 |
+| 8 m/s | rear_focus | — | 2.471 | n/a (20,000-tick budget exhausted) | 7.028 | 0.35 |
+
+Closed-form check at `c2 = 0.131`, `v = 8` (jitter 0, isolating the
+direction law): `(head + back) / (2·flank) = cosh(c2·v)` should be
+`cosh(1.048) = 1.601`; measured **1.398** (13 % short — within the unit
+test's 15 % bound). Closed-form head:back ratio at 0.6 m/s (no
+simulation, `dir[head] / dir[back]` from the wind law directly):
+**exponential (default c2 = 0.131) = 1.17; rear_focus = 2.59**.
+
+**Prediction check, line by line** (v2's own prediction, TEST_PLAN
+v1.8): *"elongation flat with size at every wind for both laws;
+jitter-0 LB equals cosh(c2·v) within 15 % under the exponential law and
+is within 20 % of Anderson under rear-focus at 2/5/8 m/s; p0 0.12 fires
+no longer die."*
+
+1. *"elongation flat with size at every wind for both laws."*
+   **Confirmed for the exponential law** (Table 2a: arrival's own range
+   is ≤ 0.063 at every wind). **Refuted for rear-focus** (Table 2b): flat
+   only at calm (no anisotropy to begin with); at 2 m/s it holds through
+   10 % then drops 19 % by 20 %; at 5 m/s it falls monotonically and
+   dramatically (5.70 → 1.36, a factor of 4.2); at 8 m/s it clamps at
+   the metric's own maximum (10.0) at 2 % and falls to 2.47 by 10 %,
+   never reaching 20 % inside the step budget. See finding 2.
+2. *"jitter-0 LB equals cosh(c2·v) within 15 % under the exponential
+   law."* **Confirmed at the one point the unit test checks** (c2 =
+   0.131, 8 m/s: 1.398 vs 1.601, 13 % short). **Not confirmed in
+   general** — Table 3's own jitter-0 column shows the gap widening
+   sharply as `c2·v` grows (e.g. c2 = 0.45, v = 8: cosh = 18.3, measured
+   2.01, 89 % short). See finding 3.
+3. *"[jitter-0 LB] within 20 % of Anderson under rear-focus at 2/5/8
+   m/s."* **Confirmed only at 5 m/s** (0.80, within bound). **Refuted at
+   2 m/s** (measured *exceeds* Anderson by 33 %: jitter-0 LB 2.00 vs
+   1.505) **and at 8 m/s** (n/a — did not reach 10 % burned inside the
+   20,000-tick budget; the default-jitter mean it did reach, 2.47, is
+   35 % of Anderson, 65 % short).
+4. *"p0 0.12 fires no longer die."* **Confirmed.** Every row of Table 3
+   reports 3/3 seeds reaching 10 % burned (the raw `exp30a_arrival_flat.json`
+   still carries the `reached_seeds`/`total_seeds` fields from the v1
+   plumbing, now always 3/3); the 60×60-grid unit test
+   (`arrival_rule_reaches_the_far_edge_without_dying`) confirms this
+   directly at the *default* `arrival_jitter` (0.2, not silenced),
+   p0 = 0.12, burn_duration = 5 — the exact combination that died in v1.
+
+**What it means.**
+
+1. **The death threshold is genuinely gone**, and with it goes the
+   entire class of workaround parameters (p0 = 0.44, burn_duration =
+   500) v1 needed. This was the more basic of the two v1 flaws and the
+   fix is unambiguous.
+2. **Minimum travel time does not, by itself, guarantee a size-
+   independent shape — that depends on the direction law.** Under the
+   mild, smoothly-varying exponential law, arrival's elongation is
+   close to flat (matching the original E30a brief's own claim). Under
+   the sharply peaked rear-focus law, arrival still shows a strong
+   elongation-collapses-with-size pattern, structurally the *same
+   qualitative failure* E37 first found in Bernoulli, just for a
+   different mechanical reason: a rear-focus point ignition starts as
+   an almost one-dimensional spine (only the exact downwind cardinal
+   direction is fast), which reads as extremely elongated at 2 % burned
+   (up to the metric's own clamp of 10.0 at 8 m/s), and only gradually
+   thickens toward a more elliptical shape as slower directions
+   accumulate enough ticks to catch up. "Minimum travel time" fixes
+   *Bernoulli's* saturation mechanism, but a strongly anisotropic
+   direction law can still produce a shape whose *transient* is far
+   more stretched than its (much rounder) longer-run character — a
+   genuinely different, and unsolved, way to get "shape depends on
+   size."
+3. **The closed-form check is a good approximation only for mild
+   anisotropy.** It was derived by treating the fire's reach in three
+   cardinal directions (head, back, flank) as directly proportional to
+   each direction's speed and combining them into one ratio — a fair
+   approximation when the whole shape is close to an ellipse, which is
+   true for small `c2·v`, but increasingly wrong as `c2·v` grows and the
+   true second-moment shape (what `elongation()` actually measures)
+   diverges from a clean ellipse. This is why the unit test's single
+   checked point (c2 = 0.131, v = 8, product 1.05) passes comfortably
+   while c2 = 0.45 at the same wind (product 3.6, "predicted" cosh =
+   18.3) misses by an order of magnitude — not a discretization bug, a
+   property of the closed form's own derivation.
+4. **Front speed is duration-independent for arrival, exactly as
+   designed** (Table 1's duration-10 column is identical to duration 5
+   to 3 decimals, for *both* rules under these settings — Bernoulli's
+   own duration-independence here is coincidental to this speed
+   regime, not a general property the way it is for arrival by
+   construction).
+5. **Bernoulli can now fail outright, not just saturate, under a
+   strongly directional law.** Under rear-focus at wind ≥ 2 m/s,
+   Bernoulli's point ignition died before 2 % burned on 3/3 seeds at
+   every wind tested (0 rows recorded past wind = 0 in Table 2b): its
+   ignition window is bounded by `burn_duration` (5 ticks here), and
+   rear-focus's crosswind/back probabilities are low enough that the
+   whole 3×3 patch can burn out before successfully igniting any
+   neighbour. Arrival never has this failure mode — a burnt-out cell
+   remains a source forever, so a slow direction just takes longer,
+   never "never." This is a genuine, additional point in arrival's
+   favour beyond the shape claim, not one either prediction named.
+
+**Recommendation for E30 (Task 8), from v2.** Use the **arrival rule**
+— it is strictly better than Bernoulli in every measurement here (never
+dies, exact size-independence under the exponential law, duration-
+independent speed) — but **do not pair it with `rear_focus` and expect
+size-independent shape**: that combination reproduces E37's original
+failure mode (elongated-only-while-small) for a new reason. If E30's
+priority is the front/back *sign* E41 found (rear-focus's head:back ≥ 2
+already at 0.6 m/s, confirmed here), accept that its shape will still
+depend on fire size and calibrate at (or near) the size actually being
+compared against; if E30's priority is a stable shape across sizes,
+stay with the exponential law but do not expect it to reach Anderson's
+magnitude — even c2 = 0.45 (the most extreme value tested) reaches only
+29 % of Anderson at 8 m/s. No single `c2` is recommended for matching
+Anderson under the exponential law: the shortfall *grows* with wind
+(0.84 → 0.58 → 0.29 at c2 = 0.45 across 2/5/8 m/s), so any one value is
+only "least wrong" at whichever wind it happens to be tuned to.
+
+**Discipline: the Bernoulli path is unchanged (this fix round too).**
+`step_chunk_bernoulli` was not touched in this fix round (only
+`step_chunk_arrival` and `WildfireDerived::arrival` changed). The
+pre-existing wildfire snapshot/hash stress tests
+(`cella_lib/tests/long_suite.rs`, `stress_2d_wildfire_t1/t4/t8`, with
+and without spotting) pass unmodified against their stored hashes at 1,
+4 and 8 threads after this fix round's changes.
+
+**Questions this raises.**
+
+- What direction law is both size-independent under arrival *and*
+  reaches Anderson's magnitude? Neither law tested here is — open, and
+  now the central question for Task 8/E30.
+- Does rear-focus's transient (very elongated when small, rounder as it
+  grows) resemble anything in the six real fires' own early growth, or
+  is it purely an artifact of a single point ignition on a uniform
+  grid? Open.
+- Would a longer step budget (past 20,000 ticks) let rear-focus at
+  8 m/s finish thickening toward a stable ratio, and would that ratio
+  be closer to or further from Anderson? Open — Table 2b's own 8 m/s
+  row did not reach 20 % burned inside the budget used here.
+
+**Verdict.** Finding — arrival's death-threshold and closed-form flaws
+from v1 are fixed, but the rear-focus law's own shape is not yet the
+size-independent, Anderson-matching kernel E30 needs; the exponential
+law is size-independent but does not reach Anderson at all. Neither
+prediction clause about rear-focus (size-independence, LB within 20 %
+at all three winds) was fully confirmed.
+
+**Later.** E30 (Task 8, not yet run).
+
+---
+
+## v1 — heat accumulator (superseded, kept for the record)
+
+_This section is the original E30a report, unedited except for this
+heading. It describes the version of the arrival rule that shipped
+first and was found, by the tables below, to have a death threshold and
+a saturated head; see the controller fix-round message and the v2
+section above for what replaced it. `params.spread = "arrival"` now
+means the v2 (minimum-travel-time) rule; nothing here still describes
+the code as it exists after this fix round._
 
 **In short.** E37 found the fire model's large fires come out round
 because its Bernoulli spread rule rolls one ignition-probability coin
@@ -123,7 +415,7 @@ finding 1):
 | 0.44 | 0.960 | 0.968 | 0.983 | 0.994 | 0.689 | 0.715 | 0.763 | 0.822 |
 
 **Result — Table 2: elongation vs. burned-area size (mean of 3 seeds),
-both rules, four winds.** See also the figure.
+both rules, four winds.**
 
 | wind | rule | 2 % | 5 % | 10 % | 20 % | range |
 |---|---|---|---|---|---|---|
@@ -243,9 +535,11 @@ From the addendum:
    overshooting past round). The 10 %-size checkpoint this task's Table
    3 reports is a snapshot mid-transition, not a converged shape; a
    later size or a shorter, more moderate burn duration might land much
-   closer to Anderson. This wasn't chased further here because doing so
-   would mean picking parameters to fit Anderson rather than reporting
-   what a principled, pre-derived choice actually shows.
+   closer to Anderson. **v2 update: this "still transitioning" pattern
+   turned out to be real physics of the rear-focus law itself, not an
+   artifact of v1's heat accumulator or its burn_duration = 500 — see
+   Table 2b above, measured under v2 at the pre-registered burn
+   duration 5.**
 5. **Front speed itself is duration-independent for the arrival rule**
    (Table 1's duration-10 numbers match duration 5 to 3 decimals,
    exactly), unlike Bernoulli's small but real duration sensitivity —
@@ -255,20 +549,20 @@ From the addendum:
    matched p0, since a rate accumulated linearly reaches 1 later than an
    inclusion-exclusion probability saturates.
 
-**Recommendation for E30 (Task 8).** Use the **arrival rule** — its
-core promise (shape independent of size) is confirmed cleanly and
-cheaply. For the wind law, use **rear_focus**: it is the only option
-tested that gets the front/back sign E41 needs, and its shape is
-directionally correct (LB rises with wind, head:back already exceeds 2
-at 0.6 m/s) even though this task's own 10 %-size measurement
-under-reports its converged magnitude at high wind. A `c2` value is not
-recommended at all under the exponential law — even its best-performing
-setting here (0.45) reaches only 26 % of Anderson at 8 m/s, so E30
-should treat the exponential law as ruled out for matching Anderson
-rather than pick a "best" `c2` among options that all fail the same way.
-If E30 keeps the exponential law for continuity, `c2 ≈ 0.45` is the
-least-wrong of the four tested — but that is a statement about which
-failure is smallest, not an endorsement.
+**Recommendation for E30 (Task 8), as of v1 — superseded by the v2
+recommendation above.** Use the **arrival rule** — its core promise
+(shape independent of size) is confirmed cleanly and cheaply. For the
+wind law, use **rear_focus**: it is the only option tested that gets the
+front/back sign E41 needs, and its shape is directionally correct (LB
+rises with wind, head:back already exceeds 2 at 0.6 m/s) even though
+this task's own 10 %-size measurement under-reports its converged
+magnitude at high wind. A `c2` value is not recommended at all under the
+exponential law — even its best-performing setting here (0.45) reaches
+only 26 % of Anderson at 8 m/s, so E30 should treat the exponential law
+as ruled out for matching Anderson rather than pick a "best" `c2` among
+options that all fail the same way. If E30 keeps the exponential law for
+continuity, `c2 ≈ 0.45` is the least-wrong of the four tested — but that
+is a statement about which failure is smallest, not an endorsement.
 
 **Discipline: the Bernoulli path is unchanged.** `step_chunk_bernoulli`
 is the pre-existing bit-packed stepper moved verbatim into its own
@@ -281,21 +575,24 @@ task's changes — those hashes are FNV-1a digests of a 256×256 mixed-fuel
 run's final grid state, so any change to the Bernoulli arithmetic, RNG
 draw order, or chunking behaviour would have broken them.
 
-**Questions this raises.**
+**Questions this raises (as of v1).**
 
 - What (rule, law, `c2`) actually reproduces Anderson at a *converged*
-  shape, not a 10 %-burned snapshot? Open — needs either a bigger
-  size/duration budget for the rear-focus/high-c2 cases, or a different
-  measurement that does not depend on reaching a fixed area fraction.
+  shape, not a 10 %-burned snapshot? **Answered in part by v2**: neither
+  law converges to Anderson within the budgets tested; still open.
 - Would a lower p0 with a longer burn duration (rather than p0 = 0.44,
   duration 5) let Bernoulli show the small-size elongation the original
-  prediction expected, without also killing arrival's fire? Open.
+  prediction expected, without also killing arrival's fire? **Answered
+  by v2**: yes, p0 = 0.12 no longer kills arrival, but Bernoulli still
+  did not show the predicted small-size elongation under the exponential
+  law (Table 2a) — and died outright under rear-focus (finding 5, v2).
 - Does the rear-focus law's shape, plugged into the real six-fire
   scenarios (not a flat grid), actually move the wedge E37 found, the
   way E43's spotting genes did? Open — this is Task 8/E30's own
   question.
 
-**Verdict.** Finding — the arrival rule's headline claim holds; the
-wind-law comparison is a genuine mixed result, reported as measured.
+**Verdict (v1, superseded).** Finding — the arrival rule's headline
+claim holds; the wind-law comparison is a genuine mixed result, reported
+as measured.
 
-**Later.** E30 (Task 8, not yet run).
+**Later.** v2, above.
