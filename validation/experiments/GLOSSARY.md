@@ -146,28 +146,35 @@ a bug in this page.
   matter which direction they are in — the mechanical reason E37's large
   fires come out round. `"arrival"` (the **arrival-time rule**): the
   standard fire-CA minimum-travel-time idea — direction sets ignition
-  *time*, not chance, via each cell's own **arrival time**. E30a. (v1 of
+  *time*, not chance, via each cell's own **arrival tick**. E30a. (v1 of
   this rule, a per-cell "heat" accumulator, was superseded after fix
   round 1 found it had a death threshold and flattened direction ratios
   — see the E30a experiment file's "v1, superseded" section.)
-- **Arrival time.** The arrival rule's per-cell state: the tick number a
-  cell is scheduled to catch fire, `+inf` until a path to it exists, `0`
-  for a cell that starts already burning or burned. Each tick, a
+- **Arrival tick (arrival rule).** Not to be confused with **Arrival
+  time** above (the satellite ground-truth burn hour) — this is the
+  arrival rule's own per-cell simulation state: the tick number a cell
+  is scheduled to catch fire, `+inf` until a path to it exists, `0` for
+  a cell that starts already burning or burned. Each tick, a
   still-unburned fuel cell with a burning-or-burned neighbour `j` (a
   burnt-out cell is still a known source) computes
   `arrival[cell] = min(arrival[cell], min_j(arrival[j] + cost_j))`,
-  `cost_j = jitter × norm_j / (p_base × dir[j] × slope[cell, j])`
-  (`norm_j` = 1 cardinal, `√2` diagonal; `dir[j]` read as a *speed*
-  instead of a probability), clamped to `>= 1` tick, and ignites the
-  first tick its own tick number reaches that value — one tick of local
-  Dijkstra/eikonal relaxation. `arrival_jitter` (default 0.2) is a
-  per-cell log-normal multiplier on cost, one draw for the whole run
-  (not per tick), keeping ensembles diverse without breaking
-  reproducibility. Stored as `AtomicU32` bit patterns internally so the
-  chunk-parallel stepper can write it behind a shared reference — each
-  chunk only ever touches the cells inside its own contiguous range and
-  every neighbour used as a source was already burning/burned *before*
-  this tick, so there is no race. E30a v2.
+  `cost_j = jitter / (p_base × dir[j] × slope[cell, j])`, clamped to
+  `>= 1` tick, and ignites the first tick its own tick number reaches
+  that value — one tick of local Dijkstra/eikonal relaxation. `dir[j]`
+  is read as a *speed* instead of a probability here, and already
+  carries its own built-in `1/norm_j` diagonal-distance correction
+  (`norm_j` = 1 cardinal, `√2` diagonal), which is why `cost_j` needs no
+  separate distance factor — dividing by a speed that already has
+  distance divided out once gives exactly `travel time = distance /
+  speed` (fix round 4 found and removed an earlier, extra `× norm_j`
+  that had squared the diagonal-vs-cardinal cost ratio). `arrival_jitter`
+  (default 0.2) is a per-cell log-normal multiplier on cost, one draw
+  for the whole run (not per tick), keeping ensembles diverse without
+  breaking reproducibility. Stored as `AtomicU32` bit patterns internally
+  so the chunk-parallel stepper can write it behind a shared reference —
+  each chunk only ever touches the cells inside its own contiguous range
+  and every neighbour used as a source was already burning/burned
+  *before* this tick, so there is no race. E30a v2b.
 - **Wind law (`model.wind_law`).** Which formula produces the eight
   per-direction wind factors the spread rule (Bernoulli or arrival)
   reads. `"exponential"` (default): the wind kernel above; its head:back
