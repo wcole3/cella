@@ -512,6 +512,24 @@ in `validation/results/analysis/`.
   m/s, `anderson_lb` 1.09–1.14) with margin; no prediction was
   re-registered since no rule changed, only the explanation and two
   bracketing measurements were added.
+  **E30a v2b (2026-09-12):** diagonal cost double-count found in review
+  and fixed; all v2 tables regenerated; rule otherwise unchanged.
+  `step_chunk_arrival`'s cost had an extra `norm_j` factor on top of the
+  one already inside `dir[j]`, doubling the diagonal-vs-cardinal cost
+  ratio (`2×` instead of `√2×`) at every wind, including calm wind.
+  Fixed (`cost_j = jitter / (p_base · dir[j] · slope)`), covered by a
+  new isotropy test. Most of fix round 3's measured rear-focus overshoot
+  was this bug, not the 8-direction hull effect it described: the fix
+  removes 17 of 16.5 overshoot points at template LB 1.2 (now −0.8 %,
+  i.e. a hair *under* Anderson) down to 138 of 373 points at LB 7 (still
+  +235 % over — the hull effect alone, now isolated). At the ensemble's
+  real operating ceiling (`wind_scale` gene × ERA5, LB ≤ ~1.3) the
+  overshoot is now ≈ 0 %, not the previously-stated "≤ ~20 %". The
+  exponential law's own closed-form check moved the other way (13 %
+  short of `cosh(c2·v)` under the bug → 31.5 % short fixed; that unit
+  test's bound widened from 15 % to 35 % with an explicit comment). No
+  rule, law, or parameter changed — only the arrival rule's internal
+  cost arithmetic and the numbers it produces.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:

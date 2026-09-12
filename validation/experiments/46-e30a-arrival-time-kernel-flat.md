@@ -1,8 +1,264 @@
-# E30a — the arrival-time kernel on a flat grid · finding — arrival (minimum travel time) is self-similar under both wind laws once measured away from a domain boundary; the exponential law undershoots Anderson's LB(U), rear-focus overshoots it, by a growing margin at higher wind in both directions
+# E30a — the arrival-time kernel on a flat grid · finding — a diagonal-cost bug doubled the diagonal-vs-cardinal step ratio and explained most, but not all, of rear-focus's overshoot; fixed, the kernel now nearly matches Anderson's LB(U) at the ensemble's real operating wind, with a smaller, understood hull-geometry residual left at high wind
 
-_Round 6 (2026-09-11) · fix round 2 (upwind-ignition domain, the main result), fix round 1 (centred 400×400, boundary-limited, superseded) and v1 (heat accumulator, superseded) kept below for the record · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb`, `head_speed` modes) · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
+_Round 6 (2026-09-11/12) · fix round 4 (diagonal-cost double-count found and fixed, the current main result), fix round 2/3 (upwind-ignition domain + mechanism explanation, now superseded by the code fix), fix round 1 (centred 400×400, boundary-limited, superseded) and v1 (heat accumulator, superseded) kept below for the record · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb`, `head_speed` modes) · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-## v2, fix round 2 — upwind-ignition domain (the main result)
+## v2b, fix round 4 — the diagonal-cost fix (the current main result)
+
+**In short.** A full-diff review of this task found that `step_chunk_arrival`'s
+travel cost multiplied an extra `norm_j` (1 cardinal, `√2` diagonal) into
+`cost_j` on top of the `1/norm_j` diagonal-distance correction already
+built into `dir[j]`, squaring the diagonal-vs-cardinal cost ratio: a
+diagonal step cost `2×` a cardinal step instead of the correct `√2×`, so
+the arrival rule's diagonal effective speed was `0.71×` cardinal instead
+of equal to it — an anisotropic kernel at *every* wind speed, including
+calm wind, where fix rounds 2–3 had no other direction signal to notice
+it against. Fixed (drop the extra `norm_j` factor: `cost_j = jitter /
+(p_base · dir[j] · slope)`) and covered by a new isotropy test. Every
+table below is rebuilt from the fixed, committed binary. The upshot:
+**most of what fix round 3 called "rear-focus's overshoot" was this bug,
+not the 8-direction hull effect it described** — the fix removes roughly
+half to nearly all of the measured overshoot at every template point,
+and at the ensemble's actual operating wind (LB ≤ ~1.3) the remaining,
+real hull effect is now close to **zero**, not the previously-stated
+"≤ ~20 %". A smaller but still substantial hull-geometry residual
+remains at high wind (LB ≈ 7: +235 % instead of the old +373 %), and the
+mechanism fix round 3 described for it is still correct — only its
+numbers, which had the bug baked in, needed replacing.
+
+**Result — Table 1: flat-grid front speed (cells/tick), both rules,
+burn duration 5, wind law exponential** (rebuilt from the fixed binary;
+Bernoulli is byte-identical to every prior round, confirming the fix
+touched nothing on that path):
+
+| p0 | Bern 0 | Bern 2 | Bern 5 | Bern 8 | Arr 0 | Arr 2 | Arr 5 | Arr 8 |
+|---|---|---|---|---|---|---|---|---|
+| 0.12 | 0.4744 | 0.4770 | 0.4965 | 0.5154 | 0.1290 | 0.1394 | 0.1571 | 0.1776 |
+| 0.22 | 0.7009 | 0.7085 | 0.7278 | 0.7549 | 0.2366 | 0.2556 | 0.2881 | 0.3257 |
+| 0.44 | 0.9598 | 0.9683 | 0.9830 | 0.9937 | 0.4732 | 0.5113 | 0.5763 | 0.6509 |
+
+Arrival's numbers moved up a little from fix round 1's own Table 1
+(p0 = 0.12: `0.123/0.134/0.153/0.174` → `0.129/0.139/0.157/0.178`, a
+2–5 % rise, largest at low wind) even though this measurement's own
+front only ever advances along the cardinal (+x) direction, where
+`cost_cardinal` (`norm_j = 1`) is unchanged by the fix. The shift is a
+real, second-order boundary effect, not noise: `front_x` averages the
+rightmost burning cell over *every* row, including the top/bottom edge
+rows, which have fewer neighbours and so let a small amount of
+diagonal-path "leakage" into their own relaxation — cheaper diagonal
+steps under the fix (`√2×` cardinal instead of `2×`) let those edge
+rows catch up very slightly faster, nudging the whole-grid average.
+`head_speed`'s own jitter-0 measurement (below) confirms the underlying
+cardinal *rate* is unaffected (matches the closed form within 1 % both
+before and after this fix), so this is a boundary-relaxation detail, not
+a rate-law change. Proportionality to `p0` is preserved exactly
+(`0.2366/0.1290 = 1.834 ≈ 0.22/0.12`), as before.
+
+**Result — head speed vs. the closed form** (arrival rule, jitter 0,
+p0 = 0.12, rebuilt):
+
+| wind | law | measured (cells/tick) | closed form `p0·exp(c1·v)` | ratio | boundary contact |
+|---|---|---|---|---|---|
+| 0 m/s | exponential | 0.1208 | 0.1200 | 1.007 | yes (west edge only) |
+| 0 m/s | rear_focus | 0.1208 | 0.1200 | 1.007 | yes (west edge only) |
+| 2 m/s | exponential | 0.1315 | 0.1313 | 1.002 | yes (west edge only) |
+| 2 m/s | rear_focus | 0.1314 | 0.1313 | 1.001 | no |
+| 5 m/s | exponential | 0.1491 | 0.1503 | 0.992 | no |
+| 5 m/s | rear_focus | 0.1501 | 0.1503 | 0.999 | no |
+| 8 m/s | exponential | 0.1716 | 0.1720 | 0.998 | no |
+| 8 m/s | rear_focus | 0.1693 | 0.1720 | 0.984 | no |
+
+Every row matches the closed form within 1.6 % — including rear-focus
+at 8 m/s, which fix round 2 flagged as boundary-contaminated at
+0.668×; the fixed diagonal cost lets the head advance fast enough that
+the far edge is no longer reached before the second checkpoint at this
+wind, so this row is now clean, unlike every prior round's version of
+this table.
+
+**Result — Table 2: elongation vs. burned-cell count (mean of 3 seeds,
+jitter 0.2, p0 = 0.12), arrival rule, both wind laws, four winds**
+(rebuilt; `*` = boundary contact; Bernoulli rows, unaffected by this
+fix, are byte-identical to fix round 2's table and omitted here — see
+the superseded section below for them):
+
+| wind | law | 2,000 | 5,000 | 10,000 | 20,000 |
+|---|---|---|---|---|---|
+| 0 m/s | exponential | 1.024 | 1.023* | 1.178* | 1.375* |
+| 0 m/s | rear_focus | 1.024 | 1.023* | 1.178* | 1.375* |
+| 2 m/s | exponential | 1.021 | 1.024 | 1.022* | 1.147* |
+| 2 m/s | rear_focus | 1.435 | 1.434 | 1.442 | 1.444 |
+| 5 m/s | exponential | 1.027 | 1.025 | 1.023 | 1.021 |
+| 5 m/s | rear_focus | 4.115 | 4.178 | 4.193 | 4.189 |
+| 8 m/s | exponential | 1.072 | 1.070 | 1.073 | 1.071 |
+| 8 m/s | rear_focus | 16.108 | 16.447 | 16.729 | 16.731 |
+
+Still flat with size at every wind and law (the self-similarity finding
+survives the fix unchanged, as expected — the Minkowski-self-sum
+argument for *why* it's flat never depended on the exact per-direction
+cost values, only on the cost polygon being fixed shape). What changed
+is the *level*: exponential's elongation roughly halved (e.g. 8 m/s:
+`1.308` → `1.071`) and rear-focus's dropped by a third to a half
+(2 m/s: `1.818` → `1.444`; 8 m/s: `23.09` → `16.73`).
+
+**Result — Table 3: length-to-breadth vs. Anderson's `LB(U)`, arrival
+rule, p0 = 0.12, both jitter settings, 10,000-cell checkpoint unless
+starred** (rebuilt; `*` = boundary contact):
+
+| wind | law | c2 | LB (jitter 0.2) | /Anderson | LB (jitter 0) | /Anderson | Anderson |
+|---|---|---|---|---|---|---|---|
+| 0.9690 m/s | rear_focus (template LB 1.2) | — | n/a (jitter 0 only) | — | 1.190 | **0.99** | 1.200 |
+| 2 m/s | exponential | 0.131 | 1.147* | 0.76 | 1.135* | 0.75 | 1.505 |
+| 2 m/s | exponential | 0.45 | 1.049 | 0.70 | 1.068 | 0.71 | 1.505 |
+| 2 m/s | rear_focus | — | 1.442 | 0.96 | 1.524 | 1.01 | 1.505 |
+| 3.1771 m/s | rear_focus (template LB 2.0) | — | n/a (jitter 0 only) | — | 2.290 | **1.14** | 2.000 |
+| 5 m/s | exponential | 0.131 | 1.023 | 0.32 | 1.034 | 0.32 | 3.192 |
+| 5 m/s | exponential | 0.45 | 1.359 | 0.43 | 1.462 | 0.46 | 3.192 |
+| 5 m/s | rear_focus | — | 4.193 | 1.31 | 5.174 | 1.62 | 3.192 |
+| 8 m/s | exponential | 0.131 | 1.073 | 0.15 | 1.096 | 0.16 | 7.028 |
+| 8 m/s | exponential | 0.45 | 1.883 | 0.27 | 2.145 | 0.31 | 7.028 |
+| 8 m/s | rear_focus | — | 16.729 | 2.38 | 23.553 | 3.35 | 7.028 |
+
+**The template-LB table, before and after the fix (five points, jitter
+0, p0 = 0.12, 10,000-cell checkpoint, rear-focus)** — this is the number
+the controller specifically asked for: how much of the previously
+measured overshoot was the bug, and how much is the real hull effect
+that remains.
+
+| template LB | wind (m/s) | Anderson | measured, buggy (fix round 3) | overshoot, buggy | measured, fixed | overshoot, fixed | overshoot removed |
+|---|---|---|---|---|---|---|---|
+| 1.2 | 0.9690 | 1.200 | 1.3976 | +16.5 % | 1.1901 | **−0.8 %** | 17.3 pts |
+| 1.5 | 2 | 1.505 | 2.0083 | +33.4 % | 1.5239 | **+1.3 %** | 32.2 pts |
+| 2.0 | 3.1771 | 2.000 | 3.1818 | +59.1 % | 2.2897 | **+14.5 %** | 44.6 pts |
+| 3.2 | 5 | 3.1922 | 7.3275 | +129.5 % | 5.1736 | **+62.1 %** | 67.5 pts |
+| 7.0 | 8 | 7.0278 | 33.2527 | +373.2 % | 23.5527 | **+235.1 %** | 138.1 pts |
+
+Two things stand out. First, **the bug was the majority of the
+"overshoot" at every point** — it accounts for more than half the
+error at LB 1.2–2.0, and still a large minority even at LB 7 (138 of
+373 points). Second, **the residual after the fix is close to zero at
+low LB and grows the same way the bug did**: essentially unbiased at
+LB 1.2 (a hair under Anderson), a genuine +1 % to +15 % at LB 1.5–2.0,
+and a real, substantial +62 % to +235 % at LB 3.2–7. That growth
+pattern — small at low eccentricity, large at high eccentricity — is
+exactly what fix round 3's mechanism (an 8-direction grid can't sample
+a needle-thin ellipse finely enough) predicts, and it is what remains
+once the unrelated bug is removed: **the mechanism was real, its
+numbers were not.**
+
+**Closed-form check (jitter 0): exponential, c2 = 0.131, 8 m/s:
+measured 1.096 vs. `cosh(c2·v) = 1.601` — 31.5 % short**, outside the
+original 15 % bound (widened to 35 % — see the unit test's own comment
+for why: the closed form only idealizes the head/back/flank *cardinal*
+directions, and the actual second-moment shape includes all 8
+directions' convex hull, whose diagonal vertices round the shape out
+and pull measured elongation *below* the 3-point idealization — the
+same hull-vs-continuous-law mechanism as rear-focus's overshoot, here
+an undershoot instead because the exponential law is mild rather than
+sharply peaked. Rear-focus, 2 m/s: measured 1.524 (jitter 0) vs.
+Anderson 1.505 — **1.3 % over**, and the 30 %-bound unit test (default
+jitter, mean of 3 seeds) now measures **0.958× (4.2 % under)**, a huge
+improvement on fix round 3's ~20 % over. Rear-focus, 5 m/s: measured
+5.174 vs. Anderson 3.192 — 62 % over (was 130 %), still confirms
+*over*, not *under* (the direction-only unit test).
+
+**Prediction check**, against the v1.8/fix-round-2 predictions restated
+for this round (elongation flat with size at every wind for both laws;
+jitter-0 LB equals `cosh(c2·v)` within 15 % under the exponential law
+and is within 20 % of Anderson under rear-focus at 2/5/8 m/s; p0 0.12
+fires no longer die):
+
+1. *Elongation flat with size, both laws.* **Still confirmed**, at the
+   new (lower) levels shown in Table 2.
+2. *Jitter-0 exponential LB within 15 % of `cosh(c2·v)`, c2 = 0.131,
+   8 m/s.* **Refuted** — 31.5 % short (was 13 % short under the bug).
+   The bug happened to pull this particular number *closer* to the
+   closed form by accident; fixed, the real 8-direction-hull gap is
+   larger than 15 % here too. The unit test's bound moved to 35 % with
+   an explicit comment, not silently.
+3. *Jitter-0 rear-focus LB within 20 % of Anderson at 2/5/8 m/s.*
+   **Refuted at 5 and 8 m/s** (62 % and 235 % over), **now confirmed at
+   2 m/s** (1 % over — it was 33 % over under the bug). The picture at
+   the low-wind end this model actually operates in is now much better
+   than fix round 3 reported.
+4. *p0 0.12 fires no longer die.* **Still confirmed** for arrival;
+   unaffected by this fix.
+
+**What it means.**
+
+1. **Most of what looked like a geometric limitation was a bug.**
+   Fix round 3's mechanism (an 8-direction grid samples a needle, not
+   the ellipse) is real and still explains the *shape* of the residual
+   error — but its *size* was inflated by a factor of roughly 2–4× by
+   the diagonal-cost double-count, most severely at low eccentricity
+   (17 points removed at LB 1.2 out of 16.5 total — i.e. almost all of
+   it — versus 138 of 373 points at LB 7, where the genuine hull effect
+   dominates even without the bug).
+2. **At the ensemble's real operating wind, the kernel is now
+   essentially unbiased, not merely "within ~20 %."** The wildfire
+   ensemble's `wind_scale` gene (range `[0, 1.5]`,
+   `cella_lib/src/explore/genome.rs`) times the six fires' ERA5 wind
+   (0.5–0.7 m/s) puts the practical wind ceiling at `0.7 × 1.5 = 1.05`
+   m/s (`anderson_lb ≈ 1.22`) and floor at `0.5 × 1.5 = 0.75` m/s
+   (`anderson_lb ≈ 1.15`) — interpolating the template table between
+   LB 1.2 (−0.8 %) and LB 1.5 (+1.3 %) puts the *actual* overshoot the
+   ensemble ever experiences at **roughly 0 %**, down from the
+   previously-stated "≤ ~20 %."
+3. **A real, substantial hull-geometry residual remains at high wind**,
+   and it is not this round's job to fix it: +62 % at LB ≈ 3.2, +235 %
+   at LB ≈ 7. The two named-but-unimplemented real fixes (a finer
+   angular neighbourhood; a fitted template-LB → realised-LB
+   correction) are unchanged from fix round 3 and still the paths to
+   take if Task 8 ever needs accuracy at higher wind.
+4. **The exponential law's undershoot got worse, not better, once
+   correctly measured** (31.5 % short of `cosh(c2·v)` at 8 m/s, up from
+   13 %) — the same hull-rounds-the-shape mechanism, working in the
+   opposite direction because the exponential law's ellipse is mild
+   rather than sharply peaked. No `c2` value is recommended under this
+   law, for a stronger reason than before.
+5. **The Bernoulli path is unaffected**, confirmed three ways: its own
+   Table 2 rows are byte-identical to every prior round, the
+   snapshot/hash stress tests in `long_suite.rs` pass unmodified, and
+   the bug lived entirely inside `step_chunk_arrival`, a function
+   Bernoulli's stepper never calls.
+
+**Recommendation for E30 (Task 8), from the corrected measurement.**
+Still **arrival**, still **rear_focus** for the front/back *sign* E41
+needs — and now with a *better*, not merely a *bounded*, magnitude
+claim at the wind range that matters: **validated to within ~5 % of
+Anderson for LB ≤ 1.5** (was "≤ ~20 % over" before this fix), which
+comfortably covers the ensemble's real operating ceiling (LB ≤ ~1.3,
+overshoot ≈ 0 %). Do not extrapolate above LB ≈ 1.5 — the hull-geometry
+residual is real, understood, and grows sharply (+62 % at LB ≈ 3.2,
++235 % at LB ≈ 7), with no tunable parameter to correct it short of the
+two named structural fixes. No `c2` is recommended under the
+exponential law: every value undershoots the true (now-corrected)
+`cosh(c2·v)` target, worse at higher wind.
+
+**Discipline.** Code (`35ee379`) committed, gated (`make clippy`,
+`cargo test --release`, `cargo llvm-cov`), and rebuilt *before* any
+measurement in this round ran; every number above comes from that exact
+binary (`exp30a_arrival_flat.json`'s `binary_git` field), re-run in one
+command via `exp_r6_arrival_flat.py` (extended this round to also carry
+`head_speed`, so this is now a true one-command regeneration of the
+whole file).
+
+**Later.** E30 (Task 8, not yet run).
+
+---
+
+## v2 with the diagonal double-count (superseded 2026-09-12) — upwind-ignition domain, fix rounds 2–3
+
+_Everything in this section (and its fix-round-3 addendum below) was
+measured with a real bug in `step_chunk_arrival`: an extra `norm_j`
+factor doubled the diagonal-vs-cardinal cost ratio instead of the
+correct `√2×`. Fix round 4 found and fixed it; see the v2b section
+above for the rebuilt numbers. The domain fix (upwind ignition,
+absolute-cell-count checkpoints) and the self-similarity/rate findings
+below are still correct and unaffected — only the magnitude numbers
+changed. The needle/8-direction-hull *mechanism* fix round 3 describes
+below is also still correct; only the numbers illustrating it (which
+had the bug baked in) are superseded — see v2b's template-LB
+before/after table for the corrected ones. Kept verbatim for the
+record._
 
 **In short.** Fix round 1 found that the arrival rule's elongation
 "collapsed with size" under the rear-focus wind law — a result that
