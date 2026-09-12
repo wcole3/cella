@@ -581,6 +581,53 @@ in `validation/results/analysis/`.
   its E33 sd (0.012); Brattain and Ferguson rise by ≥ 0.02; Bear, Buck
   and Pier tie (inside their own E33 sd); Brier is not worse than
   E33's by more than 0.005 on any fire.
+  Added after E30 (2026-09-12, before the E30b run): **E30b uncapped
+  clock, wider speed prior, and a learned wind-direction offset (pilot,
+  one seed, two arms)** — E30's own diagnosis identified two confounds
+  and a real finding: (1) under the arrival rule the head moves at most
+  one cell per tick, which at E30's 50 ticks/day caps the front at
+  1.5 km/day; Brattain's day-5 shape needs its rear-focus head to cover
+  ≈ 480 cells in 250 ticks (≈ 1.9 cells/tick), unreachable by
+  construction at the E25 prior's own top (p0 0.6 ≈ 0.62 cells/tick);
+  (2) the learned p0 sat at 0.30–0.43 on every fire (E33: 0.19–0.34),
+  nowhere near the prior's edge, so the filter was not speed-starved by
+  the *prior* alone — something else was costing it IoU; (3) E41 already
+  showed the ERA5 daily wind direction is wrong on Chimney and Bear and
+  right on Ferguson and Brattain, and a directional kernel is punished
+  by a wrong direction in a way a round Bernoulli blob never was — the
+  *direction input*, not only the speed prior, is a live suspect. Both
+  arms keep E30's base (arrival, rear_focus, c2/jitter default, gate/
+  reset/state-correction off) and add a 4× clock: `SMC_STEPS_SCALE=4`
+  multiplies the scenario's `steps_per_hour` (200 ticks/day, cap
+  6 km/day) and, through the same field, the wildfire driver's
+  `steps_per_day`, so one observation window still spans one day of
+  forcing. `model.p0` prior widens to log-uniform **[0.02, 0.6]** at
+  200 ticks/day (per-day head speed 4–120 cells/day, versus E30's
+  4–31); `burn_duration` prior widens to **[20, 80]** (lifetime in
+  hours unchanged); containment and wind × priors are unchanged (they
+  act per day, not per tick). New prior file
+  `validation/scripts/experiments/priors/arrival_x4.json`. **Arm A** is
+  the above alone. **Arm B** adds a free, per-member gene
+  `wind_rot_deg` uniform on **[−90, 90]** degrees
+  (`SMC_WIND_ROT_GENE=90`; `cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`),
+  added to the forcing's wind *from*-bearing in the driver before it is
+  written into the model (mod 360) — each member learns its own
+  correction to the reported wind direction, on top of (not instead of)
+  the existing fixed, whole-schedule `SMC_WIND_ROT_DEG` rotation.
+  **Pilot scope:** forecasts only, seed 0 × six fires × two arms (12
+  runs, 4 workers), judged against `exp33_noise.json` seed 0 and
+  `exp30_arrival_fires.json` seed 0 with the E33 sd as the tie bar; no
+  E37b re-run in the pilot. Wall time is reported per run.
+  **Prediction, written before the run:** Arm A — Ferguson and Brattain
+  (direction right per E41) recover to within sd of E33 or better;
+  Chimney and Bear (direction wrong) still lose to E33 by more than
+  2 sd; Buck and Pier tie. Arm B — Chimney recovers to at least E33
+  (E9c showed rotating the wind toward the reported direction lifted it
+  to 0.57) and Bear ties E33; the learned `wind_rot_deg` median on
+  Chimney is greater than 45° in magnitude and less than 20° on
+  Ferguson. If Arm B still loses to E33 on Chimney by more than 2 sd,
+  the direction law is not the fix and the full E30b (five seeds plus
+  E37b at 4×) is not run.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
