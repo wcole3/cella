@@ -74,6 +74,14 @@
 //!      SMC_MAP_REPLAY=path.json (`replay` mode only, required: the
 //!      `map`-mode report to re-evaluate), SMC_REPLAY_TOP (5 elites),
 //!      SMC_REPLAY_SEEDS (3 seeds per elite).
+//!      SMC_SPREAD=bernoulli|arrival, SMC_WIND_LAW=exponential|rear_focus,
+//!      SMC_C2=<f64>, SMC_ARRIVAL_JITTER=<f64> (E30/E30a: override the
+//!      scenario config's wildfire spread rule / wind law / c2 / jitter
+//!      before the config is turned into a `Sim` — see [`configure_spread`].
+//!      Each of the four is independent; any left unset keeps the scenario
+//!      config's own value, so setting none of them is a no-op. E30's
+//!      recommended setting is SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus,
+//!      with `c2` and jitter left at the config's own defaults).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -801,6 +809,50 @@ fn enable_spotting(cfg: &mut CellaConfig) {
     });
 }
 
+/// Override the config's wildfire spread rule / wind law / c2 / jitter
+/// (validation E30/E30a: `SMC_SPREAD`, `SMC_WIND_LAW`, `SMC_C2`,
+/// `SMC_ARRIVAL_JITTER`). Each of the four is independent: `None` leaves
+/// the scenario config's own value untouched, so calling this with all
+/// four `None` (every knob unset) is a complete no-op — it does not even
+/// look at the config, let alone panic on one without a wildfire model
+/// attached. Mirrors [`enable_spotting`]'s downcast-to-`WildfireModel`
+/// pattern for the cases where there is something to change.
+fn configure_spread(
+    cfg: &mut CellaConfig,
+    spread: Option<&str>,
+    wind_law: Option<&str>,
+    c2: Option<f64>,
+    arrival_jitter: Option<f64>,
+) {
+    if spread.is_none() && wind_law.is_none() && c2.is_none() && arrival_jitter.is_none() {
+        return;
+    }
+    let CellaConfig::D2(c) = cfg else {
+        panic!("SMC_SPREAD/SMC_WIND_LAW/SMC_C2/SMC_ARRIVAL_JITTER need a 2D scenario config");
+    };
+    let model = c
+        .model
+        .as_deref_mut()
+        .expect(
+            "SMC_SPREAD/SMC_WIND_LAW/SMC_C2/SMC_ARRIVAL_JITTER need a config with a model attached",
+        )
+        .as_any_mut()
+        .downcast_mut::<WildfireModel>()
+        .expect("SMC_SPREAD/SMC_WIND_LAW/SMC_C2/SMC_ARRIVAL_JITTER need the wildfire model");
+    if let Some(v) = spread {
+        model.params.spread = v.to_string();
+    }
+    if let Some(v) = wind_law {
+        model.params.wind_law = v.to_string();
+    }
+    if let Some(v) = c2 {
+        model.params.c2 = v;
+    }
+    if let Some(v) = arrival_jitter {
+        model.params.arrival_jitter = v;
+    }
+}
+
 /// Mean of a numeric gene over the members, or `fallback` when the gene is
 /// not part of this run (e.g. `tau_days` with SMC_TAU_OFF).
 fn gene_mean_sd(ens: &Ensemble, key: &str, fallback: f64) -> (f64, f64) {
@@ -852,6 +904,16 @@ fn main() {
     let sc: Scenario = load(&dir.join("scenario.json"));
     let truth: Truth = load(&dir.join("truth.json"));
     let mut cfg: CellaConfig = load(&dir.join("config.json"));
+    let spread_env = std::env::var("SMC_SPREAD").ok();
+    let wind_law_env = std::env::var("SMC_WIND_LAW").ok();
+    let envf_opt = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
+    configure_spread(
+        &mut cfg,
+        spread_env.as_deref(),
+        wind_law_env.as_deref(),
+        envf_opt("SMC_C2"),
+        envf_opt("SMC_ARRIVAL_JITTER"),
+    );
     if spot_on {
         enable_spotting(&mut cfg);
     }
@@ -2073,5 +2135,112 @@ mod spot_gene_tests {
             model.get_param("spotting.median_distance"),
             Some(ParamValue::Float(SPOT_DIST_LO))
         );
+    }
+}
+
+/// E30/E30a: `SMC_SPREAD`/`SMC_WIND_LAW`/`SMC_C2`/`SMC_ARRIVAL_JITTER` must
+/// set the corresponding param on the config's wildfire model when present,
+/// and leave the config's own values untouched when absent. See
+/// `configure_spread`.
+#[cfg(test)]
+mod arrival_config_tests {
+    use super::*;
+    use cella_lib::config::Config2D;
+    use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireParams};
+
+    fn tiny_wildfire_params() -> WildfireParams {
+        WildfireParams {
+            seed: 0,
+            p0: 0.3,
+            fuels: vec![FuelClass {
+                name: "Forest".into(),
+                veg_factor: 1.0,
+            }],
+            wind_speed: 0.0,
+            wind_from_deg: 0.0,
+            c1: 0.045,
+            c2: 0.131,
+            slope_a: 0.078,
+            cell_size: 30.0,
+            burn_duration: 5,
+            spotting: None,
+            burning_name: None,
+            burned_name: None,
+            spread: "bernoulli".into(),
+            arrival_jitter: 0.2,
+            wind_law: "exponential".into(),
+        }
+    }
+
+    /// A minimal 2D config with a wildfire model attached, standing in for
+    /// a scenario's `config.json` after it is loaded.
+    fn tiny_config() -> CellaConfig {
+        let model = WildfireModel::new(tiny_wildfire_params(), WildfireEnv::default());
+        CellaConfig::D2(Config2D {
+            width: 2,
+            height: 2,
+            history_limit: 1,
+            initial: vec!["Forest".into(); 4],
+            rule: Rule2D { subrules: vec![] },
+            model: Some(Box::new(model)),
+            ..Config2D::default()
+        })
+    }
+
+    fn spread_param(cfg: &CellaConfig, key: &str) -> ParamValue {
+        let CellaConfig::D2(c) = cfg else { unreachable!() };
+        let model = c.model.as_ref().expect("model attached");
+        model.get_param(key).expect("param present")
+    }
+
+    #[test]
+    fn unset_knobs_leave_the_config_unchanged() {
+        let mut cfg = tiny_config();
+        configure_spread(&mut cfg, None, None, None, None);
+        assert_eq!(
+            spread_param(&cfg, "spread"),
+            ParamValue::Choice("bernoulli".into())
+        );
+        assert_eq!(
+            spread_param(&cfg, "wind_law"),
+            ParamValue::Choice("exponential".into())
+        );
+        assert_eq!(spread_param(&cfg, "c2"), ParamValue::Float(0.131));
+        assert_eq!(spread_param(&cfg, "arrival_jitter"), ParamValue::Float(0.2));
+    }
+
+    #[test]
+    fn smc_spread_and_smc_wind_law_set_e30s_recommended_kernel() {
+        let mut cfg = tiny_config();
+        configure_spread(&mut cfg, Some("arrival"), Some("rear_focus"), None, None);
+        assert_eq!(
+            spread_param(&cfg, "spread"),
+            ParamValue::Choice("arrival".into())
+        );
+        assert_eq!(
+            spread_param(&cfg, "wind_law"),
+            ParamValue::Choice("rear_focus".into())
+        );
+        // c2/arrival_jitter were not passed, so they stay at the config's
+        // own defaults even though the other two knobs changed.
+        assert_eq!(spread_param(&cfg, "c2"), ParamValue::Float(0.131));
+        assert_eq!(spread_param(&cfg, "arrival_jitter"), ParamValue::Float(0.2));
+    }
+
+    #[test]
+    fn smc_c2_and_smc_arrival_jitter_set_their_own_params_independently() {
+        let mut cfg = tiny_config();
+        configure_spread(&mut cfg, None, None, Some(0.45), Some(0.5));
+        // spread/wind_law untouched.
+        assert_eq!(
+            spread_param(&cfg, "spread"),
+            ParamValue::Choice("bernoulli".into())
+        );
+        assert_eq!(
+            spread_param(&cfg, "wind_law"),
+            ParamValue::Choice("exponential".into())
+        );
+        assert_eq!(spread_param(&cfg, "c2"), ParamValue::Float(0.45));
+        assert_eq!(spread_param(&cfg, "arrival_jitter"), ParamValue::Float(0.5));
     }
 }
