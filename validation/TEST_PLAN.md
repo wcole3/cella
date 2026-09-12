@@ -540,6 +540,47 @@ in `validation/results/analysis/`.
   3 % at 8 m/s and 2 % at 5 m/s, not "31.5 % short" — its template is
   simply nearly round at every tested wind by construction, which is
   the quantitative form of E19/E37's finding, not a new shortfall.
+  Added after E30a (2026-09-12, before the E30 run): **E30 arrival-time
+  kernel on the six real fires (Task 8)** — E30a (fix rounds 1–5)
+  validated `spread: arrival` with `wind_law: rear_focus` for LB ≤ 1.5,
+  which covers these six fires' actual operating range: ERA5 wind
+  0.5–0.7 m/s times the ensemble's own `wind_scale` gene (ceiling ×1.5)
+  gives LB ≤ ~1.3, comfortably inside the validated regime and nowhere
+  near its LB ≈ 1.5 boundary. `wildfire_smc` gains four independent env
+  knobs (`configure_spread`, following the `SMC_SPOT`/`enable_spotting`
+  pattern): `SMC_SPREAD=bernoulli|arrival`,
+  `SMC_WIND_LAW=exponential|rear_focus`, `SMC_C2=<f64>`,
+  `SMC_ARRIVAL_JITTER=<f64>`; any left unset keeps the scenario config's
+  own default. Two parts: (1) **E37b acceptance** — re-run E37's
+  illumination (`map` mode, identical settings: batch 32, 30
+  generations, 5 days of the scenario's own weather, growth axis
+  0–0.10, elongation axis 1–4, no objective, no stopping rule) with
+  `SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus`; the wind × gene range is
+  unchanged (0–1.5). `c2` is unchanged from its default (0.131) —
+  `rear_focus` has no `c2` knob at all (`c2` only shapes the
+  `exponential` law), so there is nothing to set there; `arrival_jitter`
+  is likewise left at its default (0.2). (2) **E30 forecast** — five
+  seeds (0–4) × six fires, `r5_common.BASE_ENV` (assim, β 10, σ 0.2,
+  immigrants 0.2, containment-only stopping) plus `SMC_SPREAD=arrival
+  SMC_WIND_LAW=rear_focus`; E39's area-ratio gate (Task 4 finding:
+  inert, left off) and E40/E40b's state correction (Task 5/6 finding: a
+  different score family, left at `none`) are both off (`BASE_ENV` sets
+  neither) so the kernel change is isolated, matching E33's twins seed
+  for seed. Spotting (E43) is a separate, not-yet-combined mechanism and
+  stays out of scope here (named under "Questions this raises").
+  **Prediction, written before the run:** E37b — the maximum elongation
+  at the observed size rises above the observed value on at least two
+  of Brattain, Ferguson, Pier (their dots move inside the reachable
+  region) *if* the scenario wind, scaled by the gene, reaches ≥ 1.0
+  m/s; with the six fires' actual ERA5 winds of 0.5–0.7 m/s the
+  head:flank ratio is still < 1.2, so the honest expectation is that
+  only Chimney and Brattain move and the input wind speed itself (not
+  the kernel) is the remaining blocker (E41 already showed the wind's
+  *sign*, not its magnitude, carries the front/back skew at these
+  speeds). Forecast: Chimney's mean consensus IoU rises by more than
+  its E33 sd (0.012); Brattain and Ferguson rise by ≥ 0.02; Bear, Buck
+  and Pier tie (inside their own E33 sd); Brier is not worse than
+  E33's by more than 0.005 on any fire.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
