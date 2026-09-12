@@ -127,7 +127,14 @@ a bug in this page.
 
 - **p0.** Base chance per tick that fire jumps to a neighbouring cell.
   The main speed and size knob. Textbook value 0.58; our fires want
-  0.1–0.4.
+  0.1–0.4. **Only true under `spread: "bernoulli"`.** Under
+  `spread: "arrival"` the same number is read as a *rate* in cells per
+  tick (no saturation, so it never "tops out" the way a probability
+  does) — the same numeric gene range (0.08–0.6) therefore describes
+  much slower fires under arrival than under Bernoulli (E30a's flat-grid
+  table: 0.256 vs 0.474 cells/tick at p0 = 0.12), a units mismatch E30
+  found was not corrected before testing the arrival kernel on the six
+  real fires.
 - **Burn duration (dur).** Ticks a cell stays burning and can ignite its
   neighbours. Too short and the front outruns its fuel and dies.
 - **veg_factor.** Per fuel class multiplier on p0 (grass burns easier

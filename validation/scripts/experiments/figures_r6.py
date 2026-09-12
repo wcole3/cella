@@ -680,6 +680,133 @@ def e30a():
     print("wrote e30a-arrival-flat.svg")
 
 
+def e30():
+    """E30/Task 8: two panels stacked. Top: six MAP-Elites archives, same
+    layout as E43's own figure (`e43_spot_illuminate`), but E30b's kernel
+    is `SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus` instead of spotting --
+    the filled cells are what that kernel can reach in 5 days; the dashed
+    stepped line is E37's own reachable-region boundary (bernoulli,
+    exponential law) for comparison; the observed daily dots are the same
+    as E37's (same truth, same weather). Bottom: a per-fire, per-seed dot
+    strip of (E30 forecast) minus (E33 twin) mean consensus IoU, against
+    the E33 +-1 sd band -- the forecast half of the acceptance test, the
+    same style as `e39_gated_reset` but with only one series to plot.
+    """
+    illum = load("exp30_arrival_illuminate.json")
+    fires_rows = load("exp30_arrival_fires.json")
+    noise = load("exp33_noise.json")
+    if illum is None or fires_rows is None or noise is None:
+        return
+    W, H = 1000, 1080
+    PW, PH = 272, 200
+    body = []
+
+    # --- Top: six archive panels, E30's kernel filled, E37's boundary dashed.
+    for i, f in enumerate(FIRES):
+        px, py = panel_grid(6, 3, PW, PH, 48, 40, 48, 56)[i]
+        r = [x for x in illum if x["fire"] == f][0]
+        rep = json.loads((EXP / "exp30_arrival_illuminate" / f"{f}.json").read_text())
+        a = rep["archive"]
+        (gx, gy), (rx, ry) = a["dims"], a["ranges"]
+        cw, ch = (PW - 40) / gx, (PH - 40) / gy
+        body.append(text(px, py - 8, f"{SHORT[f]} · {a['stats']['elites']} elites, coverage {a['stats']['coverage']:.2f}",
+                          size=12, fill=INK, font=SANS, weight=600))
+        body.append(f'<rect x="{px + 32}" y="{py}" width="{PW - 40}" height="{PH - 40}" fill="none" stroke="{RULE}"/>')
+        for e in a["elites"]:
+            cx, cy = e["coords"]
+            body.append(f'<rect x="{px + 32 + cx * cw:.1f}" y="{py + (gy - 1 - cy) * ch:.1f}" '
+                        f'width="{cw:.1f}" height="{ch:.1f}" fill="rgba(235,108,54,0.28)"/>')
+        e37_path = EXP / "exp37_illuminate" / f"{f}.json"
+        if e37_path.exists():
+            e37_archive = json.loads(e37_path.read_text())["archive"]
+            col_max = {}
+            for e in e37_archive["elites"]:
+                cx37, cy37 = e["coords"]
+                col_max[cx37] = max(col_max.get(cx37, -1), cy37)
+            pts = []
+            for cx37 in sorted(col_max):
+                top_y = py + (gy - 1 - col_max[cx37]) * ch
+                x_left = px + 32 + cx37 * cw
+                x_right = px + 32 + (cx37 + 1) * cw
+                pts.append(f"{x_left:.1f},{top_y:.1f}")
+                pts.append(f"{x_right:.1f},{top_y:.1f}")
+            if pts:
+                body.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="{MUTED}" '
+                            f'stroke-width="1.6" stroke-dasharray="4,2" stroke-linejoin="miter"/>')
+        for (hh, g, el) in rep["observed"]:
+            ox = px + 32 + (g - rx[0]) / (rx[1] - rx[0]) * (PW - 40)
+            oy = py + (PH - 40) - (el - ry[0]) / (ry[1] - ry[0]) * (PH - 40)
+            ox, oy = min(max(ox, px + 32), px + PW - 8), min(max(oy, py), py + PH - 40)
+            body.append(f'<circle cx="{ox:.1f}" cy="{oy:.1f}" r="4" fill="{PAPER}"/>'
+                        f'<circle cx="{ox:.1f}" cy="{oy:.1f}" r="4" fill="rgba(45,49,66,0.15)" stroke="{INK}" stroke-width="1.2"/>')
+        body.append(text(px + 32, py + PH - 24, f"{rx[0]:.2f}", anchor="start"))
+        body.append(text(px + PW - 8, py + PH - 24, f"growth {rx[1]:.2f}", anchor="end"))
+        body.append(text(px + 28, py + PH - 40, f"{ry[0]:.0f}", anchor="end"))
+        body.append(text(px + 28, py + 8, f"{ry[1]:.0f}", anchor="end"))
+        body.append(text(px + 28, py + PH / 2 - 20, "elong.", anchor="end"))
+    body.append(legend(524, W, [
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(235,108,54,0.28)"/>',
+         "E30/E37b (arrival, rear_focus): a knob setting the model can produce"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{MUTED}" stroke-width="1.6" stroke-dasharray="4,2"/>',
+         "E37 wedge boundary (bernoulli, exponential)"),
+        (lambda x, y: f'<circle cx="{x + 8}" cy="{y}" r="4" fill="rgba(45,49,66,0.15)" stroke="{INK}" stroke-width="1.2"/>',
+         "the observed fire, one dot per day"),
+    ]))
+    body.append(text(500, 24, "TOP: E30/E37B ARCHIVES (ARRIVAL, REAR_FOCUS) VS. E37'S OWN WEDGE BOUNDARY",
+                      anchor="middle", extra='letter-spacing="0.08em"'))
+
+    # --- Bottom: per-fire, per-seed delta strip, E30 forecast minus E33 twin.
+    yoff = 600
+    x0, x1, lo, hi = 200, 920, -0.10, 0.06
+    sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
+    for v in (-0.08, -0.04, 0.0, 0.04):
+        w = 1.2 if v == 0.0 else 0.8
+        body.append(f'<line x1="{sx(v):.0f}" y1="{yoff + 24}" x2="{sx(v):.0f}" y2="{yoff + 344}" '
+                     f'stroke="{INK if v == 0.0 else RULE}" stroke-width="{w}" '
+                     f'stroke-opacity="{0.4 if v == 0.0 else 1}"/>')
+        body.append(text(sx(v), yoff + 360, f"{v:+.2f}", anchor="middle"))
+    body.append(text(560, yoff + 376, "E30 (ARRIVAL, REAR_FOCUS) MINUS E33 TWIN, MEAN CONSENSUS IOU, PER SEED",
+                      anchor="middle", extra='letter-spacing="0.08em"'))
+    for i, f in enumerate(FIRES):
+        y = yoff + 48 + i * 52
+        sd = E33_SD[f]
+        row0 = next((x for x in noise if x["fire"] == f and x["seed"] == 0), None)
+        if row0 is None:
+            continue
+        body.append(text(184, y + 4, SHORT[f] + ("*" if row0["holdout"] else ""),
+                          size=12, fill=INK, font=SANS, anchor="end", weight=600))
+        body.append(f'<rect x="{sx(-sd):.1f}" y="{y - 12}" width="{sx(sd) - sx(-sd):.1f}" height="24" '
+                     f'fill="rgba(45,49,66,0.08)"/>')
+        deltas = []
+        for s_ in range(5):
+            b = next((x for x in noise if x["fire"] == f and x["seed"] == s_), None)
+            a30 = next((x for x in fires_rows if x["fire"] == f and x["seed"] == s_), None)
+            if not (a30 and b):
+                continue
+            d = a30["mean_consensus_iou"] - b["mean_consensus_iou"]
+            deltas.append(d)
+            body.append(f'<circle cx="{sx(d):.1f}" cy="{y}" r="4.2" fill="{PAPER}"/>'
+                        f'<circle cx="{sx(d):.1f}" cy="{y}" r="4.2" fill="rgba(235,108,54,0.22)" '
+                        f'stroke="{ACCENT}" stroke-width="1"/>')
+        if deltas:
+            m = sum(deltas) / len(deltas)
+            body.append(f'<line x1="{sx(m):.1f}" y1="{y - 16}" x2="{sx(m):.1f}" y2="{y + 16}" '
+                        f'stroke="{INK}" stroke-width="1.6"/>')
+    body.append(legend(yoff + 420, W, [
+        (lambda x, y: f'<circle cx="{x + 6}" cy="{y}" r="4.2" fill="rgba(235,108,54,0.22)" stroke="{ACCENT}"/>', "E30 minus E33, one dot per seed"),
+        (lambda x, y: f'<line x1="{x}" y1="{y - 6}" x2="{x}" y2="{y + 6}" stroke="{INK}" stroke-width="1.6"/>', "mean of the 5 seeds"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "±1 sd (E33)"),
+    ]))
+    (FIG / "e30-arrival-fires.svg").write_text(svg(
+        "e30", "E30 arrival-time kernel on the six fires",
+        "Top: six MAP-Elites archives under the arrival/rear_focus kernel (E37b), E37's own reachable-region "
+        "boundary overlaid as a dashed line, the observed fire's growth and elongation marked day by day. Bottom: "
+        "a dot strip per fire, one seed at a time, of the E30 forecast's mean consensus IoU minus its E33 twin, "
+        "against the E33 noise band.",
+        W, H, "\n".join(body)))
+    print("wrote e30-arrival-fires.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
@@ -689,3 +816,4 @@ if __name__ == "__main__":
     e40b_lagged_nulls()
     e43_spot_illuminate()
     e30a()
+    e30()
