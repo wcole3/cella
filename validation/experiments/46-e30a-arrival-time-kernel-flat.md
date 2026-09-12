@@ -99,15 +99,23 @@ boundary-affected) checkpoints.** `*` = boundary contact.
 
 | wind | law | c2 | cells | LB (jitter 0.2) | /Anderson | LB (jitter 0) | /Anderson | Anderson |
 |---|---|---|---|---|---|---|---|---|
+| 0.9690 m/s | rear_focus (fix round 3 template LB 1.2) | — | 10,000 | n/a (jitter 0 only) | — | 1.398 | **1.16** | 1.200 |
 | 2 m/s | exponential | 0.131 | 20,000 | 1.123* | 0.75 | 1.106 | 0.73 | 1.505 |
 | 2 m/s | exponential | 0.45 | 10,000 | 1.242 | 0.83 | 1.320 | 0.88 | 1.505 |
 | 2 m/s | rear_focus | — | 20,000 | 1.818 | **1.21** | 2.009 | 1.33 | 1.505 |
+| 3.1771 m/s | rear_focus (fix round 3 template LB 2.0) | — | 10,000 | n/a (jitter 0 only) | — | 3.182 | **1.59** | 2.000 |
 | 5 m/s | exponential | 0.131 | 10,000 | 1.136 | 0.36 | 1.193 | 0.37 | 3.192 |
 | 5 m/s | exponential | 0.45 | 10,000 | 1.849 | 0.58 | 2.077 | 0.65 | 3.192 |
 | 5 m/s | rear_focus | — | 10,000 | 5.763 | **1.81** | 7.327 | 2.30 | 3.192 |
 | 8 m/s | exponential | 0.131 | 10,000 | 1.308 | 0.19 | 1.399 | 0.20 | 7.028 |
 | 8 m/s | exponential | 0.45 | 10,000 | 2.622 | 0.37 | 3.105 | 0.44 | 7.028 |
 | 8 m/s | rear_focus | — | 10,000 | 23.032 | **3.28** | 33.253 | 4.73 | 7.028 |
+
+The two fix-round-3 rows (template LB 1.2 and 2.0) were run at jitter 0
+only, by design (bracketing points to nail down the exact shape of the
+overshoot-vs-LB curve, not another 3-seed mean) — see the fix-round-3
+addendum below for the full 5-point jitter-0 series and the boundary
+flag at LB 1.2's 20,000-cell checkpoint.
 
 (Full table — all four `c2` values, both checkpoints, both p0 — is in
 `exp30a_arrival_flat.json`; the pattern is monotonic in `c2` and flat
@@ -167,19 +175,13 @@ of Anderson under rear-focus at 2/5/8 m/s; p0 0.12 fires no longer die):
    at 8 m/s (jitter 0.2; jitter-0 is worse still). If a law existed
    partway between these two constructions, it might land on Anderson's
    curve — an open question for Task 8, not resolved here.
-3. **Rear-focus's overshoot has a clean mechanical explanation, not a
-   bug.** Its own head:back speed ratio is `(a+c)²` (`a = LB(v)`,
-   `c = √(a²−1)`) — 6.9 at 2 m/s, 38.7 at 5 m/s, 195.6 at 8 m/s. A shape
-   built from such an extreme, *asymmetric* speed profile is not a
-   symmetric ellipse with axis ratio `a`: most of its burned area sits
-   near the fast head rather than spread evenly around the centroid the
-   way a symmetric ellipse's would be, so the same second-moment
-   formula E12/E37 use everywhere in this codebase reads it as more
-   stretched than `a` itself. "Build the direction law's asymmetry from
-   Anderson's `LB(v)`" and "match Anderson's `LB(v)` as a second-moment
-   elongation" are two different targets once the shape is this
-   asymmetric, and rear-focus was only ever designed to hit the first
-   one (the E41 front/back *sign*, not a magnitude).
+3. **Rear-focus's overshoot has a specific, understood geometric cause:
+   the 8-direction grid can't sample a highly eccentric ellipse finely
+   enough, so the shape that actually propagates is a "needle" polygon,
+   thinner than the ellipse it's built from — and that needle does not
+   fatten back out as the fire grows.** Worked through in detail, with
+   numbers, in the fix-round-3 addendum immediately below (this was
+   documented, not fixed, this round — no rule change).
 4. **Bernoulli's fragility under rear-focus is unrelated to the domain
    fix and persists.** It died on 0/3 to at best a handful of seeds at
    wind ≥ 2 m/s in Table 2, same mechanism fix round 1 found (its
@@ -198,21 +200,175 @@ of Anderson under rear-focus at 2/5/8 m/s; p0 0.12 fires no longer die):
    for the six real fires than these numbers suggest — flagged as an
    open, not a resolved, point.
 
+### Fix round 3 addendum — why rear-focus overshoots, in numbers, and the regime it's actually validated for
+
+Fix round 2 established *that* rear-focus overshoots Anderson once the
+domain-boundary artefact is gone, growing from 21% over at 2 m/s to
+230%+ over at 8 m/s (jitter 0.2 column of Table 3). This addendum
+explains *why*, with the mechanism traced back to the actual formula
+in `factors_for_vector`, and states plainly which wind range the
+(arrival, rear_focus) recommendation is actually good for. No code
+changed this round — this is documentation plus two extra data points.
+
+**The mechanism: an 8-direction grid can't sample a needle-thin ellipse.**
+`rear_focus`'s `r(θ) = 1/(a − c·cosθ)` (`a = LB(v)`, `c = √(a²−1)`) is
+the exact polar equation of Anderson's ellipse measured from its own
+rear focus — a smooth curve, correct at every angle. But the arrival
+rule only ever evaluates it at the 8 grid directions (0°, 45°, 90°, …),
+and the ellipse gets *more* front-loaded onto the single θ=0 direction
+as `a` grows, because `r(θ)` falls off faster near θ=0 the more
+eccentric the ellipse is. Concretely, at `a = 7` (≈ LB at 8 m/s):
+
+- head (`θ=0`, the far vertex from the focus): `r(0) = a + c = 13.93`
+- 45° neighbour (a diagonal grid step): `r(45°) = 1/(7 − 6.93·cos45°) ≈ 0.48`
+- flank (`θ=90°`): `r(90°) = 1/a ≈ 0.14`
+
+The diagonal direction — the very next sample the 8-neighbour grid has
+after the head — is already down to 0.48, a 29× drop from the head's
+13.93, and only ~3.4× above the flank's 0.14. A smooth ellipse doesn't
+fall off nearly that fast between 0° and 45°; the grid's coarse angular
+sampling turns the ellipse into a "needle": one long spike along the
+exact downwind direction, with everything else collapsed close to the
+flank value.
+
+That needle is thinner than the ellipse it's approximating, and the gap
+is directly visible in the polygon geometry. Take `a = 2` (LB=2, this
+round's own second template point) and walk the straight edge the
+8-direction polygon draws between its head vertex (at focus-frame
+`x = a+c = 3.73, y = 0`) and its 45°-neighbour vertex (at
+`x = r(45°)·cos45° ≈ 0.91, y ≈ 0.91`, `r(45°) = 1/(2−1.73·cos45°) ≈ 1.29`).
+At `x = 2.5` along that edge, linear interpolation puts the polygon's
+half-width at **0.39**. The true ellipse at that same `x` (semi-major
+`a=2`, semi-minor `b=1`, measured from the same focus) has half-width
+**0.93** — the polygon is **less than half as wide** as the ellipse it
+was built from, at a point well inside the shape, not just out at the
+tips. A shape that's this much narrower for the same length is, by
+construction, *more* elongated under the second-moment metric
+`elongation()` uses — which is exactly the direction every measured
+overshoot in Table 3 goes.
+
+**Why the overshoot doesn't shrink as the fire grows (Table 2's own
+"flat with size" finding, read the other way).** Minimum-travel-time
+propagation on a fixed 8-direction lattice is a shortest-path metric,
+and a shortest-path metric's reachable-set-in-time-`t` is the
+`t`-scaled copy of its own unit ball (the local per-tick reach
+polygon), because combining shortest paths through many hops is a
+repeated Minkowski sum of that same polygon with itself — and a convex
+polygon's Minkowski self-sum is just a bigger copy of the same polygon,
+never a rounder one. The needle traced out at 1 tick is (up to
+lattice-alignment noise near the origin) the same needle at 20,000
+ticks, just larger. That is *why* Table 2's rear-focus rows are flat
+across checkpoints (1.814/1.811/1.814/1.818 at 2 m/s) at the *needle's*
+elongation, not the ellipse's — "self-similar" and "matches Anderson"
+turned out to be two different claims, and only the first one is true
+here.
+
+**The error grows with `a` because the needle gets sharper, not because
+of noise.** The jitter-0.2 `/Anderson` ratios already in Table 3 are the
+data for this: **1.21× over at LB≈1.5** (2 m/s), **1.81× over at
+LB≈3.2** (5 m/s, rounds to "1.8×"), **3.28× over at LB≈7** (8 m/s,
+rounds to "3.3×"). Higher `a` pushes more of `r(θ)`'s area under the
+single head sample and starves the 45° neighbour faster (its value fell
+from 0.48/13.93 = 3.4% of head at `a=7` down to a much larger fraction
+of head at low `a`), so the needle-vs-ellipse gap — and the overshoot —
+widens monotonically with wind. This is a property of the *sampling*,
+not of any noise or seed.
+
+**Two new template points, jitter 0, confirming the trend holds off the
+three original winds too** (same 900×300 upwind-ignition domain,
+p0 = 0.12, checkpoints 10,000/20,000 cells; wind chosen by bisecting
+`anderson_lb(v)` to hit the target exactly rather than using a rounded
+guess):
+
+| target LB | wind (m/s) solved for it | measured LB, 10,000 cells | measured LB, 20,000 cells | boundary contact |
+|---|---|---|---|---|
+| 1.2 | 0.9690 | 1.398 (16% over) | 1.377 (15% over) | no at 10k, **yes at 20k** |
+| 2.0 | 3.1771 | 3.182 (59% over) | 3.185 (59% over) | no |
+
+The 10,000-cell reading is the clean one to trust at LB 1.2 (the
+20,000-cell checkpoint touches the upwind edge, same the calm/mild-wind
+pattern already noted for Table 2 — it doesn't affect the answer here,
+since both checkpoints agree to 3%). Both new points slot into the same
+jitter-0, 10,000-cell series as the three original winds, and the
+result is a clean, monotonic curve — overshoot grows smoothly with
+template LB, not by jumps or noise:
+
+| template LB | 1.2 | 1.5 | 2.0 | 3.2 | 7.0 |
+|---|---|---|---|---|---|
+| wind (m/s) | 0.9690 | 2 | 3.1771 | 5 | 8 |
+| measured LB (jitter 0, 10,000 cells) | 1.398 | 2.008 | 3.182 | 7.327 | 33.253 |
+| Anderson LB(U) | 1.200 | 1.505 | 2.000 | 3.192 | 7.028 |
+| overshoot | +16% | +33% | +59% | +130% | +373% |
+
+This closes the bracket the controller asked for: even at the low end
+(template LB 1.2, barely above the real fires' own Anderson LB of
+1.09–1.14 at ERA5 wind speeds), the needle mechanism above is already
+producing a measurable 16% overshoot — small enough that the
+(arrival, rear_focus) recommendation's *magnitude* claim is usable
+there, but not zero, and it only gets worse from here.
+
+**Two real fixes, for the record — neither implemented this round.**
+(1) A finer angular neighbourhood (16 or 32 directions instead of 8)
+would let the needle track the ellipse's curvature much more closely,
+at the cost of a more expensive relaxation per tick. (2) A fitted
+correction curve — feed `rear_focus` a smaller "template" `a` than the
+Anderson value actually wanted, chosen so that the *needle's* measured
+elongation lands on the target — would fix the magnitude without
+touching the per-tick cost, at the cost of needing its own calibration
+table (and re-deriving it if the grid's direction set or the arrival
+rule itself ever changes). Both are real, buildable fixes; this fix
+round's brief was to explain the mechanism and add data, not to
+implement either one.
+
+**The regime the (arrival, rear_focus) recommendation is actually
+validated for: LB ≤ 1.5, not the 2–8 m/s wind range tested here at
+face value.** E41's own ERA5 wind speeds for the six real fires are
+0.5–0.7 m/s — at those speeds `anderson_lb(v)` is only **1.09–1.14**,
+comfortably inside the LB≤1.5 regime where the measured overshoot is
+smallest (21% at LB≈1.5, and presumably less at LB≈1.1–1.2, per the new
+template-1.2 point above). The overshoot only becomes severe (81% at
+LB≈3.2, 228%+ at LB≈7) at wind speeds well above anything E41 found in
+the real data this model targets. What still matters at those real
+wind speeds is the *sign* asymmetry E41 actually needs — head:back
+`(a+c)² = 2.59` at 0.6 m/s, confirmed above — not the magnitude, which
+this addendum shows is only trustworthy up to LB≈1.5.
+
+**The ensemble's actual ceiling is lower still: LB ≤ ~1.3, not just
+≤ 1.5.** The wildfire ensemble has its own free `wind_scale` gene
+(`cella_lib/src/explore/genome.rs`, consumed by
+`wildfire/driver.rs::GENE_WIND_SCALE`) that multiplies the ERA5-supplied
+wind by a factor evolution can pick anywhere in `[0.0, 1.5]` — it can
+only ever turn the wind the model actually runs at *down* from ERA5, or
+up to 1.5× it, never higher. Combined with the fires' own 0.5–0.7 m/s
+ERA5 range, the highest wind speed the kernel will ever actually see
+during evolution is `0.7 × 1.5 = 1.05` m/s (`anderson_lb(1.05) ≈ 1.22`;
+the low end, `0.5 × 1.5 = 0.75` m/s, gives `anderson_lb(0.75) ≈ 1.15`).
+So in practice this kernel runs at **LB ≤ ~1.3**, not merely ≤ 1.5, and
+the overshoot it actually experiences is **≤ ~20%** (interpolating the
+template table above: +16% at LB 1.2, +33% at LB 1.5 — LB 1.22–1.3 lands
+between those, near +18–20%). The LB ≤ 1.5 validated regime below
+therefore carries real margin over the ensemble's true operating point;
+LB ≤ 1.5 is the recommendation's stated boundary because it is where the
+20,000-cell template-1.5 point was actually measured, not because the
+ensemble needs to go that high.
+
 **Recommendation for E30 (Task 8), from the corrected measurement.**
 Still **arrival** — every property checked here (self-similar shape,
 rate matches the closed form, no death threshold) holds up under
 correct measurement. For the wind law: **rear_focus**, for the same
 reason fix round 1 gave (it is the only option that reproduces E41's
 front/back *sign*, which is the actual finding driving this whole
-redesign) — but do not expect its magnitude to match Anderson's `LB(U)`
-at the wind speeds tested here (2–8 m/s); it overshoots, growing
-sharply with wind, and has no tunable parameter (unlike the exponential
-law's `c2`) to correct that. Since the six real fires' own wind speeds
-are much lower (0.5–0.7 m/s) than anything measured in this table, the
-practical size of this overshoot at *those* speeds is the open question
-Task 8 needs answered before trusting rear-focus's magnitude, not just
-its sign. No `c2` is recommended under the exponential law for the same
-reason as fix round 1: every value undershoots, worse at higher wind.
+redesign) — but **the combination is validated only for LB ≤ 1.5**
+(wind ≲ 2 m/s in this model's own units), which safely covers the six
+real fires' own ERA5 wind speeds (LB 1.09–1.14). Do not extrapolate the
+magnitude claim to higher wind: the overshoot documented above is a
+real, understood geometric property of the 8-direction grid, grows
+sharply with `a`, and has no tunable parameter (unlike the exponential
+law's `c2`) to correct it within this fix round's scope. If Task 8 ever
+needs to run this model at wind speeds materially above 0.7 m/s, revisit
+one of the two real fixes above first. No `c2` is recommended under the
+exponential law for the same reason as fix round 1: every value
+undershoots, worse at higher wind.
 
 **Discipline: the Bernoulli path is unchanged (this fix round too).**
 Only `illuminate`/`lb`'s domain, checkpoint scheme, and the two closed-

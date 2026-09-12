@@ -485,6 +485,33 @@ in `validation/results/analysis/`.
   absolute burned-cell counts (2,000/5,000/10,000/20,000), not a
   fraction of the grid, each carrying a `boundary_contact` flag so a
   contaminated row can be identified rather than silently trusted.
+  **E30a fix round 3 (2026-09-11):** documentation and two data points,
+  no rule or measurement change. The rear-focus overshoot found by the
+  measurement fix above is traced to a specific, reproducible mechanism:
+  `rear_focus`'s `r(θ)` is the exact polar equation of Anderson's
+  ellipse, but the arrival rule only samples it at the 8 grid
+  directions, and at high eccentricity the ellipse's area collapses onto
+  the single head direction faster than the grid can track — at `a=7`,
+  `r(45°) ≈ 0.48` is already 29× down from the head's `r(0) = 13.93` and
+  only 3.4× above the flank's `r(90°) = 0.14`. The resulting shape is a
+  "needle" polygon strictly thinner than the ellipse (e.g. at `a=2`, the
+  polygon's half-width at focus-frame `x=2.5` is 0.39 against the true
+  ellipse's 0.93), and because shortest-path propagation on a fixed
+  lattice scales its own per-tick reach polygon self-similarly (a convex
+  polygon's Minkowski self-sum is a bigger copy, never a rounder one),
+  the needle-vs-ellipse gap does not shrink as the fire grows — it is
+  the same mechanism behind Table 2's "flat with size" finding, just
+  read as "flat at the wrong (needle, not ellipse) level." Two new
+  template points were added to the LB table at jitter 0 (template
+  LB 1.2, wind 0.9690 m/s; template LB 2.0, wind 3.1771 m/s — wind
+  values solved by bisecting `anderson_lb(v)` to hit the target exactly)
+  to bracket the already-tested 1.5/3.2/7.0 points below and above. The
+  file now states plainly that the (arrival, rear_focus) recommendation
+  is validated for LB ≤ 1.5 only (wind ≲ 2 m/s in this model's units),
+  which covers the six real fires' own ERA5 wind speeds (E41: 0.5–0.7
+  m/s, `anderson_lb` 1.09–1.14) with margin; no prediction was
+  re-registered since no rule changed, only the explanation and two
+  bracketing measurements were added.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
