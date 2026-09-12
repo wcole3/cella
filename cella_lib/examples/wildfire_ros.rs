@@ -22,14 +22,21 @@
 //! - `speed` (default, no argument needed): the original E19 table, unchanged.
 //! - `arrival_flat`: the E30a flat-grid speed table, both spread rules,
 //!   wind 0/2/5/8 m/s, p0 0.12/0.22/0.44, burn duration 5/10, 3 seeds.
-//! - `illuminate`: point ignition on a 400x400 uniform grid, wind toward +x
-//!   at 0/2/5/8 m/s (the flat-grid table's own four winds), elongation
-//!   (E12's measure) at 2/5/10/20 % burned, both rules, 3 seeds.
-//! - `lb`: length-to-breadth table on the arrival rule at 10 % size, for
-//!   2/5/8 m/s, scanning `c2` under the exponential wind law and also under
-//!   the rear-focus law, against Anderson (1983)'s `LB(U)`. Also prints the
-//!   head:back ratio at 0.6 m/s for both laws (a closed-form number, not a
-//!   simulation).
+//! - `illuminate`: point ignition, both rules, both wind laws. Fix round 2:
+//!   the ignition sits *upwind* on an elongated 900x300 grid (see
+//!   `WIDTH`/`HEIGHT`/`IGNITE_X` below) instead of centred on a square one,
+//!   after a centred 400x400 grid was found to let the fire's head hit the
+//!   domain boundary at almost exactly the old 10 % checkpoint (see the
+//!   module doc's own arithmetic note above `illuminate`) — every
+//!   checkpoint reads cells burned as an absolute count (2,000 / 5,000 /
+//!   10,000 / 20,000), not a fraction of the grid, and carries a
+//!   `boundary_contact` flag.
+//! - `lb`: length-to-breadth table on the arrival rule at the 10,000- and
+//!   20,000-cell checkpoints (same domain), scanning `c2` under the
+//!   exponential wind law and also under the rear-focus law, against
+//!   Anderson (1983)'s `LB(U)`, at jitter 0.2 (3 seeds) and jitter 0 (one
+//!   deterministic reading). Also prints the head:back ratio at 0.6 m/s for
+//!   both laws (a closed-form number, not a simulation).
 
 use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireModel, WildfireParams, anderson_lb};
 use cella_lib::{CellType, Grid2D, Rule2D};
@@ -37,6 +44,22 @@ use std::env;
 
 const W: usize = 240;
 const H: usize = 120;
+
+/// Domain for `illuminate`/`lb` (fix round 2): elongated and wind-aligned,
+/// with the ignition placed upwind, so the fire's head has ~860 cells of
+/// room before it can ever reach the far edge. At 8 m/s, rear-focus, p0 =
+/// 0.12, the head's own cost is `1 / (p0 * exp(c1*v))` ~= 5.8 ticks/cell (see
+/// `illuminate`'s doc comment); reaching the last cell before the edge
+/// (860 cells away) would take ~5,000 ticks, and by then a length-to-
+/// breadth-7 shape covers `pi * 860^2 / 7` ~= 332,000 cells — several times
+/// the whole grid's own 270,000 — so no checkpoint used here (up to 20,000
+/// cells) can plausibly reach that edge. The old centred 400x400 domain put
+/// the boundary only 200 cells from the ignition in every direction, which
+/// a length-to-breadth-7 head reached at almost exactly the 10 % checkpoint
+/// -- an artifact of that domain's small size, not of the spread rule.
+const WIDTH: usize = 900;
+const HEIGHT: usize = 300;
+const IGNITE_X: usize = 40;
 
 fn front_x(g: &Grid2D, burning: CellType, burned: CellType) -> f64 {
     let mut sum = 0.0;
@@ -134,11 +157,21 @@ fn speed(p0: f64, dur: u32, wind: f64, seed: u64, spread: &str, wind_law: &str) 
 }
 
 /// E12's elongation measure (√(λ1/λ2) of the second-moment matrix of the
-/// tracked cells, unit-square-corrected, clamped to [1, 10]), reimplemented
-/// here rather than pulled in from `cella_lib::explore::metrics` so this
-/// example stays a plain consumer of the public `Grid2D`/`WildfireModel` API
-/// — the exact formula this mirrors is documented and tested in
-/// `cella_lib::explore::metrics::elongation`.
+/// tracked cells, unit-square-corrected), reimplemented here rather than
+/// pulled in from `cella_lib::explore::metrics` so this example stays a
+/// plain consumer of the public `Grid2D`/`WildfireModel` API — the exact
+/// second-moment formula this mirrors is documented and tested in
+/// `cella_lib::explore::metrics::elongation`. That shared function clamps
+/// its result to `[1, 10]` (`MAX_ELONGATION`), which is the right ceiling
+/// for the shapes E12/E37 look at; this copy clamps to `[1, 50]` instead
+/// (fix round 2), because rear-focus at 8 m/s on the upwind-ignition domain
+/// below genuinely exceeds 10 (a near-1-D spine can have arbitrarily large
+/// second-moment elongation) — reporting a saturated 10.0 for every
+/// checkpoint would look flat for the wrong reason. 50 is generous headroom
+/// for a length-to-breadth around Anderson's own ceiling of 8 without
+/// blowing up on the smallest checkpoints tested (2,000 cells is already
+/// far past the few-cell regime where a straight line reads as
+/// near-infinite).
 fn elongation(cells: &[CellType], w: usize, _h: usize, tracked: impl Fn(CellType) -> bool) -> f64 {
     let (mut n, mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
     for (i, &c) in cells.iter().enumerate() {
@@ -163,18 +196,47 @@ fn elongation(cells: &[CellType], w: usize, _h: usize, tracked: impl Fn(CellType
     let det: f64 = (cxx * cyy - cxy * cxy).max(0.0);
     let disc: f64 = (tr * tr / 4.0 - det).max(0.0).sqrt();
     let (l1, l2) = (tr / 2.0 + disc, (tr / 2.0 - disc).max(1e-12));
-    (l1 / l2).sqrt().clamp(1.0, 10.0)
+    (l1 / l2).sqrt().clamp(1.0, 50.0)
 }
 
-/// One point-ignition run: a `size`x`size` uniform grid, a 3x3 ignition at
-/// the centre, wind `wind_speed` toward +x. Steps until the burned fraction
-/// (Burning + BurnedOut share of all cells) crosses each of `checkpoints`
-/// (fractions in (0, 1], ascending), recording `(fraction, steps, elongation)`
-/// at each crossing. Stops early (and returns whatever was recorded) if the
-/// fire dies out or `max_steps` is reached.
+/// True if any cell in `cells` matching `tracked` sits within 2 cells of any
+/// edge of a `w`x`h` grid. Fix round 2: a checkpoint reached while the fire's
+/// own extent is touching the boundary is not a free measurement of the
+/// spread rule's shape — the boundary itself starts shaping it — so every
+/// checkpoint carries this flag and a caller can discard/flag contaminated
+/// rows instead of silently reporting them as if the domain were infinite.
+fn boundary_contact(cells: &[CellType], w: usize, h: usize, tracked: impl Fn(CellType) -> bool) -> bool {
+    const MARGIN: usize = 2;
+    for (i, &c) in cells.iter().enumerate() {
+        if !tracked(c) {
+            continue;
+        }
+        let (x, y) = (i % w, i / w);
+        if x < MARGIN || x + MARGIN >= w || y < MARGIN || y + MARGIN >= h {
+            return true;
+        }
+    }
+    false
+}
+
+/// One point-ignition run: a `width`x`height` uniform grid, a 3x3 ignition
+/// at `(ignite_x, height / 2)` (upwind, not centred — see `WIDTH`/`HEIGHT`/
+/// `IGNITE_X`'s doc comment), wind `wind_speed` toward +x. Steps until the
+/// burned cell COUNT (Burning + BurnedOut) crosses each of `checkpoints`
+/// (absolute cell counts, ascending), recording `(count, steps, elongation,
+/// front_x, boundary_contact)` at each crossing, where `front_x` is the
+/// largest x-coordinate among burned/burning cells (so
+/// `front_x / steps` is a direct, no-fitting estimate of the head's own
+/// speed in cells/tick, comparable to the closed form `1 / cost_head` =
+/// `p_base * dir[head]` = `p0 * exp(c1 * wind_speed)` — identical under
+/// either wind law, since both give the head direction factor `exp(c1*v)`
+/// exactly). Stops early (and returns whatever was recorded) if the fire
+/// dies out or `max_steps` is reached.
 #[allow(clippy::too_many_arguments)]
 fn illuminate(
-    size: usize,
+    width: usize,
+    height: usize,
+    ignite_x: usize,
     wind_speed: f64,
     p0: f64,
     burn_duration: u32,
@@ -183,18 +245,18 @@ fn illuminate(
     wind_law: &str,
     c2: f64,
     arrival_jitter: f64,
-    checkpoints: &[f64],
+    checkpoints: &[usize],
     max_steps: u64,
-) -> Vec<(f64, u64, f64)> {
+) -> Vec<(usize, u64, f64, usize, bool)> {
     let forest = CellType::new("Forest");
     let b = CellType::new("Burning");
     let burned = CellType::new("BurnedOut");
-    let mut cells = vec![forest; size * size];
-    let (cx, cy) = (size / 2, size / 2);
+    let mut cells = vec![forest; width * height];
+    let cy = height / 2;
     for dy in 0..3usize {
         for dx in 0..3usize {
-            let (x, y) = (cx + dx - 1, cy + dy - 1);
-            cells[y * size + x] = b;
+            let (x, y) = (ignite_x + dx - 1, cy + dy - 1);
+            cells[y * width + x] = b;
         }
     }
     let mut params = base_params(seed);
@@ -206,10 +268,9 @@ fn illuminate(
     params.wind_law = wind_law.into();
     params.c2 = c2;
     params.arrival_jitter = arrival_jitter;
-    let mut g = Grid2D::new(size, size, 0, cells, Rule2D { subrules: vec![] });
+    let mut g = Grid2D::new(width, height, 0, cells, Rule2D { subrules: vec![] });
     g.attach_model(Box::new(WildfireModel::new(params, WildfireEnv::default())))
         .expect("attach");
-    let total = (size * size) as f64;
     let mut next_checkpoint = 0usize;
     let mut out = Vec::new();
     let mut t = 0u64;
@@ -217,24 +278,30 @@ fn illuminate(
         g.step();
         t += 1;
         let cells_now = g.cells();
-        let burned_n = cells_now.iter().filter(|&&c| c == b || c == burned).count() as f64;
-        let frac = burned_n / total;
-        if frac >= checkpoints[next_checkpoint] {
-            let e = elongation(cells_now, size, size, |c| c == b || c == burned);
-            out.push((checkpoints[next_checkpoint], t, e));
+        let is_fire = |c: &CellType| *c == b || *c == burned;
+        let n = cells_now.iter().filter(|c| is_fire(c)).count();
+        if n >= checkpoints[next_checkpoint] {
+            let e = elongation(cells_now, width, height, |c| c == b || c == burned);
+            let front_x = (0..cells_now.len())
+                .filter(|&i| is_fire(&cells_now[i]))
+                .map(|i| i % width)
+                .max()
+                .unwrap_or(ignite_x);
+            let contact = boundary_contact(cells_now, width, height, |c| c == b || c == burned);
+            out.push((checkpoints[next_checkpoint], t, e, front_x, contact));
             next_checkpoint += 1;
         }
         if t.is_multiple_of(200) && !cells_now.contains(&b) {
             if env::var("WF_DEBUG").is_ok() {
-                eprintln!("  [debug] died at t={t}, frac={frac:.5}, next_checkpoint={next_checkpoint}");
+                eprintln!("  [debug] died at t={t}, n={n}, next_checkpoint={next_checkpoint}");
             }
             break; // fire died before reaching every checkpoint.
         }
     }
     if env::var("WF_DEBUG").is_ok() && next_checkpoint < checkpoints.len() {
-        let frac = g.cells().iter().filter(|&&c| c == b || c == burned).count() as f64 / total;
+        let n = g.cells().iter().filter(|&&c| c == b || c == burned).count();
         eprintln!(
-            "  [debug] stopped at t={t}/{max_steps}, frac={frac:.5}, next_checkpoint={next_checkpoint}, still_burning={}",
+            "  [debug] stopped at t={t}/{max_steps}, n={n}, next_checkpoint={next_checkpoint}, still_burning={}",
             g.cells().contains(&b)
         );
     }
@@ -328,67 +395,60 @@ fn run_arrival_flat() {
     print_report_close();
 }
 
-/// E30a measurement 2: point-ignition elongation vs. size, both rules.
+/// E30a measurement 2 (fix round 2): point-ignition elongation vs. size, on
+/// the upwind-ignition/elongated domain, both rules, both wind laws.
 fn run_illuminate() {
-    let size = env::var("WF_ILLUMINATE_SIZE")
+    let seeds: u64 = env::var("WF_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3u64);
+    let checkpoints = [2000usize, 5000, 10000, 20000];
+    let burn_duration: u32 = env::var("WF_BURN_DUR").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let p0s: Vec<f64> = env::var("WF_P0")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(400usize);
-    let seeds: u64 = env::var("WF_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3u64);
-    let checkpoints = [0.02, 0.05, 0.10, 0.20];
-    // E30a v2 (fix round 1): the arrival rule is now minimum travel time, not
-    // a heat accumulator, so there is no self-sustain margin to protect and
-    // no reason to depart from the pre-registered flat-grid trio's low end.
-    // p0 = 0.12, burn_duration = 5 (v1 needed 0.44 / up to 500 to dodge a
-    // death threshold that no longer exists — see the module doc and
-    // `WildfireModel::step_chunk_arrival`).
-    let p0: f64 = env::var("WF_P0").ok().and_then(|s| s.parse().ok()).unwrap_or(0.12);
-    let burn_duration: u32 = env::var("WF_BURN_DUR")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
-    // Same four winds as the flat-grid speed table, so the figure (elongation
-    // vs. size, both rules, four winds) can be built straight from this mode.
-    // WF_WIND_LAW overrides the law for a supplementary check (the addendum's
-    // "under Bernoulli, rear_focus still collapses with size" claim) without
-    // touching the pre-registered exponential-law default.
-    let wind_law = env::var("WF_WIND_LAW").unwrap_or_else(|_| "exponential".to_string());
-    let jitter: f64 = env::var("WF_JITTER").ok().and_then(|s| s.parse().ok()).unwrap_or(0.2);
+        .map(|s| vec![s.parse().expect("WF_P0")])
+        .unwrap_or_else(|| vec![0.12, 0.22]);
     let winds = [0.0, 2.0, 5.0, 8.0];
-    let max_steps = 20_000u64;
+    let laws = ["exponential", "rear_focus"];
+    let max_steps: u64 = env::var("WF_MAX_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000);
     print_report_open();
     let mut first = true;
-    for &wind_speed in &winds {
-        for &spread in &["bernoulli", "arrival"] {
-            for seed in 0..seeds {
-                let hits = illuminate(
-                    size,
-                    wind_speed,
-                    p0,
-                    burn_duration,
-                    seed,
-                    spread,
-                    &wind_law,
-                    0.131,
-                    jitter,
-                    &checkpoints,
-                    max_steps,
-                );
-                for (frac, steps, e) in hits {
-                    if !first {
-                        println!(",");
+    let mut emit = |p0: f64, wind_speed: f64, spread: &str, law: &str, seed: Option<u64>, jitter: f64, hits: &[(usize, u64, f64, usize, bool)]| {
+        for &(n, steps, e, front_x, contact) in hits {
+            if !first {
+                println!(",");
+            }
+            first = false;
+            let seed_json = seed.map(|s| s.to_string()).unwrap_or_else(|| "null".to_string());
+            print!(
+                "{{\"p0\":{p0},\"spread\":\"{spread}\",\"wind_law\":\"{law}\",\"wind_ms\":{wind_speed},\"seed\":{seed_json},\"jitter\":{jitter},\"cells\":{n},\"steps\":{steps},\"elongation\":{e:.4},\"front_x\":{front_x},\"boundary_contact\":{contact}}}"
+            );
+            eprintln!(
+                "p0={p0} wind={wind_speed:.0} {spread:9} {law:11} seed={seed_json} jit={jitter} n={n:5}: {steps:5} steps, elongation {e:.3}, front_x {front_x}, boundary {contact}"
+            );
+        }
+    };
+    for &p0 in &p0s {
+        for &wind_speed in &winds {
+            for &spread in &["bernoulli", "arrival"] {
+                for &law in &laws {
+                    for seed in 0..seeds {
+                        let hits = illuminate(
+                            WIDTH, HEIGHT, IGNITE_X, wind_speed, p0, burn_duration, seed, spread, law, 0.131, 0.2,
+                            &checkpoints, max_steps,
+                        );
+                        emit(p0, wind_speed, spread, law, Some(seed), 0.2, &hits);
                     }
-                    first = false;
-                    print!(
-                        "{{\"spread\":\"{spread}\",\"wind_ms\":{wind_speed},\"seed\":{seed},\"size_frac\":{frac},\"steps\":{steps},\"elongation\":{e:.4}}}"
+                }
+            }
+            // One deterministic jitter-0 reading per law, at every wind, for
+            // both rules — cheap (arrival) or free (Bernoulli has no jitter
+            // to silence, so this is just seed 0 again, kept for a uniform
+            // table shape).
+            for &spread in &["bernoulli", "arrival"] {
+                for &law in &laws {
+                    let hits = illuminate(
+                        WIDTH, HEIGHT, IGNITE_X, wind_speed, p0, burn_duration, 0, spread, law, 0.131, 0.0,
+                        &checkpoints, max_steps,
                     );
-                    eprintln!(
-                        "wind {wind_speed:.0} {spread:9} seed {seed} size {:.0}%: {steps} steps, elongation {e:.3}",
-                        frac * 100.0
-                    );
+                    emit(p0, wind_speed, spread, law, None, 0.0, &hits);
                 }
             }
         }
@@ -396,40 +456,23 @@ fn run_illuminate() {
     print_report_close();
 }
 
-/// E30a measurement 3: length-to-breadth table on the arrival rule at 10 %
-/// size, c2 scan under the exponential law plus the rear-focus law, and the
-/// closed-form head:back ratio at 0.6 m/s for both laws (no simulation
-/// needed for that number: it is `dir[head] / dir[back]` from the wind law
-/// directly).
+/// E30a measurement 3 (fix round 2): length-to-breadth table on the arrival
+/// rule at the 10,000- and 20,000-cell checkpoints on the same upwind-
+/// ignition domain, c2 scan under the exponential law plus the rear-focus
+/// law, and the closed-form head:back ratio at 0.6 m/s for both laws (no
+/// simulation needed for that number: it is `dir[head] / dir[back]` from the
+/// wind law directly).
 fn run_lb() {
-    let size = env::var("WF_ILLUMINATE_SIZE")
+    let seeds: u64 = env::var("WF_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3u64);
+    let burn_duration: u32 = env::var("WF_BURN_DUR").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let p0s: Vec<f64> = env::var("WF_P0")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(400usize);
-    let seeds: u64 = env::var("WF_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3u64);
-    // E30a v2 (fix round 1): no more artificial burn_duration = 500. The
-    // arrival rule's minimum-travel-time relaxation never actually "dies" —
-    // every direction has *some* positive rate, so a slow one just costs
-    // more ticks, not an unreachable one — and burn_duration has no effect
-    // on arrival timing at all (it only governs how long a cell stays
-    // visibly burning). p0 = 0.12, burn_duration = 5, same as `illuminate`
-    // and the flat-grid trio's low end; the length-to-breadth ratio itself
-    // does not depend on either (`cost_j`'s `p_base` factor is common to
-    // every direction and cancels in the ratio; burn_duration never enters
-    // the relaxation), so one representative value stands in for all six
-    // (p0, duration) pre-registered combinations.
-    let p0: f64 = env::var("WF_P0").ok().and_then(|s| s.parse().ok()).unwrap_or(0.12);
-    let burn_duration: u32 = env::var("WF_BURN_DUR")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
+        .map(|s| vec![s.parse().expect("WF_P0")])
+        .unwrap_or_else(|| vec![0.12, 0.22]);
     let winds = [2.0, 5.0, 8.0];
     let c2s = [0.131, 0.2, 0.3, 0.45];
-    let checkpoints = [0.10];
-    let max_steps = 20_000u64;
+    let checkpoints = [10_000usize, 20_000];
+    let max_steps: u64 = env::var("WF_MAX_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000);
 
     // Closed-form head:back at 0.6 m/s, both laws, default c2 for the
     // exponential law (Alexandridis c2 = 0.131).
@@ -442,8 +485,6 @@ fn run_lb() {
         "head:back at {v} m/s: exponential (c2=0.131) = {exp_head_back:.3}, rear_focus = {rf_head_back:.3} (LB={a:.3})"
     );
 
-    // JSON has no NaN, so a checkpoint a seed never reached is `null`, not a
-    // number (kept for robustness; v2 should not actually hit this).
     let json_opt = |v: Option<f64>| match v {
         Some(x) => format!("{x:.4}"),
         None => "null".to_string(),
@@ -451,115 +492,121 @@ fn run_lb() {
 
     print_report_open();
     let mut first = true;
-    // `jitter02_seeds`/`jitter02_mean`: the default (sigma 0.2) reading, 3
-    // seeds. `lb_jitter0`: one deterministic reading at sigma 0, added per
-    // the controller's fix-round-1 request so the closed-form checks (also
-    // covered by unit tests) can be read straight off this table.
-    let mut emit = |law: &str,
+    let mut emit = |p0: f64,
+                    law: &str,
                     c2: f64,
                     wind: f64,
-                    lbs: &[Option<f64>],
-                    lb_jitter0: Option<f64>| {
+                    cells_target: usize,
+                    lbs: &[Option<(f64, usize, bool)>],
+                    jitter0: Option<(f64, usize, bool)>| {
         if !first {
             println!(",");
         }
         first = false;
         let anderson = anderson_lb(wind);
-        let reached: Vec<f64> = lbs.iter().filter_map(|&v| v).collect();
+        let reached: Vec<(f64, usize, bool)> = lbs.iter().filter_map(|&v| v).collect();
         let mean = if reached.is_empty() {
             None
         } else {
-            Some(reached.iter().sum::<f64>() / reached.len() as f64)
+            Some(reached.iter().map(|&(e, _, _)| e).sum::<f64>() / reached.len() as f64)
         };
-        let seeds_json: Vec<String> = lbs.iter().map(|&v| json_opt(v)).collect();
+        let any_contact = reached.iter().any(|&(_, _, c)| c) || jitter0.is_some_and(|(_, _, c)| c);
         print!(
-            "{{\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"lb_mean\":{},\"lb_seeds\":[{}],\"lb_jitter0\":{},\"reached_seeds\":{},\"total_seeds\":{},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{}}}",
+            "{{\"p0\":{p0},\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"cells\":{cells_target},\"lb_mean\":{},\"lb_jitter0\":{},\"boundary_contact\":{any_contact},\"reached_seeds\":{},\"total_seeds\":{},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{}}}",
             json_opt(mean),
-            seeds_json.join(","),
-            json_opt(lb_jitter0),
+            json_opt(jitter0.map(|(e, _, _)| e)),
             reached.len(),
             lbs.len(),
             if law == "rear_focus" { rf_head_back } else { exp_head_back }
         );
         eprintln!(
-            "{law:12} c2={c2:.3} wind={wind:.0}: LB={} jitter0={} ({}/{} seeds reached 10%; Anderson {anderson:.3})",
+            "p0={p0} {law:12} c2={c2:.3} wind={wind:.0} n={cells_target:6}: LB={} jitter0={} contact={any_contact} ({}/{} seeds; Anderson {anderson:.3})",
             mean.map(|m| format!("{m:.3}")).unwrap_or_else(|| "n/a".into()),
-            lb_jitter0.map(|m| format!("{m:.3}")).unwrap_or_else(|| "n/a".into()),
+            jitter0.map(|(e, _, _)| format!("{e:.3}")).unwrap_or_else(|| "n/a".into()),
             reached.len(),
             lbs.len(),
         );
     };
 
-    for &wind in &winds {
-        for &c2 in &c2s {
-            let mut lbs = Vec::new();
-            for seed in 0..seeds {
-                let hits = illuminate(
-                    size,
-                    wind,
-                    p0,
-                    burn_duration,
-                    seed,
-                    "arrival",
-                    "exponential",
-                    c2,
-                    0.2,
-                    &checkpoints,
-                    max_steps,
+    for &p0 in &p0s {
+        for &wind in &winds {
+            let mut law_configs: Vec<(&str, f64)> = c2s.iter().map(|&c2| ("exponential", c2)).collect();
+            law_configs.push(("rear_focus", 0.0));
+            for (law, c2) in law_configs {
+                // 3-seed default-jitter pass and 1 deterministic jitter-0
+                // pass, each producing both checkpoints (10k, 20k cells) in
+                // one run.
+                let mut per_checkpoint: Vec<Vec<Option<(f64, usize, bool)>>> =
+                    vec![Vec::new(); checkpoints.len()];
+                for seed in 0..seeds {
+                    let hits = illuminate(
+                        WIDTH, HEIGHT, IGNITE_X, wind, p0, burn_duration, seed, "arrival", law, c2, 0.2,
+                        &checkpoints, max_steps,
+                    );
+                    for (i, _) in checkpoints.iter().enumerate() {
+                        let v = hits
+                            .iter()
+                            .find(|&&(n, _, _, _, _)| n == checkpoints[i])
+                            .map(|&(_, _, e, fx, c)| (e, fx, c));
+                        per_checkpoint[i].push(v);
+                    }
+                }
+                let jitter0_hits = illuminate(
+                    WIDTH, HEIGHT, IGNITE_X, wind, p0, burn_duration, 0, "arrival", law, c2, 0.0,
+                    &checkpoints, max_steps,
                 );
-                lbs.push(hits.first().map(|&(_, _, e)| e));
+                for (i, &cp) in checkpoints.iter().enumerate() {
+                    let j0 = jitter0_hits
+                        .iter()
+                        .find(|&&(n, _, _, _, _)| n == cp)
+                        .map(|&(_, _, e, fx, c)| (e, fx, c));
+                    emit(p0, law, c2, wind, cp, &per_checkpoint[i], j0);
+                }
             }
-            let jitter0 = illuminate(
-                size,
-                wind,
-                p0,
-                burn_duration,
-                0,
-                "arrival",
-                "exponential",
-                c2,
-                0.0,
-                &checkpoints,
-                max_steps,
-            )
-            .first()
-            .map(|&(_, _, e)| e);
-            emit("exponential", c2, wind, &lbs, jitter0);
         }
-        // Rear-focus: c2 is unused by that law; report once per wind.
-        let mut lbs = Vec::new();
-        for seed in 0..seeds {
+    }
+    print_report_close();
+}
+
+/// Fix round 2: measured head speed (cells/tick along +x, from `front_x`)
+/// against the closed form `p0 * exp(c1 * wind_speed)` (identical under
+/// either wind law), one row per wind, arrival rule, jitter 0 (deterministic,
+/// isolates the rate from per-cell noise).
+fn run_head_speed() {
+    let p0: f64 = env::var("WF_P0").ok().and_then(|s| s.parse().ok()).unwrap_or(0.12);
+    let burn_duration: u32 = env::var("WF_BURN_DUR").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let winds = [0.0, 2.0, 5.0, 8.0];
+    let checkpoints = [5000usize, 20000];
+    let max_steps: u64 = env::var("WF_MAX_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000);
+    print_report_open();
+    let mut first = true;
+    for &wind in &winds {
+        for &law in &["exponential", "rear_focus"] {
             let hits = illuminate(
-                size,
-                wind,
-                p0,
-                burn_duration,
-                seed,
-                "arrival",
-                "rear_focus",
-                0.131,
-                0.2,
-                &checkpoints,
-                max_steps,
+                WIDTH, HEIGHT, IGNITE_X, wind, p0, burn_duration, 0, "arrival", law, 0.131, 0.0,
+                &checkpoints, max_steps,
             );
-            lbs.push(hits.first().map(|&(_, _, e)| e));
+            if hits.len() < 2 {
+                eprintln!("wind={wind:.0} {law}: did not reach both checkpoints, skipping speed fit");
+                continue;
+            }
+            let (n0, t0, _, x0, c0) = hits[0];
+            let (n1, t1, _, x1, c1) = hits[1];
+            let measured = (x1 as f64 - x0 as f64) / (t1 as f64 - t0 as f64);
+            let closed_form = p0 * (0.045 * wind).exp();
+            if !first {
+                println!(",");
+            }
+            first = false;
+            print!(
+                "{{\"p0\":{p0},\"wind_law\":\"{law}\",\"wind_ms\":{wind},\"measured_cells_per_tick\":{measured:.4},\"closed_form_cells_per_tick\":{closed_form:.4},\"n0\":{n0},\"n1\":{n1},\"boundary_contact\":{}}}",
+                c0 || c1
+            );
+            eprintln!(
+                "wind={wind:.0} {law:11}: measured {measured:.4} cells/tick, closed form {closed_form:.4} (ratio {:.3})",
+                measured / closed_form
+            );
         }
-        let jitter0 = illuminate(
-            size,
-            wind,
-            p0,
-            burn_duration,
-            0,
-            "arrival",
-            "rear_focus",
-            0.131,
-            0.0,
-            &checkpoints,
-            max_steps,
-        )
-        .first()
-        .map(|&(_, _, e)| e);
-        emit("rear_focus", 0.0, wind, &lbs, jitter0);
     }
     print_report_close();
 }
@@ -570,6 +617,7 @@ fn main() {
         "arrival_flat" => run_arrival_flat(),
         "illuminate" => run_illuminate(),
         "lb" => run_lb(),
+        "head_speed" => run_head_speed(),
         _ => run_speed_table(),
     }
 }

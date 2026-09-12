@@ -471,6 +471,20 @@ in `validation/results/analysis/`.
   equals cosh(c2·v) within 15 % under the exponential law and is within
   20 % of Anderson under rear-focus at 2/5/8 m/s; p0 0.12 fires no
   longer die.
+  **E30a measurement fix (2026-09-11):** measurement domain changed to
+  upwind ignition on 900×300 after the centred grid's head hit the
+  boundary at ≈ 10 % size; rule unchanged. The centred 400×400 domain
+  put the boundary only 200 cells from a centred ignition in every
+  direction; at 8 m/s under rear-focus the head's own cost is
+  `1 / (p0 · exp(c1·v))` ≈ 5.8 ticks/cell (p0 = 0.12), so the head
+  reached that boundary at ≈ tick 1,160 — almost exactly when an
+  LB ≈ 7 shape's own area (`π·200²/7` ≈ 18,000 cells) crosses the old
+  10 % checkpoint (16,000 cells of a 160,000-cell grid). The measured
+  "collapse with size" in the v2 report above is this boundary
+  artefact, not a property of minimum travel time. Checkpoints are now
+  absolute burned-cell counts (2,000/5,000/10,000/20,000), not a
+  fraction of the grid, each carrying a `boundary_contact` flag so a
+  contaminated row can be identified rather than silently trusted.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
