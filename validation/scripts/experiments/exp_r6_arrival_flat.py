@@ -12,10 +12,15 @@ into one file:
 - `illuminate`: point-ignition elongation (E12's second-moment measure) at
   2/5/10/20 % burned on a 400x400 uniform grid, 8 m/s toward +x, both
   rules, 3 seeds.
-- `lb`: length-to-breadth table on the arrival rule at 10 % size for
-  2/5/8 m/s, `c2` in {0.131, 0.2, 0.3, 0.45} under the exponential wind
-  law plus the rear-focus law, against Anderson (1983)'s `LB(U)`, and the
-  closed-form head:back ratio at 0.6 m/s for both laws.
+- `lb`: length-to-breadth table on the arrival rule at 10,000-/20,000-cell
+  checkpoints for 2/5/8 m/s, `c2` in {0.131, 0.2, 0.3, 0.45} under the
+  exponential wind law plus the rear-focus law, against Anderson (1983)'s
+  `LB(U)`, the closed-form head:back ratio at 0.6 m/s for both laws, and
+  (fix round 3) two extra jitter-0 rear-focus template points bisected to
+  hit Anderson LB 1.2 and 2.0 exactly (tagged with a `template_lb` field;
+  `null` on every other row).
+- `head_speed`: measured vs. closed-form head speed (arrival rule, jitter
+  0), both wind laws, added in fix round 2.
 
 Each mode's own `binary_git`/`binary_built_utc` (stamped by
 `cella_lib/build.rs`) must agree; the script fails loudly if they don't
@@ -23,7 +28,8 @@ Each mode's own `binary_git`/`binary_built_utc` (stamped by
 
 Output: `validation/results/experiments/exp30a_arrival_flat.json`, one
 object with `binary_git`, `binary_built_utc`, `speed_table`,
-`illuminate`, `lb`.
+`illuminate`, `lb`, `head_speed`. Running this script regenerates the
+whole file in one command (all four modes, always).
 
 Usage (from repo root): `python3 validation/scripts/experiments/exp_r6_arrival_flat.py`
 """
@@ -49,7 +55,7 @@ def main() -> None:
         raise SystemExit(
             f"{BIN} not built — run: cd cella_lib && cargo build --release --examples"
         )
-    modes = ["arrival_flat", "illuminate", "lb"]
+    modes = ["arrival_flat", "illuminate", "lb", "head_speed"]
     reports = {m: run_mode(m) for m in modes}
 
     gits = {r["binary_git"] for r in reports.values()}
@@ -66,6 +72,7 @@ def main() -> None:
         "speed_table": reports["arrival_flat"]["results"],
         "illuminate": reports["illuminate"]["results"],
         "lb": reports["lb"]["results"],
+        "head_speed": reports["head_speed"]["results"],
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(combined, indent=1))
@@ -73,7 +80,8 @@ def main() -> None:
         f"wrote {OUT} (binary_git {combined['binary_git']}): "
         f"{len(combined['speed_table'])} speed rows, "
         f"{len(combined['illuminate'])} illuminate rows, "
-        f"{len(combined['lb'])} lb rows",
+        f"{len(combined['lb'])} lb rows, "
+        f"{len(combined['head_speed'])} head_speed rows",
         flush=True,
     )
 

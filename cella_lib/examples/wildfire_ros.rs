@@ -498,7 +498,8 @@ fn run_lb() {
                     wind: f64,
                     cells_target: usize,
                     lbs: &[Option<(f64, usize, bool)>],
-                    jitter0: Option<(f64, usize, bool)>| {
+                    jitter0: Option<(f64, usize, bool)>,
+                    template_lb: Option<f64>| {
         if !first {
             println!(",");
         }
@@ -512,12 +513,13 @@ fn run_lb() {
         };
         let any_contact = reached.iter().any(|&(_, _, c)| c) || jitter0.is_some_and(|(_, _, c)| c);
         print!(
-            "{{\"p0\":{p0},\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"cells\":{cells_target},\"lb_mean\":{},\"lb_jitter0\":{},\"boundary_contact\":{any_contact},\"reached_seeds\":{},\"total_seeds\":{},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{}}}",
+            "{{\"p0\":{p0},\"wind_law\":\"{law}\",\"c2\":{c2},\"wind_ms\":{wind},\"cells\":{cells_target},\"lb_mean\":{},\"lb_jitter0\":{},\"boundary_contact\":{any_contact},\"reached_seeds\":{},\"total_seeds\":{},\"anderson_lb\":{anderson:.4},\"head_back_0_6ms\":{},\"template_lb\":{}}}",
             json_opt(mean),
             json_opt(jitter0.map(|(e, _, _)| e)),
             reached.len(),
             lbs.len(),
-            if law == "rear_focus" { rf_head_back } else { exp_head_back }
+            if law == "rear_focus" { rf_head_back } else { exp_head_back },
+            json_opt(template_lb)
         );
         eprintln!(
             "p0={p0} {law:12} c2={c2:.3} wind={wind:.0} n={cells_target:6}: LB={} jitter0={} contact={any_contact} ({}/{} seeds; Anderson {anderson:.3})",
@@ -560,7 +562,7 @@ fn run_lb() {
                         .iter()
                         .find(|&&(n, _, _, _, _)| n == cp)
                         .map(|&(_, _, e, fx, c)| (e, fx, c));
-                    emit(p0, law, c2, wind, cp, &per_checkpoint[i], j0);
+                    emit(p0, law, c2, wind, cp, &per_checkpoint[i], j0, None);
                 }
             }
         }
@@ -583,7 +585,7 @@ fn run_lb() {
                 .iter()
                 .find(|&&(n, _, _, _, _)| n == cp)
                 .map(|&(_, _, e, fx, c)| (e, fx, c));
-            emit(p0, "rear_focus", 0.0, wind, cp, &[], j0);
+            emit(p0, "rear_focus", 0.0, wind, cp, &[], j0, Some(target_lb));
             eprintln!(
                 "  [template LB {target_lb}] wind={wind:.4} n={cp}: {}",
                 j0.map(|(e, _, c)| format!("measured {e:.4}{}", if c { " (boundary contact)" } else { "" }))
