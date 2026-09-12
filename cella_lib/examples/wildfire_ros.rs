@@ -565,6 +565,32 @@ fn run_lb() {
             }
         }
     }
+    // Fix round 3: two extra rear-focus template points at jitter 0, deliberately
+    // solved for round Anderson LB targets rather than round wind speeds, so the
+    // LB table reads template-LB 1.2 / 1.5 / 2.0 / 3.2 / 7.0 -> measured (the
+    // 1.5/3.2/7.0 points already exist at wind 2/5/8 above). Controller fix round
+    // 3 estimated ~0.85 and ~2.9 m/s for LB 1.2 and 2.0; solving anderson_lb(v) =
+    // target with bisection gives 0.9690 and 3.1771 m/s -- used here instead, so
+    // the reported "template LB" is exact, not approximate.
+    let p0 = p0s[0];
+    for &(target_lb, wind) in &[(1.2f64, 0.9690f64), (2.0, 3.1771)] {
+        let jitter0_hits = illuminate(
+            WIDTH, HEIGHT, IGNITE_X, wind, p0, burn_duration, 0, "arrival", "rear_focus", 0.0, 0.0,
+            &checkpoints, max_steps,
+        );
+        for &cp in &checkpoints {
+            let j0 = jitter0_hits
+                .iter()
+                .find(|&&(n, _, _, _, _)| n == cp)
+                .map(|&(_, _, e, fx, c)| (e, fx, c));
+            emit(p0, "rear_focus", 0.0, wind, cp, &[], j0);
+            eprintln!(
+                "  [template LB {target_lb}] wind={wind:.4} n={cp}: {}",
+                j0.map(|(e, _, c)| format!("measured {e:.4}{}", if c { " (boundary contact)" } else { "" }))
+                    .unwrap_or_else(|| "did not reach checkpoint".into())
+            );
+        }
+    }
     print_report_close();
 }
 
