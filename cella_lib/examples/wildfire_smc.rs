@@ -82,6 +82,22 @@
 //!      config's own value, so setting none of them is a no-op. E30's
 //!      recommended setting is SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus,
 //!      with `c2` and jitter left at the config's own defaults).
+//!      SMC_STEPS_SCALE=<f64> (1; E30b: a faster clock — multiplies the
+//!      scenario's own `steps_per_hour` before anything else reads it, so
+//!      the forcing schedule's window step-counts and (since
+//!      `steps_per_day` is computed from that same field) the wildfire
+//!      driver's containment period both stretch together — one
+//!      observation window still spans one day of weather at any scale.
+//!      SMC_STEPS_SCALE=4 turns E30's 50 ticks/day into 200: the arrival
+//!      rule's one-cell-per-tick cap rises from 1.5 km/day to 6 km/day).
+//!      SMC_WIND_ROT_GENE=<f64> (off; E30b: half-width in degrees of a
+//!      free, per-member `wind_rot_deg` gene, uniform on [-h, h] — added
+//!      to the gene list only when this is set; see
+//!      [`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`]. Each member
+//!      learns its own offset to the forcing's wind *from*-bearing, on
+//!      top of any fixed SMC_WIND_ROT_DEG rotation of the whole schedule
+//!      above — the fixed knob rotates the input once for everyone, this
+//!      one lets the filter search for a per-member correction to it).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -101,7 +117,8 @@ use cella_lib::explore::metrics::{
 use cella_lib::explore::{Genome, Search, Sim};
 use cella_lib::wildfire::driver::{
     FORCING_HOURS, FORCING_WIND_FROM, FORCING_WIND_SPEED, GENE_CONTAIN_A, GENE_CONTAIN_B,
-    GENE_TAU_DAYS, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow, WildfireDriver,
+    GENE_TAU_DAYS, GENE_WIND_ROT_DEG, GENE_WIND_SCALE, STATE_CONTAINED, WeatherWindow,
+    WildfireDriver,
 };
 use cella_lib::wildfire::wind_toward_grid_deg;
 use cella_lib::wildfire::{SpottingParams, WildfireModel};
@@ -372,6 +389,27 @@ fn pinned(key: &str, value: &ParamValue) -> GeneSpec {
         other => panic!("cannot pin a {other:?} gene"),
     };
     GeneSpec::range(key, v, v)
+}
+
+/// `SMC_STEPS_SCALE` (E30b): multiply the scenario's own `steps_per_hour`
+/// in place, before anything else in `main` reads it. Every later use of
+/// `sc.steps_per_hour` — the run loop's window step-counts, `observation_steps`,
+/// and (via [`steps_per_day_from`], computed from this same field right
+/// after) the wildfire driver's `steps_per_day` — is one field read, so
+/// scaling it here once keeps the forcing schedule and the driver's
+/// containment period in sync automatically: a 4x clock still spans one
+/// day of weather in one observation window, just in four times the
+/// steps. `scale <= 0` is a caller error (nothing here defends against a
+/// zero or negative clock); the default of 1.0 is a no-op.
+fn apply_steps_scale(sc: &mut Scenario, scale: f64) {
+    sc.steps_per_hour *= scale;
+}
+
+/// Steps per simulated day from the scenario's (possibly scaled)
+/// `steps_per_hour`, rounded to the nearest whole step and floored at 1 so
+/// a driver never gets a zero-length period.
+fn steps_per_day_from(sc: &Scenario) -> u64 {
+    (24.0 * sc.steps_per_hour).round().max(1.0) as u64
 }
 
 /// The scenario's wind as a driver schedule (hours are absolute).
@@ -762,10 +800,23 @@ const SPOT_DIST_HI: f64 = 20.0;
 
 /// The full gene list for a run: the prior (default or `SMC_PRIOR`), plus
 /// the containment genes under `SMC_CONTAIN`, minus `tau_days` under
-/// `SMC_TAU_OFF`, plus the spotting genes under `SMC_SPOT`. Split out of
-/// `main` so `SMC_SPOT`'s effect on the gene list is unit-testable without
-/// an env var or a scenario directory.
-fn build_genes(prior: Vec<GeneSpec>, contain: bool, tau_off: bool, spot: bool) -> Vec<GeneSpec> {
+/// `SMC_TAU_OFF`, plus the spotting genes under `SMC_SPOT`, plus the
+/// wind-rotation gene under `SMC_WIND_ROT_GENE`. Split out of `main` so
+/// each knob's effect on the gene list is unit-testable without an env var
+/// or a scenario directory.
+///
+/// `wind_rot_gene` is the gene's half-width in degrees (E30b:
+/// `SMC_WIND_ROT_GENE`); `None` (the default) leaves `wind_rot_deg` out of
+/// the list entirely, so [`WildfireDriver::apply`] never sees a value for
+/// it and every member's wind direction is exactly the forcing's own,
+/// unchanged (the pre-E30b behaviour).
+fn build_genes(
+    prior: Vec<GeneSpec>,
+    contain: bool,
+    tau_off: bool,
+    spot: bool,
+    wind_rot_gene: Option<f64>,
+) -> Vec<GeneSpec> {
     let mut genes = prior;
     if contain {
         genes.push(GeneSpec::new(GENE_CONTAIN_A));
@@ -777,6 +828,9 @@ fn build_genes(prior: Vec<GeneSpec>, contain: bool, tau_off: bool, spot: bool) -
     if spot {
         genes.push(GeneSpec::log_range(GENE_SPOT_P, SPOT_P_LO, SPOT_P_HI));
         genes.push(GeneSpec::range(GENE_SPOT_DIST, SPOT_DIST_LO, SPOT_DIST_HI));
+    }
+    if let Some(h) = wind_rot_gene {
+        genes.push(GeneSpec::range(GENE_WIND_ROT_DEG, -h, h));
     }
     genes
 }
@@ -888,6 +942,7 @@ fn main() {
     };
     let rot = envf("SMC_WIND_ROT_DEG", 0.0);
     let assim_every = envf("SMC_ASSIM_EVERY", 1.0).max(1.0) as usize;
+    let envf_opt = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
     let prior: Vec<GeneSpec> = std::env::var("SMC_PRIOR")
         .ok()
         .map(|p| load(Path::new(&p)))
@@ -898,15 +953,16 @@ fn main() {
         envf("SMC_CONTAIN", 0.0) > 0.0,
         envf("SMC_TAU_OFF", 0.0) > 0.0,
         spot_on,
+        envf_opt("SMC_WIND_ROT_GENE"),
     );
     let assim = mode == "assim";
 
-    let sc: Scenario = load(&dir.join("scenario.json"));
+    let mut sc: Scenario = load(&dir.join("scenario.json"));
+    apply_steps_scale(&mut sc, envf("SMC_STEPS_SCALE", 1.0));
     let truth: Truth = load(&dir.join("truth.json"));
     let mut cfg: CellaConfig = load(&dir.join("config.json"));
     let spread_env = std::env::var("SMC_SPREAD").ok();
     let wind_law_env = std::env::var("SMC_WIND_LAW").ok();
-    let envf_opt = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
     configure_spread(
         &mut cfg,
         spread_env.as_deref(),
@@ -921,7 +977,7 @@ fn main() {
     assert_eq!(truth.format_version, 2, "unknown truth format");
     let total = sc.grid.width * sc.grid.height;
     let burnt = [CellType::new("Burning"), CellType::new("BurnedOut")];
-    let steps_per_day = (24.0 * sc.steps_per_hour).round().max(1.0) as u64;
+    let steps_per_day = steps_per_day_from(&sc);
     let seed = envf("SMC_SEED", 0.0) as u64;
 
     if mode == "map" {
@@ -2068,7 +2124,7 @@ mod spot_gene_tests {
 
     #[test]
     fn without_smc_spot_the_gene_list_and_config_are_unchanged() {
-        let genes = build_genes(default_genes(), false, false, false);
+        let genes = build_genes(default_genes(), false, false, false, None);
         assert!(genes.iter().all(|g| g.key != GENE_SPOT_P && g.key != GENE_SPOT_DIST));
 
         let cfg = tiny_config();
@@ -2084,7 +2140,7 @@ mod spot_gene_tests {
 
     #[test]
     fn smc_spot_adds_both_spotting_genes_with_the_documented_ranges() {
-        let genes = build_genes(default_genes(), false, false, true);
+        let genes = build_genes(default_genes(), false, false, true, None);
         let p_spot = genes
             .iter()
             .find(|g| g.key == GENE_SPOT_P)
@@ -2105,7 +2161,7 @@ mod spot_gene_tests {
 
     #[test]
     fn smc_spot_combines_with_contain_and_tau_off() {
-        let genes = build_genes(default_genes(), true, true, true);
+        let genes = build_genes(default_genes(), true, true, true, None);
         let keys: Vec<&str> = genes.iter().map(|g| g.key.as_str()).collect();
         assert!(keys.contains(&GENE_CONTAIN_A));
         assert!(keys.contains(&GENE_CONTAIN_B));
@@ -2242,5 +2298,108 @@ mod arrival_config_tests {
         );
         assert_eq!(spread_param(&cfg, "c2"), ParamValue::Float(0.45));
         assert_eq!(spread_param(&cfg, "arrival_jitter"), ParamValue::Float(0.5));
+    }
+}
+
+/// E30b: `SMC_STEPS_SCALE` must scale the scenario's clock (and, through
+/// it, the wildfire driver's `steps_per_day`) together, and
+/// `SMC_WIND_ROT_GENE` must add `wind_rot_deg` to the gene list only when
+/// set, at the requested half-width. See `apply_steps_scale`,
+/// `steps_per_day_from` and `build_genes`.
+#[cfg(test)]
+mod e30b_pilot_tests {
+    use super::*;
+    use cella_lib::MemberDriver;
+    use cella_lib::explore::Scale;
+
+    fn tiny_scenario(steps_per_hour: f64) -> Scenario {
+        Scenario {
+            format_version: 2,
+            id: "test".into(),
+            grid: GridMeta { width: 4, height: 4 },
+            wind: vec![],
+            steps_per_hour,
+        }
+    }
+
+    /// E30's own clock: 50 ticks/day, i.e. steps_per_hour = 50 / 24.
+    const E30_STEPS_PER_HOUR: f64 = 50.0 / 24.0;
+
+    #[test]
+    fn steps_scale_of_one_is_a_no_op() {
+        let mut sc = tiny_scenario(E30_STEPS_PER_HOUR);
+        apply_steps_scale(&mut sc, 1.0);
+        assert_eq!(steps_per_day_from(&sc), 50);
+    }
+
+    /// The brief's own acceptance check: SMC_STEPS_SCALE=4 turns E30's 50
+    /// ticks/day into 200, and a 24 h observation window -- computed the
+    /// same way `observation_steps` computes a window's step count, from
+    /// `sc.steps_per_hour` directly -- is 200 steps at that same scale, so
+    /// one window still spans exactly one day of forcing.
+    #[test]
+    fn smc_steps_scale_of_4_quadruples_the_clock_and_keeps_windows_in_sync() {
+        let mut sc = tiny_scenario(E30_STEPS_PER_HOUR);
+        apply_steps_scale(&mut sc, 4.0);
+        let steps_per_day = steps_per_day_from(&sc);
+        assert_eq!(steps_per_day, 200, "4x E30's clock: 50 -> 200 ticks/day");
+
+        let truth = Truth {
+            format_version: 2,
+            observed_at: vec![0.0, 24.0],
+            arrival_hours: vec![],
+        };
+        let windows = observation_steps(&sc, &truth);
+        assert_eq!(
+            windows,
+            vec![(200, 24.0)],
+            "a 24h window is 200 steps at SMC_STEPS_SCALE=4"
+        );
+
+        let driver = WildfireDriver {
+            steps_per_day,
+            weather: vec![],
+        };
+        assert_eq!(
+            driver.period_steps(),
+            Some(200),
+            "the driver's containment period matches the scaled clock"
+        );
+    }
+
+    #[test]
+    fn without_smc_wind_rot_gene_the_gene_list_is_unchanged() {
+        let genes = build_genes(default_genes(), true, true, false, None);
+        assert!(
+            genes.iter().all(|g| g.key != GENE_WIND_ROT_DEG),
+            "wind_rot_deg must stay out of the list unless SMC_WIND_ROT_GENE is set"
+        );
+    }
+
+    #[test]
+    fn smc_wind_rot_gene_adds_the_gene_at_the_requested_half_width() {
+        let genes = build_genes(default_genes(), true, true, false, Some(90.0));
+        let g = genes
+            .iter()
+            .find(|g| g.key == GENE_WIND_ROT_DEG)
+            .expect("wind_rot_deg gene present");
+        assert_eq!(g.range, Some([-90.0, 90.0]));
+        assert_eq!(g.scale, Scale::Linear, "an angle, not a rate: linear, not log");
+        // It combines with the other knobs rather than replacing them.
+        let keys: Vec<&str> = genes.iter().map(|g| g.key.as_str()).collect();
+        assert!(keys.contains(&GENE_CONTAIN_A));
+        assert!(keys.contains(&GENE_CONTAIN_B));
+        assert!(!keys.contains(&GENE_TAU_DAYS), "SMC_TAU_OFF still drops tau_days");
+        assert_eq!(genes.len(), default_genes().len() - 1 + 2 + 1);
+    }
+
+    #[test]
+    fn a_different_half_width_is_reflected_in_the_range() {
+        let genes = build_genes(default_genes(), false, false, false, Some(15.0));
+        let g = genes
+            .iter()
+            .find(|g| g.key == GENE_WIND_ROT_DEG)
+            .expect("wind_rot_deg gene present");
+        assert_eq!(g.range, Some([-15.0, 15.0]));
     }
 }

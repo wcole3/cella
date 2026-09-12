@@ -42,6 +42,15 @@ use crate::types::CellType;
 
 /// Free gene: multiplier on the wind speed the forcing supplies.
 pub const GENE_WIND_SCALE: &str = "wind_scale";
+/// Free gene: degrees added to the forcing's wind *from*-bearing before it
+/// is written into the model, per member (E30b). A fixed, whole-schedule
+/// rotation is a runner concern (`wildfire_smc`'s `SMC_WIND_ROT_DEG`,
+/// applied to the weather schedule before the driver ever sees it); this
+/// gene is the per-member, *learned* version of the same idea — each
+/// member can trust the reported wind direction by a different amount.
+/// Left out of a run's gene list (the default), it contributes nothing:
+/// [`WildfireDriver::apply`] reads it with `unwrap_or(0.0)`.
+pub const GENE_WIND_ROT_DEG: &str = "wind_rot_deg";
 /// Free gene: decay time-scale in days for `p0`; absent means no decay.
 pub const GENE_TAU_DAYS: &str = "tau_days";
 /// Free gene: intercept of the daily containment probability.
@@ -133,6 +142,7 @@ impl MemberDriver for WildfireDriver {
             Gene::float(GENE_TAU_DAYS, 2.0, 100.0, true),
             Gene::float(GENE_CONTAIN_A, -6.0, -1.0, false),
             Gene::float(GENE_CONTAIN_B, -2.0, -0.3, false),
+            Gene::float(GENE_WIND_ROT_DEG, -90.0, 90.0, false),
         ]
     }
 
@@ -171,8 +181,9 @@ impl MemberDriver for WildfireDriver {
             .or_else(|| self.scheduled_wind(hours))
             .unwrap_or((model.params.wind_speed, model.params.wind_from_deg));
         let wind_scale = space.float(genome, GENE_WIND_SCALE).unwrap_or(1.0);
+        let wind_rot = space.float(genome, GENE_WIND_ROT_DEG).unwrap_or(0.0);
         model.params.wind_speed = speed * wind_scale;
-        model.params.wind_from_deg = from.rem_euclid(360.0);
+        model.params.wind_from_deg = (from + wind_rot).rem_euclid(360.0);
 
         // The base p0 comes from the gene when there is one (a child's mutated
         // gene must win over the scratch it inherited from its parent). With
@@ -310,6 +321,7 @@ mod tests {
     use super::*;
     use crate::explore::ensemble::{Ensemble, EnsembleConfig};
     use crate::explore::genome::GeneSpec;
+    use crate::external::ParamValue;
     use crate::grid2d::Grid2D;
     use crate::rules::Rule2D;
     use crate::types::CellType;
@@ -414,6 +426,55 @@ mod tests {
             let expect = space.float(&genome, "model.p0").unwrap() * (-1.0 / tau).exp();
             assert!((model_params(&mut m.sim).p0 - expect).abs() < 1e-9);
         }
+    }
+
+    #[test]
+    fn wind_rot_deg_gene_rotates_each_members_wind_independently() {
+        // Two members, one ensemble, the same forcing (wind from 90 deg).
+        // Pin one member's `wind_rot_deg` to 0 and the other's to 90 by
+        // writing the genome directly -- the gene draws a random value per
+        // member otherwise, which a test cannot rely on.
+        let mut genes = fire_genes();
+        genes.push(GeneSpec::range(GENE_WIND_ROT_DEG, -90.0, 90.0));
+        let cfg = EnsembleConfig {
+            genes,
+            ..fire_config(2, WildfireDriver::default())
+        };
+        let mut e = Ensemble::new(template(8, 8), &cfg).unwrap();
+        let space = e.space().clone();
+        let idx = space
+            .index(GENE_WIND_ROT_DEG)
+            .expect("the gene is in this run's list");
+        let ws_idx = space
+            .index(GENE_WIND_SCALE)
+            .expect("wind_scale is in this run's list too");
+        // Pin wind_scale equal on both members: it otherwise draws a
+        // random value per member, which would confound the wind-speed
+        // check below with something this test isn't about.
+        e.members_mut()[0].genome.0[ws_idx] = ParamValue::Float(1.0);
+        e.members_mut()[1].genome.0[ws_idx] = ParamValue::Float(1.0);
+        e.members_mut()[0].genome.0[idx] = ParamValue::Float(0.0);
+        e.members_mut()[1].genome.0[idx] = ParamValue::Float(90.0);
+        e.set_forcing(forcing(0.0, 4.0, 90.0)).unwrap();
+        let members = e.members_mut();
+        let p0 = model_params(&mut members[0].sim);
+        let p1 = model_params(&mut members[1].sim);
+        assert_eq!(
+            p0.wind_from_deg, 90.0,
+            "rotation 0 leaves the forcing's bearing unchanged"
+        );
+        assert_eq!(
+            p1.wind_from_deg, 180.0,
+            "rotation 90 adds to the forcing's bearing, mod 360"
+        );
+        assert_ne!(
+            p0.wind_from_deg, p1.wind_from_deg,
+            "two members, same forcing, different wind_rot_deg -> different grid wind"
+        );
+        assert_eq!(
+            p0.wind_speed, p1.wind_speed,
+            "the gene rotates direction only, never speed"
+        );
     }
 
     #[test]
@@ -629,7 +690,7 @@ mod tests {
         let d = c.driver.as_ref().unwrap();
         assert_eq!(d.period_steps(), Some(12));
         assert_eq!(d.owned_keys(), vec![OWNED_P0.to_string()]);
-        assert_eq!(d.free_genes().len(), 4);
+        assert_eq!(d.free_genes().len(), 5);
         let back = serde_json::to_string(&c).unwrap();
         assert!(back.contains(r#""wildfire""#), "{back}");
         let again: EnsembleConfig = serde_json::from_str(&back).unwrap();
