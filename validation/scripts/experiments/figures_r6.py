@@ -594,19 +594,25 @@ def e43_spot_illuminate():
 
 
 def e30a():
-    """E30a: elongation (E12's measure) vs. burned-area size, one panel per
-    wind speed, one line per spread rule (Bernoulli vs. arrival). The
-    prediction this figure checks at a glance: the Bernoulli line should
-    fall from > 1.5 (2 % burned) to < 1.3 (20 % burned) at 8 m/s; the
-    arrival line should stay flat (within +-0.15) at every wind. Each point
-    is the mean over 3 seeds; the shaded band is the seed min-max.
+    """E30a fix round 2: elongation (E12's measure) vs. burned CELL COUNT
+    (not a grid fraction — see the experiment file for why), one panel per
+    wind speed, one line per spread rule (Bernoulli vs. arrival), on the
+    upwind-ignition 900x300 domain. Exponential wind law, p0 = 0.12,
+    jitter 0.2. The prediction this figure checks at a glance: both lines
+    should stay flat (self-similar) at every wind, now that the domain no
+    longer lets the fire's head reach a boundary within these checkpoints.
+    Each point is the mean over 3 seeds; the shaded band is the seed
+    min-max; a hollow point marks a checkpoint with `boundary_contact` —
+    read those as unreliable, not as data (mild/calm winds still touch the
+    *upwind* edge at the larger checkpoints; that does not affect the
+    downwind-driven shape at higher wind, per the experiment file).
     """
     data = load("exp30a_arrival_flat.json")
     if data is None:
         return
-    rows = data["illuminate"]
+    rows = [r for r in data["illuminate"] if r["wind_law"] == "exponential" and r["p0"] == 0.12 and r["jitter"] == 0.2]
     winds = sorted({r["wind_ms"] for r in rows})
-    sizes = sorted({r["size_frac"] for r in rows})
+    sizes = sorted({r["cells"] for r in rows})
     rules = [("bernoulli", "BERNOULLI", MUTED), ("arrival", "ARRIVAL", ACCENT)]
 
     W, H = 1000, 320
@@ -629,15 +635,17 @@ def e30a():
             by_size = {}
             for r in rows:
                 if r["wind_ms"] == wind and r["spread"] == key:
-                    by_size.setdefault(r["size_frac"], []).append(r["elongation"])
-            pts_mean, pts_lo, pts_hi = [], [], []
+                    by_size.setdefault(r["cells"], []).append((r["elongation"], r["boundary_contact"]))
+            pts_mean, pts_lo, pts_hi, pts_contact = [], [], [], []
             for s in sizes:
                 vs = by_size.get(s, [])
                 if not vs:
                     continue
-                pts_mean.append((s, sum(vs) / len(vs)))
-                pts_lo.append((s, min(vs)))
-                pts_hi.append((s, max(vs)))
+                es = [e for e, _ in vs]
+                pts_mean.append((s, sum(es) / len(es)))
+                pts_lo.append((s, min(es)))
+                pts_hi.append((s, max(es)))
+                pts_contact.append((s, any(c for _, c in vs)))
             if not pts_mean:
                 continue
             band = (" ".join(f"{sx(s):.1f},{sy(v):.1f}" for s, v in pts_hi) + " " +
@@ -645,26 +653,29 @@ def e30a():
             body.append(f'<polygon points="{band}" fill="{col}" fill-opacity="0.12"/>')
             body.append(f'<polyline points="{" ".join(f"{sx(s):.1f},{sy(v):.1f}" for s, v in pts_mean)}" '
                         f'fill="none" stroke="{col}" stroke-width="1.8" stroke-linejoin="round"/>')
-            for s, v in pts_mean:
-                body.append(f'<circle cx="{sx(s):.1f}" cy="{sy(v):.1f}" r="2.6" fill="{PAPER}" '
-                            f'stroke="{col}" stroke-width="1.4"/>')
+            for (s, v), (_, contact) in zip(pts_mean, pts_contact):
+                fill = PAPER if not contact else "none"
+                dash = '' if not contact else ' stroke-dasharray="1.5,1.2"'
+                body.append(f'<circle cx="{sx(s):.1f}" cy="{sy(v):.1f}" r="2.6" fill="{fill}" '
+                            f'stroke="{col}" stroke-width="1.4"{dash}/>')
         for s in sizes:
-            body.append(text(sx(s), py + PH - 8, f"{s * 100:.0f}%", size=6.5, anchor="middle"))
-    body.append(text(500, 24, "E12 ELONGATION VS. BURNED-AREA SIZE, ONE PANEL PER WIND SPEED",
+            body.append(text(sx(s), py + PH - 8, f"{s // 1000}k", size=6.5, anchor="middle"))
+    body.append(text(500, 24, "E12 ELONGATION VS. BURNED CELL COUNT, ONE PANEL PER WIND SPEED (EXPONENTIAL LAW)",
                       anchor="middle", extra='letter-spacing="0.10em"'))
     body.append(legend(H - 28, W, [
         (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{MUTED}" stroke-width="1.8"/>',
          "bernoulli (probability rule)"),
         (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{ACCENT}" stroke-width="1.8"/>',
-         "arrival (heat-accumulator rule)"),
-        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="{MUTED}" fill-opacity="0.12"/>',
-         "3-seed min-max band"),
+         "arrival (minimum travel time)"),
+        (lambda x, y: f'<circle cx="{x + 8}" cy="{y}" r="2.6" fill="none" stroke="{INK}" stroke-width="1.4" stroke-dasharray="1.5,1.2"/>',
+         "hollow/dashed = boundary contact (unreliable)"),
     ]))
     (FIG / "e30a-arrival-flat.svg").write_text(svg(
         "e30a", "E30a arrival-time kernel: elongation vs. size",
         "Four panels, one per wind speed (0, 2, 5, 8 m/s), each plotting E12's elongation measure against the "
-        "burned-area size (2, 5, 10, 20 percent) for a point ignition on a 400x400 uniform grid, one line for "
-        "the Bernoulli spread rule and one for the arrival-time rule, mean over 3 seeds with a min-max band.",
+        "burned cell count (2000, 5000, 10000, 20000) for a point ignition upwind on a 900x300 uniform grid, "
+        "one line for the Bernoulli spread rule and one for the arrival-time rule (exponential wind law), mean "
+        "over 3 seeds with a min-max band; hollow dashed points mark boundary contact.",
         W, H, "\n".join(body)))
     print("wrote e30a-arrival-flat.svg")
 
