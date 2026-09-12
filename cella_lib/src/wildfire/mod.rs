@@ -2854,14 +2854,26 @@ mod tests {
 
     #[test]
     fn arrival_rule_closed_form_length_to_breadth_matches_cosh_under_exponential() {
-        // Closed form (controller fix round 1): with the exponential law,
-        // head speed = exp(c1 v), back speed = exp(c1 v) exp(-2 c2 v), and
-        // flank speed (perpendicular, cos theta = 0) = exp(c1 v) exp(-c2 v).
-        // A minimum-travel-time front's reach in each direction after a
-        // fixed time is proportional to that direction's speed, so
-        // (head + back) / (2 * flank) = (1 + e^-2c2v) / (2 e^-c2v) =
-        // cosh(c2 v) -- independent of c1 and p0. At c2 = 0.131, v = 8 that
-        // is cosh(1.048) = 1.601.
+        // Closed form (controller fix round 1, CORRECTED in fix round 5):
+        // fix round 1's `cosh(c2*v)` assumed the shape's half-width is set
+        // by the 90-degree flank rate `e^-c2v` -- wrong, because the
+        // minimum-travel-time shape is the polar curve `r(theta) =
+        // e^(c2*v*(cos theta - 1))` (relative to the head, r(0) = 1), and a
+        // polar curve's *width* perpendicular to its own axis is not its
+        // value at theta=90 degrees: it's `max_theta [r(theta) * sin(theta)]`
+        // (the largest lateral projection over the whole curve, which can
+        // sit well short of 90 degrees once the curve is peaked enough to
+        // fall off fast). Length is still `r(0) + r(180deg) = 1 + e^-2c2v`,
+        // so the correct closed form is
+        // `LB = (1 + e^-2c2v) / (2 * max_theta [e^(c2*v*(cos theta - 1)) * sin theta])`,
+        // scanned over theta in 1-degree steps below -- independent of c1
+        // and p0, same as before. At c2 = 0.131, v = 8 (c2*v = 1.048) the
+        // max lateral projection falls at theta ~= 50 degrees (0.527), not
+        // 90 degrees (0.350: `e^-1.048 = 0.351`), giving LB ~= 1.06, not
+        // cosh(1.048) = 1.601 -- the exponential law's template is nearly
+        // *round* at 8 m/s, which is the real finding here (and the
+        // quantitative reason E19/E37 found this law produces so little
+        // shape). At c2*v = 0, both formulas agree (LB = 1, a circle).
         //
         // Controller fix round 2: ignition sits *upwind* on an elongated
         // 900x300 grid (x = 40, y centred) instead of centred on a square
@@ -2908,31 +2920,23 @@ mod tests {
             }
         }
         let measured = crate::explore::metrics::elongation(&sim, &[b, burned]);
-        let expected = (0.131f64 * 8.0).cosh();
-        // Fix round 4: this bound was 15% before the diagonal-cost double-
-        // count fix (measured 1.398, an accident of two compensating
-        // errors: the bug slowed every diagonal step by an extra factor of
-        // norm_j, which happened to pull the shape closer to the 3-
-        // direction idealization below). With the bug fixed, measured LB
-        // is 1.096 (31.5% short of 1.601) -- the closed form only accounts
-        // for the head/back/flank *cardinal* directions' reach; the actual
-        // burned region is the second-moment shape of all 8 direction
-        // vectors' convex hull, and the 4 diagonal vertices (unaffected by
-        // the bug fix's own math, since c2 is mild here) sit close enough
-        // to the head-back axis to round the shape out and pull measured
-        // elongation below the idealized ratio -- the same "hull, not the
-        // continuous law" mechanism fix round 3 named for rear_focus's
-        // *overshoot*, showing up here as an *undershoot* instead because
-        // the exponential law is mild rather than sharply peaked. The
-        // measured-vs-closed-form head *speed* check (a separate table, not
-        // this test) still agrees with `p0 * exp(c1*v)` within 1%, so the
-        // per-direction rates themselves are correct; only the aggregate
-        // second-moment shape departs from the 3-point idealization. This
-        // is now a stability/regression check (catches a large swing in
-        // either direction), not a tight calibration target.
+        let c2 = 0.131f64;
+        let v = 8.0f64;
+        let length = 1.0 + (-2.0 * c2 * v).exp();
+        let mut half_width = 0.0f64;
+        let mut theta_deg = 0u32;
+        while theta_deg <= 180 {
+            let theta = (theta_deg as f64).to_radians();
+            let lateral = (c2 * v * (theta.cos() - 1.0)).exp() * theta.sin();
+            if lateral > half_width {
+                half_width = lateral;
+            }
+            theta_deg += 1;
+        }
+        let expected = length / (2.0 * half_width);
         assert!(
-            (measured - expected).abs() / expected < 0.35,
-            "measured LB {measured:.3} vs cosh(c2*v) {expected:.3} (must be within 35% -- see fix-round-4 comment above)"
+            (measured - expected).abs() / expected < 0.15,
+            "measured LB {measured:.3} vs corrected closed form {expected:.3} (hull half-width, not the 90-degree flank; must be within 15%)"
         );
     }
 

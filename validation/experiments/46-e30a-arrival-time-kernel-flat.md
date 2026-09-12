@@ -1,8 +1,8 @@
-# E30a — the arrival-time kernel on a flat grid · finding — a diagonal-cost bug doubled the diagonal-vs-cardinal step ratio and explained most, but not all, of rear-focus's overshoot; fixed, the kernel now nearly matches Anderson's LB(U) at the ensemble's real operating wind, with a smaller, understood hull-geometry residual left at high wind
+# E30a — the arrival-time kernel on a flat grid · finding — a diagonal-cost bug doubled the diagonal-vs-cardinal step ratio and explained most, but not all, of rear-focus's overshoot; fixed, the kernel now nearly matches Anderson's LB(U) at the ensemble's real operating wind, with a smaller, understood hull-geometry residual left at high wind. Separately, the exponential law's own "closed form" (`cosh(c2·v)`) was a controller error from fix round 1: correctly derived, the law's template is nearly round at every tested wind and the model matches its own (much smaller) correct target within 3 %
 
-_Round 6 (2026-09-11/12) · fix round 4 (diagonal-cost double-count found and fixed, the current main result), fix round 2/3 (upwind-ignition domain + mechanism explanation, now superseded by the code fix), fix round 1 (centred 400×400, boundary-limited, superseded) and v1 (heat accumulator, superseded) kept below for the record · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb`, `head_speed` modes) · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
+_Round 6 (2026-09-11/12) · fix round 5 (exponential-law closed form corrected, a controller error found in review), fix round 4 (diagonal-cost double-count found and fixed), fix round 2/3 (upwind-ignition domain + mechanism explanation, now superseded by the code fix), fix round 1 (centred 400×400, boundary-limited, superseded) and v1 (heat accumulator, superseded) kept below for the record · 3 seeds · synthetic grids, no fire · example `cella_lib/examples/wildfire_ros.rs` (`arrival_flat`, `illuminate`, `lb`, `head_speed` modes) · results `exp30a_arrival_flat.json` · figure [figures/e30a-arrival-flat.svg](figures/e30a-arrival-flat.svg) · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-## v2b, fix round 4 — the diagonal-cost fix (the current main result)
+## v2b, fix rounds 4–5 — the diagonal-cost fix and the corrected exponential closed form (the current main result)
 
 **In short.** A full-diff review of this task found that `step_chunk_arrival`'s
 travel cost multiplied an extra `norm_j` (1 cardinal, `√2` diagonal) into
@@ -144,16 +144,26 @@ a needle-thin ellipse finely enough) predicts, and it is what remains
 once the unrelated bug is removed: **the mechanism was real, its
 numbers were not.**
 
-**Closed-form check (jitter 0): exponential, c2 = 0.131, 8 m/s:
-measured 1.096 vs. `cosh(c2·v) = 1.601` — 31.5 % short**, outside the
-original 15 % bound (widened to 35 % — see the unit test's own comment
-for why: the closed form only idealizes the head/back/flank *cardinal*
-directions, and the actual second-moment shape includes all 8
-directions' convex hull, whose diagonal vertices round the shape out
-and pull measured elongation *below* the 3-point idealization — the
-same hull-vs-continuous-law mechanism as rear-focus's overshoot, here
-an undershoot instead because the exponential law is mild rather than
-sharply peaked. Rear-focus, 2 m/s: measured 1.524 (jitter 0) vs.
+**Closed-form check (jitter 0), CORRECTED in fix round 5: exponential,
+c2 = 0.131, 8 m/s: measured 1.096 vs. the correct closed form 1.065 —
+2.9 % short, comfortably within 15 %.** `cosh(c2·v) = 1.601` (fix round
+1's original formula, repeated in every round through fix round 4) is
+a **controller error found in review**, not a property of the model:
+it assumed the shape's half-width is set by the 90°-flank rate
+`e^-c2v`, but the minimum-travel-time shape is the polar curve
+`r(θ) = e^(c2·v·(cosθ−1))` (relative to the head), and a polar curve's
+true lateral half-width is `max_θ [r(θ)·sinθ]` — not its value at
+exactly θ = 90°. At c2·v = 1.048 that maximum falls near θ ≈ 50°
+(`r(50°)·sin(50°) ≈ 0.527`), not at 90° (`r(90°) = e^-1.048 ≈ 0.351`),
+giving the correct closed form `LB = (1 + e^-2c2v) / (2 · 0.527) ≈
+1.065` — the exponential law's template is **nearly round** at 8 m/s,
+which is the actual, corrected finding: fix round 4's "31.5 % short"
+was measuring the model against the wrong target, not finding a real
+shortfall. This is also the quantitative reason E19/E37 found this law
+produces so little shape. The unit test's bound is restored to 15 %
+against the corrected closed form (computed in the test itself by a
+1°-step scan over θ, not hard-coded). Rear-focus, 2 m/s: measured 1.524
+(jitter 0) vs.
 Anderson 1.505 — **1.3 % over**, and the 30 %-bound unit test (default
 jitter, mean of 3 seeds) now measures **0.958× (4.2 % under)**, a huge
 improvement on fix round 3's ~20 % over. Rear-focus, 5 m/s: measured
@@ -162,18 +172,20 @@ improvement on fix round 3's ~20 % over. Rear-focus, 5 m/s: measured
 
 **Prediction check**, against the v1.8/fix-round-2 predictions restated
 for this round (elongation flat with size at every wind for both laws;
-jitter-0 LB equals `cosh(c2·v)` within 15 % under the exponential law
-and is within 20 % of Anderson under rear-focus at 2/5/8 m/s; p0 0.12
-fires no longer die):
+jitter-0 LB equals the exponential law's closed form within 15 %, and
+is within 20 % of Anderson under rear-focus, at 2/5/8 m/s; p0 0.12
+fires no longer die — the original prediction text named `cosh(c2·v)`
+as that closed form, now known to be a controller error; see the
+corrected-closed-form check above):
 
 1. *Elongation flat with size, both laws.* **Still confirmed**, at the
    new (lower) levels shown in Table 2.
-2. *Jitter-0 exponential LB within 15 % of `cosh(c2·v)`, c2 = 0.131,
-   8 m/s.* **Refuted** — 31.5 % short (was 13 % short under the bug).
-   The bug happened to pull this particular number *closer* to the
-   closed form by accident; fixed, the real 8-direction-hull gap is
-   larger than 15 % here too. The unit test's bound moved to 35 % with
-   an explicit comment, not silently.
+2. *Jitter-0 exponential LB within 15 % of its own closed form,
+   c2 = 0.131, 8 m/s.* **Confirmed against the corrected closed form**
+   (2.9 % short of 1.065) — it only looked refuted (31.5 % short, fix
+   round 4) against the wrong target, `cosh(c2·v) = 1.601`. At 5 m/s:
+   measured 1.034 vs. corrected closed form 1.017 — 1.7 % short, also
+   comfortably confirmed.
 3. *Jitter-0 rear-focus LB within 20 % of Anderson at 2/5/8 m/s.*
    **Refuted at 5 and 8 m/s** (62 % and 235 % over), **now confirmed at
    2 m/s** (1 % over — it was 33 % over under the bug). The picture at
@@ -208,12 +220,20 @@ fires no longer die):
    angular neighbourhood; a fitted template-LB → realised-LB
    correction) are unchanged from fix round 3 and still the paths to
    take if Task 8 ever needs accuracy at higher wind.
-4. **The exponential law's undershoot got worse, not better, once
-   correctly measured** (31.5 % short of `cosh(c2·v)` at 8 m/s, up from
-   13 %) — the same hull-rounds-the-shape mechanism, working in the
-   opposite direction because the exponential law's ellipse is mild
-   rather than sharply peaked. No `c2` value is recommended under this
-   law, for a stronger reason than before.
+4. **The exponential law was never undershooting anything — fix round
+   1's own target formula was wrong.** `cosh(c2·v)` assumed the shape's
+   half-width sits at the 90° flank; the true minimum-travel-time
+   half-width is `max_θ [e^(c2·v·(cosθ−1))·sinθ]`, which at c2·v = 1.05
+   falls near θ ≈ 50°, giving a *much* smaller closed-form LB (≈ 1.07,
+   not 1.60). Measured against the correct target, the exponential law
+   is within 3 % at 8 m/s and within 2 % at 5 m/s — its template is
+   simply **nearly round** at every wind tested, by construction of
+   the formula itself, not because the model fails to reproduce it.
+   This is a controller error found in review (fix round 5), not a new
+   measurement; no `c2` value is "recommended" because the law itself
+   was never going to produce Anderson-like shape at any `c2` in the
+   tested range — that conclusion still stands, just for the right
+   reason now.
 5. **The Bernoulli path is unaffected**, confirmed three ways: its own
    Table 2 rows are byte-identical to every prior round, the
    snapshot/hash stress tests in `long_suite.rs` pass unmodified, and
@@ -230,8 +250,11 @@ overshoot ≈ 0 %). Do not extrapolate above LB ≈ 1.5 — the hull-geometry
 residual is real, understood, and grows sharply (+62 % at LB ≈ 3.2,
 +235 % at LB ≈ 7), with no tunable parameter to correct it short of the
 two named structural fixes. No `c2` is recommended under the
-exponential law: every value undershoots the true (now-corrected)
-`cosh(c2·v)` target, worse at higher wind.
+exponential law — not because it undershoots some target (fix round 5
+found its old target, `cosh(c2·v)`, was a controller error), but
+because the law's own correct closed form shows its template is nearly
+round at every tested wind by construction, so no `c2` in the tested
+range produces Anderson-like elongation at all.
 
 **Discipline.** Code (`35ee379`) committed, gated (`make clippy`,
 `cargo test --release`, `cargo llvm-cov`), and rebuilt *before* any
@@ -257,8 +280,11 @@ below are still correct and unaffected — only the magnitude numbers
 changed. The needle/8-direction-hull *mechanism* fix round 3 describes
 below is also still correct; only the numbers illustrating it (which
 had the bug baked in) are superseded — see v2b's template-LB
-before/after table for the corrected ones. Kept verbatim for the
-record._
+before/after table for the corrected ones. Separately, every `cosh(c2·v)`
+figure in this section (fix round 1's exponential-law "closed form")
+is also wrong — a controller error found in fix round 5, not a
+property of the model; see v2b's corrected-closed-form check above.
+Kept verbatim for the record._
 
 **In short.** Fix round 1 found that the arrival rule's elongation
 "collapsed with size" under the rear-focus wind law — a result that
@@ -666,8 +692,11 @@ the fire's own head reach the domain boundary at almost exactly the
 10 % checkpoint under rear-focus at high wind. The "elongation collapses
 with size" finding below is a domain artefact, not a property of the
 arrival rule; see the fix-round-2 section above for the corrected
-measurement and the current recommendation. Kept verbatim for the
-record._
+measurement and the current recommendation. Also, every `cosh(c2·v)`
+figure below (this round's own exponential-law closed form) is wrong —
+a controller error found in fix round 5; see the v2b section at the
+top of the file for the corrected closed form and why the 90°-flank
+assumption fails. Kept verbatim for the record._
 
 **In short.** v1 of the arrival rule (a per-cell "heat" accumulator) had
 two flaws its own tables exposed: heat only came from currently-burning

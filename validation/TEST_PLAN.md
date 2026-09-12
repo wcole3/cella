@@ -530,6 +530,16 @@ in `validation/results/analysis/`.
   test's bound widened from 15 % to 35 % with an explicit comment). No
   rule, law, or parameter changed — only the arrival rule's internal
   cost arithmetic and the numbers it produces.
+  **E30a v2b, fix round 5 (2026-09-12):** the exponential-law "closed
+  form" `cosh(c2·v)` used since fix round 1 was itself a controller
+  error (it assumed the shape's half-width sits at the 90° flank rate;
+  the true minimum-travel-time half-width is `max_θ [e^(c2·v·(cosθ−1))·
+  sinθ]`, which peaks near 50° at c2·v ≈ 1, not 90°); corrected in the
+  unit test (a 1°-step scan, bound restored to 15 %) and the experiment
+  file. Against the correct closed form the exponential law is within
+  3 % at 8 m/s and 2 % at 5 m/s, not "31.5 % short" — its template is
+  simply nearly round at every tested wind by construction, which is
+  the quantitative form of E19/E37's finding, not a new shortfall.
 - v1.7 (2026-09-05, before the Round 5 runs E32–E37): a round about the
   *methods*, not the fire model. Base configuration = E31's recommended
   row (assim, β 10, σ 0.2, immigrants 0.2, containment only, M 32). Declared:
