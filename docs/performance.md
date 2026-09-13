@@ -1290,7 +1290,8 @@ not what's happening here; the fork-join-per-member-per-step story is.
 **Runner-level: does this change how many concurrent processes to run?**
 Total wall time for 4 `Bear_2020`/Bernoulli runs (seeds 0-3), four ways,
 min of 2 repeats each (fix round 1 added the fourth arrangement and the
-second repeat — see task-11-report.md §12 for both repeats' numbers):
+second repeat — both repeats' raw numbers are in
+`validation/results/experiments/bench_ensemble_par.json`):
 
 | Arrangement | Config | Total wall (min of 2) |
 |---|---|---|
@@ -1328,9 +1329,7 @@ unchanged.** (Had this arm cleared 20 %, the ruling was to add
 `CELLA_MEMBER_PAR=16` to `BASE_ENV` — a runner-level config change only,
 never `Ensemble::step`'s own heuristic or `MIN_WORK_PER_CHUNK`.)
 
-**Prediction, checked line by line** (pre-registered before timing; see
-`.superpowers/sdd/round-6-experiments/task-11-brief.md` and
-`task-11-report.md` for the full accounting):
+**Prediction, checked line by line** (pre-registered before timing):
 
 1. *"(16, 50k) is ≥10 % faster than today on Ferguson."* Against the
    design doc's own labelled baseline, (16, 400k): +9.6 % on Bernoulli
@@ -1386,5 +1385,6 @@ ensemble run at these grid sizes is genuinely 24-57 % faster
 but a *sweep* of several such runs launched concurrently should stay
 concurrent at `workers=4`; neither switching to one-process-at-a-time nor
 adding the knob to `BASE_ENV` clears the bar this study set for changing
-that default. Full table, both runner-level repeats, the noisy-cell
-data, and self-review: `.superpowers/sdd/round-6-experiments/task-11-report.md`.
+that default. Full table, both runner-level repeats, and the noisy-cell
+data are in `validation/results/experiments/bench_ensemble_par.json`
+(gitignored, reproducible from `bench_ensemble_par.py`).

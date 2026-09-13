@@ -402,6 +402,90 @@ mechanism that costs nothing, not because it scores higher.
   the next model change: after it, those three fires must fall inside
   the map.
 
+## 5e. September 11–12: nulls, state correction, and a kernel that tells time
+
+Details in [experiments/](experiments/README.md) E41–E43, E30a, E30, E30b
+and Round 6, and every term in
+[experiments/GLOSSARY.md](experiments/GLOSSARY.md).
+
+**Does the wind tell the model which way to grow, or just how stretched to
+be?** We built a third dumb forecaster next to the round disc from before:
+an oval stretched along the day's wind. On two of the six fires it beat
+the round disc by a wide margin — evidence, it looked like, that wind
+carries real information about shape. But an oval has two things baked
+into it at once: which end is the front (the *sign* — "this side is
+downwind"), and how much longer the front end grows than the back (the
+*stretch*). We built a second oval that keeps the same wind but removes
+the sign — both ends grow at the same rate, only the middle bulges — and
+almost all of the win disappeared. So the finding is narrower than it
+first looked: wind tells the model *which way* a fire is likely to run,
+but at these gentle wind speeds it says almost nothing about *how much
+longer* than wide the fire should be. That matters because it tells us
+what to fix next: get the direction right, don't just make the model more
+stretchy in general.
+
+**Giving the model yesterday's real map helps a lot — but "a lot" is a low
+bar here.** We tried rebuilding part of the model's population every day
+from the satellite's actual picture of the fire so far, instead of only
+letting it guess from physics. Every one of the six fires' scores went up
+by more than the round's noise floor — a real, repeatable gain. But then
+we checked it against the honest competition: a person who does nothing
+but reread yesterday's map and guess "probably about the same today."
+That trivial guess still beat our corrected model by a wide margin on
+every fire, because a fire that is still growing but has already burned a
+lot of area makes "unchanged since yesterday" an extremely strong guess
+almost by arithmetic alone. Correcting the *whole* population instead of
+part of it closed some of that gap but not most of it. The honest
+conclusion: this correction genuinely helps the model, but it is not yet
+good enough to call a forecasting product, and every future write-up of
+it has to be compared against the "reread yesterday's map" guess, not
+against our own earlier, uncorrected model.
+
+**Does letting embers jump ahead of the fire change what shapes the model
+can draw?** Round 5 found the model can only draw long, stretched fires
+while they are small — once a fire gets big, this model always rounds it
+off. We tried switching on ember-jump ("spotting") to see if that limit
+moves. On one fire (Ferguson) it clearly does: the model can now draw a
+fire as stretched as the real one, and we double-checked this was one
+real connected fire shape and not just a scatter of separate embers
+counted as if they were stretch. On a second fire (Pier) the same trick
+barely works — only about a third of repeated tries actually produce a
+stretched-enough shape, so call that one "maybe." On the third fire
+(Brattain), nothing changes; that fire is still simply too long and thin
+for anything we have tried.
+
+**We built a kernel meant to fix the wind-shape problem directly — and
+it made real fires worse, not better, until we changed one more thing.**
+Rather than only nudging the odds of catching fire, the new kernel tracks
+*when* each cell would catch, the way a wave spreads outward at a set
+speed — a much more natural way to let wind pull a fire's shape long and
+thin. On a clean test grid (no real terrain, no real fire, just squares
+of open ground) this new kernel does exactly what a well-known formula
+for real fire shapes predicts, once we found and fixed two mistakes: a
+math bug that had doubled how expensive a diagonal step was compared to
+a straight one, and a wrong target formula for a different setting that
+we had been checking the model against for weeks. Both mistakes are
+written up plainly in the experiment files, not hidden. But when we
+pointed this newly-fixed kernel at the six real fires, it did worse than
+the model we already had — because the same knob ("how fast can a cell
+catch fire") means a different thing under the new rule than under the
+old one, and we had not yet re-tuned it. A quick follow-up test, using a
+faster clock and letting each simulated fire learn its own small
+correction to the day's wind direction, recovered the lost ground on one
+trial run — a promising sign, not yet a proven fix, since it is only one
+run instead of the usual five.
+
+**What is left.** The wind-direction fix above needs the full, five-run
+test before we trust it. Two cheap follow-up checks would tell us whether
+that fix works because each simulated fire is *learning* the right
+direction, or simply because giving many simulated fires slightly
+different directions to try is enough by itself. The ember-jump trick and
+the new time-based kernel have never been tried together, so we don't yet
+know if they help the same problem twice or two different problems.
+Nothing here should be read as fixed for production use yet — every new
+option above ships turned off by default until it has been proven on
+enough independent runs.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means

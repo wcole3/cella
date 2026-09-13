@@ -714,6 +714,31 @@ in `validation/results/analysis/`.
 
 ## 10. Roadmap after v1
 
+**Current (after Round 6, 2026-09-12) — in order:**
+
+1. The full five-seed E30b on Arm B's configuration (4× clock, widened
+   p0/burn_duration prior, the learned `wind_rot_deg` gene), plus E37b
+   re-run at the same 4× clock.
+2. The E30b mechanism ablations: Arm B with mutation σ = 0 on
+   `wind_rot_deg` (diversity-only test), and Arm B with the gene's range
+   narrowed to ±20° (learned-correction-only test).
+3. Arrival + rear_focus + spotting genes (E43) together — not yet
+   combined.
+4. A finer angular neighbourhood, or a fitted template-LB correction, for
+   the rear-focus hull overshoot that remains at high wind (LB > 1.5).
+5. A fuel term in the containment operator, and the ICS-209 check's own
+   follow-up (does ICS-209's containment-line lag scale with fire size or
+   fuel type?) — carried from Round 4/5.
+6. Pre-existing gaps: crate coverage ≈ 98.3 % vs. the 99 % gate; `make
+   clippy` does not lint `cella_lib`'s own examples; `wildfire_smc.rs`'s
+   size.
+
+Full context for each item: `validation/experiments/round-6.md`, "Still
+open after this round."
+
+**Original v1 roadmap (2026-08-14), superseded in substance by each
+round's own "Still open" section but kept here for the record:**
+
 1. Calibration campaign on the T0 calibration set (§6), report on the T0
    holdout.
 2. `rasterize_isochrones.py` (shared GDAL tool) → PT-FireSprd + GOFER truth;

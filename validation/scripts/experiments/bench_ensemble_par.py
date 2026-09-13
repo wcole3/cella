@@ -14,8 +14,9 @@ the pre-registered grid, because inspecting `Ensemble::step`'s own size
 heuristic (`chunks_for_work(total*12) <= 1`) shows that at these two grids'
 sizes and 16 threads, *today's actual behaviour already steps members
 sequentially, each fully chunked* — not "all members concurrently" as the
-brief's Design section assumed. See docs/performance.md and
-task-11-report.md for the write-up; this file only produces the numbers.
+brief's Design section assumed. See docs/performance.md ("Ensemble
+stepping parallelism") for the write-up; this file only produces the
+numbers.
 
 Thread count is controlled by a `cella.properties` file in each run's
 working directory (never the repo's own, so nothing here can affect any
@@ -34,8 +35,8 @@ instead: total wall time for 4 Bear/Bernoulli runs (seeds 0-3), four ways,
 two repeats each (min reported, both kept):
   (a) 4 concurrent processes x 16 threads, knobs unset (today's engine
       default at 16 threads — the *shape* R6's `run_all(workers=4)` uses,
-      see the module-level caveat about the repo's own `threads=4`
-      `cella.properties` in task-11-report.md).
+      see the module-level caveat above about the repo's own `threads=4`
+      `cella.properties`).
   (b) 4 concurrent processes x 16 threads x `CELLA_MEMBER_PAR=16` forced
       in each — today's process shape *plus* the single-run win from the
       main matrix. This is the arm that actually decides whether

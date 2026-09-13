@@ -455,9 +455,10 @@ Commits `6d7e9b3..ad3654d`.
   validation scenarios (`Bear_2020`, `Brattain_2020`, `Buck_2017`,
   `Chimney_2016`, `Ferguson_2018`, `Pier_2017`) against the Task 1 baseline
   produced six byte-identical JSON files (empty `diff`, matching MD5s).
-  Phase 3 moved no IoU, Sørensen, or arrival-time figure — see
-  [task-5-report.md](../.superpowers/sdd/roadmap/task-5-report.md) for the
-  per-scenario commands and checksums.
+  Phase 3 moved no IoU, Sørensen, or arrival-time figure. (The per-scenario
+  commands and checksums were recorded in a task report that is not
+  committed to this repo; the result itself — six byte-identical files,
+  confirmed by diff and MD5 — is restated here in full rather than linked.)
 - **Still owed**: the manual GL checks in §5 for §3.4 (the wildfire-demo
   panel walkthrough and the "no model" negative case) have not been run —
   this environment cannot launch the GUI (see §1's WSLg/Mesa blocker). The
@@ -870,6 +871,20 @@ and a model grid; a real ensemble and a real evolution round-trip through
 the worker; the reducer handles every action in the shortcut table; the
 snapshot suite is unchanged; E31 replicates E25/E28 through the generic
 engine (`validation/experiments/33-e31-generic-engine-replication.md`).
+
+**Validation kept going on this branch after Phase 5 landed.** Round 5
+(2026-09-05) checked the methods themselves (noise floor, ensemble size,
+operators, prior width, filter vs. offline fit, shape reachability).
+Round 6 (2026-09-11/12) added a wind-oriented null, a state-correction
+mechanism, a spotting-based shape check, and a from-scratch arrival-time
+spread kernel meant to fix the model's round-fire bias directly — the
+kernel is validated on a synthetic grid but, dropped into the six real
+fires as-is, currently loses to the existing model (REJECTED as tested);
+a one-seed follow-up with a learned wind-direction correction recovered
+it and is queued for a full five-seed run. None of Round 6's new options
+(the arrival kernel, the wind-direction gene, state correction, the gated
+immigrant reset) are on by default. Full write-up:
+[`validation/experiments/round-6.md`](../validation/experiments/round-6.md).
 
 **Acceptance still owed — the manual GL checklist** (this machine cannot
 open a window; see §6):

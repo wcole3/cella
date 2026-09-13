@@ -28,7 +28,7 @@ Ferguson/Brattain) is fixable by the filter itself.
 
 Pilot scope: seed 0 only, six fires, two arms (12 runs), judged against
 exp33_noise.json seed 0 and exp30_arrival_fires.json seed 0 with the E33
-sd. No E37b re-run here (see task-10-brief.md / TEST_PLAN v1.8 addendum).
+sd. No E37b re-run here (see TEST_PLAN.md v1.8 addendum, E30b).
 
 Each row also carries `wall_s`, the run's own wall-clock time (this pilot
 is the first place that number is asked for; r5_common.run() itself is
