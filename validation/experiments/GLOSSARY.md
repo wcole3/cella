@@ -198,6 +198,16 @@ a bug in this page.
   kernel. ×0 = wind off.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
   The weather-report convention, used everywhere since Round 2.
+- **Wind-direction offset gene (`wind_rot_deg`).** A free, per-member gene
+  (`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`) added to the forcing's
+  wind from-bearing before the driver writes it into the model, mod 360.
+  Left out of a run's gene list (the default), it does nothing. Distinct
+  from `SMC_WIND_ROT_DEG`, a fixed rotation of the *whole* weather
+  schedule applied once for every member; this gene lets each member
+  learn its *own* correction on top of that, uniform on [−h, h] where `h`
+  is `SMC_WIND_ROT_GENE`'s half-width. E30b: tests whether the filter can
+  learn its way out of a wrong ERA5 daily direction (E41) rather than
+  needing the input fixed by hand.
 - **Spotting.** Embers igniting cells far ahead of the front. Supported,
   off after E7; switched back on, as illumination genes only, in E43.
 - **Spotting genes.** `model.spotting.p_spot` (per-step chance a burning
@@ -211,6 +221,15 @@ a bug in this page.
   tick, so 1.5 km/day is the hard front-speed cap.
 - **Front-speed cap.** The 1.5 km/day limit above. Real fires broke it on
   most of their big days.
+- **Clock cap.** The front-speed cap, restated as a knob: at `N` ticks per
+  day the head can move at most `N` cells/day (one cell/tick, both spread
+  rules), so raising `N` — `SMC_STEPS_SCALE` in `wildfire_smc` — raises
+  the cap without changing any spread gene. E30's 50 ticks/day capped the
+  head at 1.5 km/day, below what Brattain's rear-focus head needed to
+  reach its observed day-5 shape (≈ 1.9 cells/tick); E30b's
+  `SMC_STEPS_SCALE=4` (200 ticks/day) raises the cap to 6 km/day, keeping
+  one observation window at one day of forcing by scaling the driver's
+  `steps_per_day` from the same field.
 - **Percolation cliff.** Below a threshold p0 the fire fizzles; above it,
   it burns everything reachable. Real fires sit in the narrow band
   between. A small p0 change swings the burned area many-fold.

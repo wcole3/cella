@@ -807,6 +807,129 @@ def e30():
     print("wrote e30-arrival-fires.svg")
 
 
+def _ellipse_mean(raw_path):
+    """Mean ellipse_iou over a raw report's score series, or None if the
+    field is absent (older reports, e.g. E33/E30, predate it)."""
+    if not raw_path.exists():
+        return None
+    rep = json.loads(raw_path.read_text())
+    vals = [s["ellipse_iou"] for s in rep["scores"] if "ellipse_iou" in s]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _wind_rot_median(raw_path):
+    """Median final wind_rot_deg across a raw report's final_genomes, or
+    None if the gene wasn't in this run (Arm A)."""
+    if not raw_path.exists():
+        return None
+    rep = json.loads(raw_path.read_text())
+    vals = [g["wind_rot_deg"]["Float"] for g in rep["final_genomes"] if "wind_rot_deg" in g]
+    if not vals:
+        return None
+    vals.sort()
+    n = len(vals)
+    mid = n // 2
+    return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def e30b():
+    """E30b/Task 10 pilot: six per-fire bar panels (E33 seed 0 / E30
+    seed 0 / Arm A / Arm B mean consensus IoU), a dashed Circle line and
+    an E33 +-1 sd band in each, plus a bottom strip of Arm B's learned
+    wind_rot_deg median per fire against a +-90 degree axis.
+    """
+    noise = load("exp33_noise.json")
+    e30_rows = load("exp30_arrival_fires.json")
+    pilot = load("exp30b_arrival_x4_pilot.json")
+    if noise is None or e30_rows is None or pilot is None:
+        return
+    raw = EXP / "exp30b_arrival_x4_pilot"
+    by_fire_seed0 = lambda rows: {r["fire"]: r for r in rows if r["seed"] == 0}
+    e33, e30 = by_fire_seed0(noise), by_fire_seed0(e30_rows)
+    arm_a = {r["fire"]: r for r in pilot if r["config"] == "armA_seed0"}
+    arm_b = {r["fire"]: r for r in pilot if r["config"] == "armB_seed0"}
+
+    W, H = 1000, 840
+    PW, PH = 280, 220
+    body = []
+    series = [("E33", e33, MUTED, 0.55), ("E30", e30, MUTED, 0.85),
+              ("A", arm_a, ACCENT, 0.35), ("B", arm_b, ACCENT, 0.85)]
+    ymax = 0.75
+    for i, f in enumerate(FIRES):
+        px, py = panel_grid(6, 3, PW, PH, 40, 40, 56, 44)[i]
+        sy = lambda v: py + PH - 32 - min(v, ymax) / ymax * (PH - 56)
+        body.append(f'<line x1="{px + 32}" y1="{py + 8}" x2="{px + 32}" y2="{py + PH - 32}" stroke="{RULE}"/>')
+        body.append(f'<line x1="{px + 32}" y1="{py + PH - 32}" x2="{px + PW}" y2="{py + PH - 32}" stroke="{RULE}"/>')
+        r33 = e33.get(f)
+        if r33 is None:
+            continue
+        sd = E33_SD[f]
+        base = r33["mean_consensus_iou"]
+        body.append(f'<rect x="{px + 32}" y="{sy(base + sd):.1f}" width="{PW - 32}" '
+                     f'height="{max(sy(base - sd) - sy(base + sd), 0.5):.1f}" fill="rgba(45,49,66,0.08)"/>')
+        circle = r33["mean_radial_iou"]
+        body.append(f'<line x1="{px + 32}" y1="{sy(circle):.1f}" x2="{px + PW}" y2="{sy(circle):.1f}" '
+                     f'stroke="{INK}" stroke-width="1.2" stroke-dasharray="4,2" stroke-opacity="0.6"/>')
+        body.append(text(px, py - 4, SHORT[f] + ("*" if r33["holdout"] else ""),
+                          size=13, fill=INK, font=SANS, weight=600))
+        bw = (PW - 48) / 4
+        for k, (label, rows, col, op) in enumerate(series):
+            row = rows.get(f)
+            if row is None:
+                continue
+            v = row["mean_consensus_iou"]
+            x = px + 40 + k * bw
+            body.append(f'<rect x="{x:.1f}" y="{sy(v):.1f}" width="{bw - 6:.1f}" '
+                        f'height="{py + PH - 32 - sy(v):.1f}" fill="{col}" fill-opacity="{op}" '
+                        f'stroke="{col}" stroke-width="1"/>')
+            body.append(text(x + (bw - 6) / 2, py + PH - 20, label, size=7, anchor="middle"))
+        body.append(text(px + 28, py + 4, f"{ymax:.2f}", size=6.5, anchor="end"))
+        body.append(text(px + 28, py + PH - 34, "0", size=6.5, anchor="end"))
+    body.append(text(500, 24, "MEAN CONSENSUS IOU, SEED 0: E33 / E30 / ARM A / ARM B, VS. CIRCLE (DASHED) AND E33 +-1 SD",
+                      anchor="middle", extra='letter-spacing="0.07em"'))
+    body.append(legend(572, W, [
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="14" height="12" fill="{MUTED}" fill-opacity="0.55"/>', "E33 seed 0"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="14" height="12" fill="{MUTED}" fill-opacity="0.85"/>', "E30 seed 0"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="14" height="12" fill="{ACCENT}" fill-opacity="0.35"/>', "Arm A"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="14" height="12" fill="{ACCENT}" fill-opacity="0.85"/>', "Arm B"),
+        (lambda x, y: f'<line x1="{x}" y1="{y}" x2="{x + 16}" y2="{y}" stroke="{INK}" stroke-width="1.2" stroke-dasharray="4,2"/>', "Circle"),
+        (lambda x, y: f'<rect x="{x}" y="{y - 6}" width="16" height="12" fill="rgba(45,49,66,0.08)"/>', "E33 +-1 sd"),
+    ]))
+
+    # --- Bottom strip: Arm B's learned wind_rot_deg median per fire, one
+    # row per fire (same layout as e30()/e39_gated_reset()'s dot strips).
+    yoff = 630
+    x0, x1, lo, hi = 200, 920, -90.0, 90.0
+    sx = lambda v: x0 + (v - lo) / (hi - lo) * (x1 - x0)
+    for v in (-90, -45, 0, 45, 90):
+        w = 1.2 if v == 0 else 0.8
+        body.append(f'<line x1="{sx(v):.0f}" y1="{yoff + 8}" x2="{sx(v):.0f}" y2="{yoff + 8 + 6 * 26}" '
+                     f'stroke="{INK if v == 0 else RULE}" stroke-width="{w}" '
+                     f'stroke-opacity="{0.4 if v == 0 else 1}"/>')
+        body.append(text(sx(v), yoff + 8 + 6 * 26 + 16, f"{v:+.0f}°", anchor="middle"))
+    body.append(text(560, yoff - 8, "ARM B: LEARNED wind_rot_deg MEDIAN PER FIRE (FINAL GENOMES)",
+                      anchor="middle", extra='letter-spacing="0.07em"'))
+    for i, f in enumerate(FIRES):
+        y = yoff + 8 + i * 26 + 13
+        r33 = e33.get(f)
+        body.append(text(184, y + 4, SHORT[f] + ("*" if r33 and r33["holdout"] else ""),
+                          size=11, fill=INK, font=SANS, anchor="end", weight=600))
+        rot = _wind_rot_median(raw / f"{f}_armB_seed0.json")
+        if rot is None:
+            continue
+        body.append(f'<circle cx="{sx(rot):.1f}" cy="{y}" r="5" fill="{PAPER}"/>'
+                    f'<circle cx="{sx(rot):.1f}" cy="{y}" r="5" fill="rgba(235,108,54,0.28)" '
+                    f'stroke="{ACCENT}" stroke-width="1.4"/>')
+        body.append(text(sx(rot), y - 10, f"{rot:+.1f}°", anchor="middle", size=7, fill=MUTED))
+    (FIG / "e30b-pilot.svg").write_text(svg(
+        "e30b", "E30b pilot: uncapped clock and a wind-direction gene",
+        "Top: six per-fire bar panels comparing mean consensus IoU (seed 0) across E33, E30, and this pilot's "
+        "Arm A / Arm B, with the Circle null as a dashed line and the E33 noise band shaded. Bottom: Arm B's "
+        "learned wind_rot_deg median per fire, against a +-90 degree axis.",
+        W, H, "\n".join(body)))
+    print("wrote e30b-pilot.svg")
+
+
 if __name__ == "__main__":
     FIG.mkdir(parents=True, exist_ok=True)
     e41_ellipse()
@@ -817,3 +940,4 @@ if __name__ == "__main__":
     e43_spot_illuminate()
     e30a()
     e30()
+    e30b()

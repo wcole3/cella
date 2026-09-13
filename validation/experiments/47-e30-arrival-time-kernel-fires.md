@@ -371,6 +371,50 @@ speed table) rather than an unexplained regression, and points directly
 at the fix: re-derive the p0 range for the arrival rule's units before
 judging the kernel itself on real fires again.
 
-**Later.** Not yet revisited. A re-tuned-p0 re-run of both halves is the
-obvious next step (see "Questions this raises"); E43's spotting
-combination remains open and untried under either kernel.
+**Later.** Not yet revisited at the time this file's verdict was written.
+A re-tuned-p0 re-run of both halves is the obvious next step (see
+"Questions this raises"); E43's spotting combination remains open and
+untried under either kernel.
+
+**Later (2026-09-12, correcting the root-cause framing with numbers, before
+E30b): the prior ceiling was not the forecast's own binding constraint.**
+The verdict above traces the forecast's losses to "`p0`'s meaning
+changing... with the gene range left numerically unchanged," which reads
+as if the learned posteriors were pinned at the prior's own top (0.6) and
+straining against it. They were not: the E30 learned p0 **means** (final
+window, five seeds) were Bear 0.302, Brattain 0.373, Buck 0.237, Chimney
+0.397, Ferguson 0.429, Pier 0.292 — every one comfortably inside the
+log-uniform [0.08, 0.6] prior (log-midpoint ≈ 0.22) and nowhere near its
+0.6 edge. The prior *ceiling* did not bind in the forecasts. Two things did,
+and they are different mechanisms in the two halves of this file:
+
+- **In the E37b illumination**, the one-cell-per-tick clock cap *combined
+  with* the prior's top did bind, because illumination samples the whole
+  prior range rather than letting a filter settle on a posterior: at 50
+  ticks/day the cap is 1.5 km/day, and Brattain's day-5 shape needs its
+  rear-focus head to cover roughly 480 cells in 250 ticks (≈ 1.9
+  cells/tick) — above what even p0 = 0.6 can give under arrival (≈ 0.62
+  cells/tick), so no elite in the search could reach it, prior width or
+  not.
+- **In the forecasts**, with the posteriors sitting mid-prior rather than
+  pinned at an edge, the more likely binding constraint is the direction
+  *input*: E41 found the ERA5 daily wind direction is wrong on Chimney and
+  Bear and right on Ferguson and Brattain, and a directional kernel
+  (arrival + rear_focus) is punished by a wrong direction in a way the
+  round, direction-blind Bernoulli blob never was. That is consistent with
+  (though this file did not test it directly) Chimney's and Brattain's
+  losses being partly a direction-input problem, not purely a speed-prior
+  problem, on the forecast side.
+
+This does not overturn the verdict above (REJECTED as tested, and the
+prior's *range* is still the wrong units for arrival's cells/tick — that
+part is unaffected), but it changes what "re-derive the p0 range" was
+expected to buy: since the forecasts were not prior-ceiling-limited, widening
+the ceiling alone is not guaranteed to fix them the way it plausibly fixes
+E37b's growth-shortfall problem. **E30b tests both fixes explicitly**: a
+4x clock (raising the illumination's own cap, independent of the prior)
+together with a wider prior, in one arm (Arm A), and the same plus a
+learned per-member wind-direction offset gene, in a second arm (Arm B) —
+so the clock/prior fix and the direction fix are each given their own arm
+to succeed or fail on, rather than being bundled into one change and
+credited or blamed together.
