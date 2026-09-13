@@ -456,9 +456,9 @@ Commits `6d7e9b3..ad3654d`.
   `Chimney_2016`, `Ferguson_2018`, `Pier_2017`) against the Task 1 baseline
   produced six byte-identical JSON files (empty `diff`, matching MD5s).
   Phase 3 moved no IoU, Sørensen, or arrival-time figure. (The per-scenario
-  commands and checksums were recorded in a task report that is not
-  committed to this repo; the result itself — six byte-identical files,
-  confirmed by diff and MD5 — is restated here in full rather than linked.)
+  commands and checksums were not committed to this repo; the result
+  itself — six byte-identical files, confirmed by diff and MD5 — is
+  restated here in full rather than linked.)
 - **Still owed**: the manual GL checks in §5 for §3.4 (the wildfire-demo
   panel walkthrough and the "no model" negative case) have not been run —
   this environment cannot launch the GUI (see §1's WSLg/Mesa blocker). The

@@ -55,7 +55,7 @@ not just clear a flag) that neither E38 nor E39 had tried.
    ties the Circle on four of six fires and only marginally moves on the
    other two (Brattain −0.005, Ferguson +0.009, an order of magnitude
    smaller). Chimney, whose ERA5 wind is already known to point the wrong
-   way (README, E9), loses hard on the sign-carrying variant (−0.124) but
+   way (README, E9), loses hard on the sign-carrying variant (−0.124, sd 0.012, loses) but
    just ties under the centred control — the same lesson from the other
    direction. This retargets E30: the kernel needs the wind response's
    *direction* fixed, not a generically "more anisotropic" shape.
