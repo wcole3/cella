@@ -1226,22 +1226,38 @@ minimum of the two (both reps are in
 `validation/results/experiments/bench_ensemble_par.json`). Binary: HEAD
 `ee4ae69`, confirmed clean (`binary_git` in every report JSON, no `-dirty`).
 
-**Timing (seconds, min of 2 reps):**
+**Timing (seconds, min of repeats — 2 reps except the three †  cells, 3):**
 
 | (member_par, min_work) | Bear bernoulli | Bear arrival | Ferguson bernoulli | Ferguson arrival |
 |---|---|---|---|---|
 | `unset` (today's heuristic) | 11.32 | 42.52 | 25.83 | 100.11 |
 | (16, 400k) | **4.86** | 23.69 | 17.06 | **76.25** |
-| (16, 50k) | 5.11 | **23.32** | **15.62** | 78.41 |
+| (16, 50k) | 5.11 | **23.32** | 15.42 † | 78.41 |
 | (8, 100k) | 5.90 | 24.41 | 16.39 | 79.57 |
 | (4, 50k) | 6.66 | 26.94 | 17.11 | 83.70 |
-| (2, 25k) | 8.14 | 33.33 | 18.98 | 93.60 |
-| (1, 12.5k) | 11.18 | 46.90 | 22.13 | 109.74 |
+| (2, 25k) | 8.14 | 33.33 | 18.98 | 93.60 † |
+| (1, 12.5k) | 11.18 | 46.90 | 22.13 | 109.74 † |
 
 Bold marks the fastest official config per column (the two are within a few
 percent of each other in every column — `min_work` barely matters once
 member-parallelism is engaged); `unset` is a bonus row, not part of the
 pre-registered grid, added because of the finding above.
+
+† **Noisy cells (fix round 1, 2026-09-12 controller review).** These three
+cells' first two repeats disagreed by more than 10%: Ferguson/bernoulli/
+(16,50k) (originally 15.62/17.28, 10.6%), Ferguson/arrival/(2,25k) (93.60/
+103.79, 10.9%), Ferguson/arrival/(1,12.5k) (109.74/124.03, 13.0%) — this
+last pair alone spans a wider range than several *other* configs' entire
+min-to-min gap in the same column, so a 2-rep min was not a safe number for
+comparisons this close. A third repeat was run for exactly these three
+(15.42s, 95.88s, 117.19s); the min barely moved in any of the three
+(15.62→15.42, 93.60 unchanged, 109.74 unchanged — the original min already
+happened to be the low outlier), but the *spread* stayed wide (12.0%, 10.9%,
+13.0% across 3 points), so read these four numbers as "fast, ±10-13%," not
+as precise as the rest of the table. This machine's run-to-run noise on the
+larger Ferguson grid is real, not a 2-rep artifact — see the Ferguson/
+bernoulli/(16,50k) row of `validation/results/experiments/bench_ensemble_par.json`
+for the raw numbers.
 
 **Determinism.** Every report JSON, minus `binary_git`/`binary_built_utc`
 (the `open`-mode report has no `wall_time_secs` field to strip), is
@@ -1272,55 +1288,103 @@ oversubscription story (many members' grids hot at once, more misses) is
 not what's happening here; the fork-join-per-member-per-step story is.
 
 **Runner-level: does this change how many concurrent processes to run?**
-Total wall time for 4 `Bear_2020`/Bernoulli runs (seeds 0-3), three ways:
+Total wall time for 4 `Bear_2020`/Bernoulli runs (seeds 0-3), four ways,
+min of 2 repeats each (fix round 1 added the fourth arrangement and the
+second repeat — see task-11-report.md §12 for both repeats' numbers):
 
-| Arrangement | Config | Total wall |
+| Arrangement | Config | Total wall (min of 2) |
 |---|---|---|
-| 4 processes × 16 threads (oversubscribed, today's `run_all(workers=4)` shape) | `unset` | **16.81 s** |
-| 1 process at a time × 16 threads | best single-run config, (16, 50k) | 19.80 s |
-| 2 processes × 8 threads, 2 rounds | (16, 50k) | 16.19 s |
+| 4 processes × 16 threads (oversubscribed; `run_all`'s actual shape — see caveat below) | `unset` | 16.43 s |
+| **4 processes × 16 threads, `CELLA_MEMBER_PAR=16` forced in each** | `CELLA_MEMBER_PAR=16` | **14.56 s (+11.4 %)** |
+| 1 process at a time × 16 threads | best single-run config, (16, 50k) | 19.75 s |
+| 2 processes × 8 threads, 2 rounds | (16, 50k) | 15.28 s |
+
+`run_all`'s own default is `workers=3`; every R6 experiment script that
+actually runs 4 concurrent `wildfire_smc` processes passes `workers=4`
+explicitly (`exp_r6_gated_reset.py`, `exp_r6_arrival_fires.py`,
+`exp_r6_observed_immigrants.py`, `exp_r6_all_state_correction.py`) — "today's
+shape" above means those call sites, not the function's own default.
 
 Counter to the pre-registered prediction, running one process at a time —
-even with the much-faster-per-run (16, 50k) config — is **17.8 % *slower***
+even with the much-faster-per-run (16, 50k) config — is **20.2 % *slower***
 for the batch of four than today's 4-way oversubscribed shape, and 2×8 is
-only a 3.7 % improvement over 4×16 (within run-to-run noise). The
-per-run speedup does not carry over to the batch: four processes sharing 16
-cores still get more total throughput than one process running four times
-in a row, because concurrency lets the *batch* overlap work that a faster
-but strictly-sequential arrangement cannot.
+a 7.0 % improvement over plain 4×16 (bigger than run-to-run noise, but
+still against the *unset* 4×16 baseline, not the one that matters for the
+default question below). The per-run speedup does not carry over to a
+naive one-at-a-time arrangement: four processes sharing 16 cores still get
+more total throughput than one process running four times in a row,
+because concurrency lets the *batch* overlap work that a faster but
+strictly-sequential arrangement cannot.
+
+**The arm that actually decides the default question** is the second row:
+today's process shape (4 concurrent, 16 threads) *plus* the single-run win
+(`CELLA_MEMBER_PAR=16` forced in each of the 4). That beats plain 4×16 by
+**11.4 %** — real (all four arms agree bit-for-bit per seed once
+provenance is stripped, confirmed directly, not just inferred from the
+single-run determinism test) but **below the pre-registered 20 % bar** for
+changing `r5_common.BASE_ENV`. Per the controller's ruling: less than 20 %
+→ document the number, change nothing. **`r5_common.BASE_ENV` is
+unchanged.** (Had this arm cleared 20 %, the ruling was to add
+`CELLA_MEMBER_PAR=16` to `BASE_ENV` — a runner-level config change only,
+never `Ensemble::step`'s own heuristic or `MIN_WORK_PER_CHUNK`.)
 
 **Prediction, checked line by line** (pre-registered before timing; see
 `.superpowers/sdd/round-6-experiments/task-11-brief.md` and
 `task-11-report.md` for the full accounting):
 
 1. *"(16, 50k) is ≥10 % faster than today on Ferguson."* Against the
-   design doc's own labelled baseline, (16, 400k): +8.4 % on Bernoulli
-   (short of 10), **−2.8 %** (slower) on arrival — fails. Against the
-   *actual* default (`unset`): +39.5 % on Bernoulli, +21.7 % on arrival —
-   holds. The prediction's truth depends entirely on which baseline "today"
-   means, which is itself the study's headline finding.
+   design doc's own labelled baseline, (16, 400k): +9.6 % on Bernoulli
+   (short of 10, and this exact cell is one of the three noisy ones above
+   — a 12 %-wide spread across 3 repeats, so "+9.6 %" should be read as
+   "roughly tied with 10 %, not reliably above or below it"), **−2.8 %**
+   (slower) on arrival — fails, or is a wash. Against the *actual* default
+   (`unset`): +40.3 % on Bernoulli, +21.7 % on arrival — holds clearly,
+   comfortably outside the noise band either way. The prediction's truth
+   depends entirely on which baseline "today" means, which is itself the
+   study's headline finding.
 2. *"(2, 25k)/(1, 12.5k) slower than (16, 50k) on Bernoulli, within 20 % on
    arrival."* Slower on Bernoulli: confirmed, all four cases (+21.5 % to
    +118.8 %). Within 20 % on arrival: mostly fails — three of four cases
-   exceed 20 % (Bear +42.9 %/+101.1 %, Ferguson (1, 12.5k) +40.0 %); only
-   Ferguson (2, 25k) at +19.4 % narrowly complies.
+   exceed 20 % (Bear +42.9 %/+101.1 %, Ferguson (1, 12.5k) +40.0 % —
+   unchanged by the third repeat, whose 117.19 s was *higher* than the
+   109.74 s already used as the min); only Ferguson (2, 25k) at +19.4 %
+   narrowly complies, and that comparison is one of the three flagged
+   cells above (12 %-wide spread across repeats), so "narrowly complies"
+   should not be read as a confident pass.
 3. *"1×16 beats 4×16 oversubscribed by ≥15 %."* Contradicted: 1×16 is
-   17.8 % **slower**, not faster (see runner-level table above).
+   20.2 % **slower**, not faster (see runner-level table above; this
+   comparison uses the low-noise Bear scenario only, so the noise caveat
+   above does not apply here).
 
-**Recommendation.** No default changes. The engine's own heuristic
-(`chunks_for_work(total * 12) <= 1`) is shared by every model this library
-can run, not just wildfire at these two grid sizes, and two scenarios under
-one rule family is not enough evidence to retune a heuristic that the
-existing 40+-entry benchmark suite (§4) already tunes for the general case
-— doing so without rerunning that whole suite risks a regression nobody
-would notice until it shipped. `CELLA_MIN_WORK` barely moves the needle
-once member-parallelism is already engaged (0-8 % beyond (16, 400k)), so
-its constant stays put too. What *is* worth adopting, by hand, per
-workload: a single wildfire ensemble run at these grid sizes is genuinely
-24-57 % faster (bit-identical) with `CELLA_MEMBER_PAR=<thread_count()>` set
-explicitly — but a *sweep* of several such runs launched concurrently
-(`run_all(workers=4)`, as R6's experiment scripts already do) should stay
-concurrent: the runner-level result above says switching to
-one-process-at-a-time, even tuned, loses throughput rather than gaining it.
-Full table, methodology, and self-review:
-`.superpowers/sdd/round-6-experiments/task-11-report.md`.
+**Recommendation, and an explicit deviation from the plan's 20 % rule.**
+The pre-registered bar — "change a default only if ≥20 % faster AND
+bit-identical" — **was met on the single-run axis** (24-57 % faster,
+proven bit-identical) but is **deliberately not applied** to
+`Ensemble::step`'s own heuristic (`chunks_for_work(total * 12) <= 1`) or to
+`MIN_WORK_PER_CHUNK`. This is a considered deviation, not an oversight, for
+three reasons: the heuristic is shared by every model this library can
+run, not just wildfire at these two grid sizes; the evidence is two
+scenarios under one rule family, not the general case the existing
+40+-entry benchmark suite (§4) already tunes for, and retuning it without
+rerunning that whole suite risks a regression nobody would notice until it
+shipped; and the runner-level result above shows the obvious follow-on move
+("since single runs are faster, run fewer of them") is actually a net loss
+for a concurrent batch. `CELLA_MIN_WORK` barely moves the needle once
+member-parallelism is already engaged (**−5.1 % to +9.6 %** beyond
+(16, 400k) — Bear/Bernoulli is the one case where 50k is *slower*; the
+range's upper end is one of the three noisy cells above), so its constant
+stays put too.
+
+**The one place the bar *was* re-applied — `r5_common.BASE_ENV`** — did not
+clear it either: the 4×16+`CELLA_MEMBER_PAR=16` arm above beat plain 4×16
+by 11.4 %, bit-identical, below the 20 % bar, so `BASE_ENV` is unchanged
+(see the runner-level section above for the full reasoning).
+
+**What *is* worth adopting, by hand, per workload:** a single wildfire
+ensemble run at these grid sizes is genuinely 24-57 % faster
+(bit-identical) with `CELLA_MEMBER_PAR=<thread_count()>` set explicitly —
+but a *sweep* of several such runs launched concurrently should stay
+concurrent at `workers=4`; neither switching to one-process-at-a-time nor
+adding the knob to `BASE_ENV` clears the bar this study set for changing
+that default. Full table, both runner-level repeats, the noisy-cell
+data, and self-review: `.superpowers/sdd/round-6-experiments/task-11-report.md`.

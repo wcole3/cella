@@ -30,14 +30,28 @@ Usage: python3 bench_ensemble_par.py [--quick]
 pass over the plumbing; the real study needs the default (no flags).
 
 python3 bench_ensemble_par.py --runner-level runs the second question
-instead: total wall time for 4 Bear/Bernoulli runs (seeds 0-3, `unset`
-config, i.e. today's engine default) as 4 concurrent processes at 16
-threads each (today's `run_all(workers=4)` shape) vs the same 4 runs one
-at a time at 16 threads using the best (member_par, min_work) the main
-matrix found for Bear vs 2 concurrent at a time at 8 threads each, same
-best config. Requires the main matrix to have already completed (reads
-`RESULTS_PATH` to pick "best"), and merges its own findings into the same
+instead: total wall time for 4 Bear/Bernoulli runs (seeds 0-3), four ways,
+two repeats each (min reported, both kept):
+  (a) 4 concurrent processes x 16 threads, knobs unset (today's engine
+      default at 16 threads — the *shape* R6's `run_all(workers=4)` uses,
+      see the module-level caveat about the repo's own `threads=4`
+      `cella.properties` in task-11-report.md).
+  (b) 4 concurrent processes x 16 threads x `CELLA_MEMBER_PAR=16` forced
+      in each — today's process shape *plus* the single-run win from the
+      main matrix. This is the arm that actually decides whether
+      `r5_common.BASE_ENV` should gain the knob (fix round 1, 2026-09-12):
+      if it beats (a) by >=20% total wall AND is bit-identical, the
+      controller's ruling is to set it; otherwise document and leave
+      `BASE_ENV` alone.
+  (c) 1 process at a time x 16 threads, the best (member_par, min_work)
+      the main matrix found for Bear.
+  (d) 2 concurrent processes x 8 threads, 2 rounds, same best config.
+Requires the main matrix to have already completed (reads `RESULTS_PATH`
+to pick "best" for arms c/d), and merges its own findings into the same
 results file under the `"runner_level"` key rather than overwriting it.
+Also checks that all four arms, same seed, agree bit-for-bit (provenance
+stripped) — the runner-level shape must not be able to change the answer
+any more than the single-run knobs can.
 """
 import argparse
 import json
@@ -220,6 +234,46 @@ def pick_best_bear_config(matrix):
     return best_label, totals[best_label]
 
 
+# Fix round 1 (2026-09-12 controller review): these three main-matrix cells
+# disagreed by >10% between their two repeats (Ferguson/bernoulli/16_50k
+# 10.6%, Ferguson/arrival/2_25k 10.9%, Ferguson/arrival/1_12500 13.0%),
+# including the cell behind the "(16,50k) beats (16,400k) by 8.4%" claim in
+# docs/performance.md §9. `--extra-rep` adds a third repeat to exactly these
+# cells so the min (and the noise band) rests on 3 points, not 2.
+NOISY_CELLS = [
+    ("Ferguson_2018", "bernoulli", "16_50k"),
+    ("Ferguson_2018", "arrival", "2_25k"),
+    ("Ferguson_2018", "arrival", "1_12500"),
+]
+
+
+def run_extra_rep():
+    if not RESULTS_PATH.exists():
+        sys.exit(f"{RESULTS_PATH} does not exist yet — run the main matrix first")
+    existing = json.loads(RESULTS_PATH.read_text())
+    setup_dirs()
+    by_key = {(r["fire"], r["rule"], r["config"]): r for r in existing["matrix"]}
+    for fire, rule, label in NOISY_CELLS:
+        row = by_key[(fire, rule, label)]
+        rep_n = len(row["reps"])
+        renv = RULES[rule]
+        out_path = RUNS_DIR / f"{fire}_{rule}_{label}_rep{rep_n}.json"
+        info, report = run_once(SCENARIOS_DIR / fire, renv, row["member_par"], row["min_work"], out_path, cwd=THREADS16_DIR)
+        info["out_path"] = str(out_path)
+        row["reps"].append(info)
+        row["elapsed_secs"].append(info["elapsed_secs"])
+        row["min_elapsed_secs"] = min(row["elapsed_secs"])
+        spread_pct = (max(row["elapsed_secs"]) - min(row["elapsed_secs"])) / min(row["elapsed_secs"]) * 100.0
+        row["repeat_spread_pct_after_extra_rep"] = spread_pct
+        print(f"{fire:14s} {rule:10s} {label:8s} rep{rep_n} {info['elapsed_secs']:7.2f}s "
+              f"(now {len(row['elapsed_secs'])} reps, spread {spread_pct:.1f}%)", flush=True)
+        RESULTS_PATH.write_text(json.dumps(existing, indent=1))
+    print(f"wrote extra reps into {RESULTS_PATH}")
+
+
+RUNNER_LEVEL_REPEATS = 2
+
+
 def run_runner_level():
     if not RESULTS_PATH.exists():
         sys.exit(f"{RESULTS_PATH} does not exist yet — run the main matrix first")
@@ -235,52 +289,97 @@ def run_runner_level():
     sdir = SCENARIOS_DIR / "Bear_2020"
     seeds = [0, 1, 2, 3]
 
-    def one(seed, member_par, min_work, cwd, tag):
-        out_path = RUNS_DIR / f"runner_level_{tag}_seed{seed}.json"
-        info, _report = run_once(sdir, RULES["bernoulli"], member_par, min_work, out_path, cwd=cwd, seed=seed)
-        return info
+    def one(seed, member_par, min_work, cwd, tag, rep):
+        out_path = RUNS_DIR / f"runner_level_{tag}_rep{rep}_seed{seed}.json"
+        info, report = run_once(sdir, RULES["bernoulli"], member_par, min_work, out_path, cwd=cwd, seed=seed)
+        return info, strip_provenance(report)
+
+    def run_arm(tag, member_par, min_work, cwd, workers):
+        """`RUNNER_LEVEL_REPEATS` rounds of `workers`-way concurrency over
+        `seeds`; returns (rounds, min_total_wall_secs, {seed: stripped_report}
+        from the first round, for the cross-arm determinism check)."""
+        rounds = []
+        by_seed = {}
+        for rep in range(RUNNER_LEVEL_REPEATS):
+            t0 = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                results = list(ex.map(
+                    lambda s: one(s, member_par, min_work, cwd, tag, rep), seeds))
+            total = time.perf_counter() - t0
+            per_run = [r[0] for r in results]
+            rounds.append({"total_wall_secs": total, "per_run": per_run})
+            if rep == 0:
+                by_seed = dict(zip(seeds, (r[1] for r in results)))
+            print(f"  {tag:18s} rep{rep} total {total:6.2f}s", flush=True)
+        min_total = min(r["total_wall_secs"] for r in rounds)
+        return rounds, min_total, by_seed
 
     idle = idle_snapshot()
 
     # (a) 4x16: 4 concurrent processes, 16 threads each, today's engine
     # default (knobs unset) — the shape of today's run_all(workers=4).
-    t0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        four_by_16 = list(ex.map(lambda s: one(s, None, None, THREADS16_DIR, "4x16"), seeds))
-    four_by_16_total = time.perf_counter() - t0
+    print("arm (a) 4x16 oversubscribed, knobs unset:", flush=True)
+    a_rounds, a_min, a_by_seed = run_arm("4x16", None, None, THREADS16_DIR, 4)
 
-    # (b) 1x16: the same 4 runs, one at a time, 16 threads, best config.
-    t0 = time.perf_counter()
-    one_by_16 = [one(s, best["member_par"], best["min_work"], THREADS16_DIR, "1x16") for s in seeds]
-    one_by_16_total = time.perf_counter() - t0
+    # (b) 4x16 + CELLA_MEMBER_PAR=16: same process shape as (a), plus the
+    # single-run win — the arm that decides the BASE_ENV question (fix
+    # round 1, 2026-09-12 controller review).
+    print("arm (b) 4x16 + CELLA_MEMBER_PAR=16:", flush=True)
+    b_rounds, b_min, b_by_seed = run_arm("4x16_member_par", 16, None, THREADS16_DIR, 4)
 
-    # (c) 2x8: two concurrent processes at a time (two rounds), 8 threads
-    # each, best config.
-    t0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        two_by_8 = list(ex.map(lambda s: one(s, best["member_par"], best["min_work"], THREADS8_DIR, "2x8"), seeds))
-    two_by_8_total = time.perf_counter() - t0
+    # (c) 1x16: the same 4 runs, one at a time, 16 threads, best config.
+    print("arm (c) 1x16 sequential, best config:", flush=True)
+    c_rounds, c_min, c_by_seed = run_arm("1x16", best["member_par"], best["min_work"], THREADS16_DIR, 1)
+
+    # (d) 2x8: two concurrent processes at a time (two rounds per repeat), 8
+    # threads each, best config.
+    print("arm (d) 2x8, best config:", flush=True)
+    d_rounds, d_min, d_by_seed = run_arm("2x8", best["member_par"], best["min_work"], THREADS8_DIR, 2)
+
+    # Cross-arm determinism: same seed, four different concurrency shapes
+    # (today's default, forced full member-parallelism, sequential, 2x8) —
+    # all must agree bit-for-bit once provenance is stripped.
+    cross_arm_determinism = {}
+    for seed in seeds:
+        by_arm = {"4x16": a_by_seed[seed], "4x16_member_par": b_by_seed[seed],
+                  "1x16": c_by_seed[seed], "2x8": d_by_seed[seed]}
+        arms = list(by_arm.keys())
+        base = by_arm[arms[0]]
+        mismatches = [a for a in arms[1:] if by_arm[a] != base]
+        cross_arm_determinism[str(seed)] = {"all_bit_identical": len(mismatches) == 0, "mismatched_arms": mismatches}
+
+    speedup_b_vs_a = (a_min - b_min) / a_min * 100.0
+    bit_identical = all(v["all_bit_identical"] for v in cross_arm_determinism.values())
 
     runner_level = {
         "idle_before": idle,
         "best_bear_config": {"label": best_label, "member_par": best["member_par"], "min_work": best["min_work"]},
         "seeds": seeds,
-        "4x16_oversubscribed": {"total_wall_secs": four_by_16_total, "per_run": four_by_16, "config": "unset (today's default)"},
-        "1x16_sequential": {"total_wall_secs": one_by_16_total, "per_run": one_by_16, "config": best_label},
-        "2x8": {"total_wall_secs": two_by_8_total, "per_run": two_by_8, "config": best_label},
+        "repeats": RUNNER_LEVEL_REPEATS,
+        "4x16_oversubscribed": {"rounds": a_rounds, "min_total_wall_secs": a_min, "config": "unset (today's default)"},
+        "4x16_member_par": {"rounds": b_rounds, "min_total_wall_secs": b_min, "config": "CELLA_MEMBER_PAR=16"},
+        "1x16_sequential": {"rounds": c_rounds, "min_total_wall_secs": c_min, "config": best_label},
+        "2x8": {"rounds": d_rounds, "min_total_wall_secs": d_min, "config": best_label},
+        "cross_arm_determinism": cross_arm_determinism,
+        "cross_arm_bit_identical": bit_identical,
+        "member_par_arm_speedup_vs_today_pct": speedup_b_vs_a,
+        "member_par_arm_meets_20pct_bar": bool(speedup_b_vs_a >= 20.0 and bit_identical),
     }
     existing["runner_level"] = runner_level
     RESULTS_PATH.write_text(json.dumps(existing, indent=1))
-    print(json.dumps({k: v for k, v in runner_level.items() if k.endswith("_secs") or "total_wall_secs" in str(v)}, indent=1))
-    print(f"4x16 oversubscribed: {four_by_16_total:.2f}s | 1x16 sequential: {one_by_16_total:.2f}s | 2x8: {two_by_8_total:.2f}s")
+    print(f"4x16 (unset): {a_min:.2f}s | 4x16+member_par: {b_min:.2f}s ({speedup_b_vs_a:+.1f}%) | "
+          f"1x16 sequential: {c_min:.2f}s | 2x8: {d_min:.2f}s | bit-identical: {bit_identical}")
     print(f"wrote runner_level into {RESULTS_PATH}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--runner-level", action="store_true")
+    ap.add_argument("--extra-rep", action="store_true")
     known, _ = ap.parse_known_args()
     if known.runner_level:
         run_runner_level()
+    elif known.extra_rep:
+        run_extra_rep()
     else:
         main()
