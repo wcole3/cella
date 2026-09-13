@@ -131,10 +131,10 @@ pub struct EnsembleConfig {
     /// immigrant, `All` for anyone) always gets a fresh, uncontained
     /// driver state too — it has no history to have been contained *in* —
     /// so `immigrant_reset_gate` and `immigrant_reset` are not consulted
-    /// for it at all. They still govern an immigrant under `None`, and
-    /// (since `All` only ever corrects immigrants the same way `Immigrants`
-    /// does) are never consulted under `All` either — every child is
-    /// covered by the correction directly.
+    /// for it at all. They still govern an immigrant under `None`. Under
+    /// `All` every child, immigrant or not, is unconditionally given that
+    /// fresh state, so the gate/bool clause is never reached for any of
+    /// them — there is no "immigrants only" carve-out to fall back to.
     #[serde(default)]
     pub state_correction: StateCorrection,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
@@ -1502,5 +1502,45 @@ mod tests {
             );
         }
         assert!(rep_a.immigrants >= 1, "the test needs at least one immigrant");
+    }
+
+    #[test]
+    fn all_correction_ignores_the_reset_gate_even_for_non_immigrants() {
+        // `state_correction: All` sets a corrected child's fresh state
+        // unconditionally (see `EnsembleConfig::state_correction`), so the
+        // reset gate/bool clause is never reached for it — not even when
+        // the gate itself, read in isolation, would say "no evidence to
+        // reset" (area ratio above the gate). This must hold for every
+        // member, not just immigrants: `All` is not immigrant-scoped.
+        let c = EnsembleConfig {
+            beta: 0.0,
+            immigrants: 0.25,
+            immigrant_reset_gate: Some(1.0),
+            state_correction: StateCorrection::All,
+            driver: Some(Box::new(NoopDriver)),
+            ..cfg(8)
+        };
+        let (mut e, area) = contained_population(&c);
+        let alive = CellType::from("Alive");
+        // Observed area is a third of every member's: area ratio ~= 3,
+        // above the gate, so the gate alone would refuse to reset anyone.
+        let obs_area = ((area / 3.0).ceil() as usize).max(1);
+        let mut observed = vec![false; e.member_mask(0, &[alive]).len()];
+        observed[..obs_area].fill(true);
+        let rep = e.assimilate(&observed, &[alive]).unwrap();
+        assert!(rep.immigrants >= 1, "the test needs at least one immigrant");
+        for i in 0..e.len() {
+            assert_eq!(
+                e.member_mask(i, &[alive]),
+                observed,
+                "member {i} must be seeded from the observation under All, \
+                 gate value notwithstanding"
+            );
+            assert!(
+                !e.members()[i].state.flag("contained"),
+                "member {i} must get a fresh, uncontained state: All corrects \
+                 unconditionally, the gate is never consulted"
+            );
+        }
     }
 }

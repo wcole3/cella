@@ -193,7 +193,8 @@ a bug in this page.
   faster head than tail even at a modest length-to-breadth ratio) now
   built into the fire model's own kernel instead of a diagnostic
   forecaster. At 0.6 m/s its head:back ratio is already ≈ 2.4–2.6. E30a,
-  per the controller ruling in `task-7-addendum.md` after E41.
+  added per the controller ruling made after E41 showed this front/back
+  rate skew was the signal actually carrying the wind-direction shape.
 - **Wind multiplier (wind ×).** Scales the input wind speed before the
   kernel. ×0 = wind off.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
@@ -317,17 +318,15 @@ a bug in this page.
   under-predicting the observed area, the lock-in signature — instead of
   resetting every time. `None` (the default) leaves the plain
   `immigrant_reset` in charge.
-- **State correction.** The standard particle-filter move (Rochoux et al.
-  2014; Xue, Gu & Hu 2012) of rebuilding a member's whole grid — not just
-  its knobs — from the observation itself, instead of only carrying a
-  parent's history forward. `state_correction: Immigrants` (E40) applies
-  it to the immigrants only; `state_correction: All` (E40b, post-hoc)
-  applies it to every resampled child, which keeps its own
-  learned/mutated genome, so learning continues while the grid is
-  corrected every window.
-- **state_correction.** Option: `None` (default, the pre-E40 behaviour —
-  every child's grid is a clone of a resampled parent), `Immigrants`
-  (E40) or `All` (E40b). A corrected child's grid is rebuilt from the
+- **State correction (`state_correction`).** The standard particle-filter
+  move (Rochoux et al. 2014; Xue, Gu & Hu 2012) of rebuilding a member's
+  whole grid — not just its knobs — from the observation itself, instead
+  of only carrying a parent's history forward. Option: `None` (default,
+  the pre-E40 behaviour — every child's grid is a clone of a resampled
+  parent), `Immigrants` (E40, applies it to the immigrants only) or `All`
+  (E40b, post-hoc, applies it to every resampled child, which keeps its
+  own learned/mutated genome, so learning continues while the grid is
+  corrected every window). A corrected child's grid is rebuilt from the
   observed mask just scored (burned interior → burned; the rim of
   still-unburned fuel next to a burned cell → burning, age 0; everything
   else untouched) and it always gets a fresh, uncontained driver state —

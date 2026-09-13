@@ -449,7 +449,7 @@ moves. On one fire (Ferguson) it clearly does: the model can now draw a
 fire as stretched as the real one, and we double-checked this was one
 real connected fire shape and not just a scatter of separate embers
 counted as if they were stretch. On a second fire (Pier) the same trick
-barely works — only about a third of repeated tries actually produce a
+barely works — only 6 of 15 repeated tries actually produce a
 stretched-enough shape, so call that one "maybe." On the third fire
 (Brattain), nothing changes; that fire is still simply too long and thin
 for anything we have tried.

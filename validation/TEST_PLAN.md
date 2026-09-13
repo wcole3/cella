@@ -434,8 +434,8 @@ in `validation/results/analysis/`.
   exp(c1·v) · r(θ_j)/r_max`, `r(θ) = 1/(a−c·cosθ)`, `a = LB(v)` (this
   plan's own `LB(U)` formula, clamped [1, 8]), `c = √(a²−1)`, `r_max =
   a+c` — at `v = 0`, `a = 1`, `c = 0`, so it reduces to the exponential
-  law's own no-wind case exactly. Added per a controller ruling after
-  E41 (`task-7-addendum.md`): the exponential law's head:back ratio is
+  law's own no-wind case exactly. Added per a controller ruling made
+  after E41 showed the exponential law's head:back ratio is
   only `exp(2·c2·v)` = 1.17 at 0.6 m/s, far too weak to reproduce the
   front/back rate skew (≈ 2.4 at `LB ≈ 1.1`) that E41 found actually
   carries the wind-direction shape signal in the six fires' real (ERA5)

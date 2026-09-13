@@ -81,6 +81,13 @@ sign, not the shape. Unit test: at `LB = 3`, wind toward +x, the grown
 set's left extent from the seed is within 10% of its right extent —
 confirmed, unlike the rear-focus version's ≥ 2× right-over-up/down.
 
+Both the pre-registered and post-hoc numbers below were re-run from a
+clean build (`a24d301`, `git status --short` empty of tracked changes)
+after discovering the original run used an `a28520d-dirty` binary
+predating the centred control's own commit (`c4c2286`); every numeric
+field in the six `*_nulls.json` reports and `exp41_ellipse.json` came
+back identical.
+
 **How we scored it.** IoU and binary Brier at every observation, mean and
 final over the series, exactly as the Circle — all six fires, nothing
 chosen per fire. A difference from the Circle smaller than the fire's E33

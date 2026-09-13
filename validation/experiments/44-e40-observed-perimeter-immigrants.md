@@ -1,4 +1,4 @@
-# E40 — immigrants seeded from the observed perimeter · KEPT AS AN OPTION, NOT A NOWCAST — beats its E33 twin everywhere, but loses badly to the trivial "yesterday's perimeter" forecast; E40b (post-hoc, everyone corrected) narrows that gap without closing it
+# E40 — immigrants seeded from the observed perimeter · KEPT as options, NOT a nowcast — beats its E33 twin everywhere, but loses badly to the trivial "yesterday's perimeter" forecast; E40b (post-hoc, everyone corrected) narrows that gap without closing it
 
 _Round 6 (2026-09-11, after E39; scoring revised 2026-09-11 after a controller review found the wrong dummy competitor) · 5 seeds matched to E33/E38/E39 · all six fires incl. holdout · runner `exp_r6_observed_immigrants.py` (`SMC_IMM_SOURCE=observed`, an alias for `SMC_STATE_CORRECTION=immigrants`; reset and gate off) · results `exp40_observed_immigrants.json` · E40b (post-hoc) runner `exp_r6_all_state_correction.py` (`SMC_STATE_CORRECTION=all`) · results `exp40b_all_state_correction.json` · pre-registered TEST_PLAN v1.8 addenda · terms: [GLOSSARY.md](GLOSSARY.md)_
 
@@ -28,13 +28,13 @@ real perimeter. Scored the fair way, against **lagged persistence**
 (yesterday's mask, unchanged, as today's forecast) and the **lagged
 Circle** (yesterday's mask grown the Circle's way to today's true area)
 — both of which see exactly what E40 sees, one window back, and nothing
-more — E40's own consensus (0.50–0.67) loses to lagged persistence
+more — E40's own consensus (0.490–0.654) loses to lagged persistence
 (0.88–0.96) by 0.3–0.4 on every fire. The reason is structural, not a
 bug: only 20 % of the population ever gets corrected; the other 80 % is
 an ordinary, drifting forecast dragging the consensus vote down. A
 post-hoc control, **E40b** (`state_correction: All`, correcting every
 member while each keeps learning its own genome), closes much of that
-gap — consensus rises to 0.66–0.81 — but still loses to both lagged
+gap — consensus rises to 0.678–0.806 — but still loses to both lagged
 nulls on **96.6 % of the windows where the fire actually grew** (676 of
 700, across all six fires and five seeds); every one of E40b's rare wins
 falls in the first or second scored window after ignition and never
