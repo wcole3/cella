@@ -10,6 +10,14 @@
 //!
 //! If the file or key is missing or invalid, the function falls back to
 //! `std::thread::available_parallelism()` (or 1 on error).
+//!
+//! Two more knobs, both read once from the environment and both no-ops
+//! unless set (see docs/performance.md's 2026-09-12 "Ensemble stepping
+//! parallelism" study for why they exist): `CELLA_MIN_WORK=<cells>` lowers
+//! or raises [`MIN_WORK_PER_CHUNK`] for this process, and
+//! `CELLA_MEMBER_PAR=<n>` caps how many ensemble members
+//! [`crate::explore::Ensemble::step`] steps concurrently instead of letting
+//! its own grid-size heuristic decide.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -129,9 +137,34 @@ pub fn clear_min_work_per_chunk_override() {
     MIN_WORK_OVERRIDE.store(0, Ordering::Relaxed);
 }
 
+/// Applies the `CELLA_MIN_WORK` environment variable to [`MIN_WORK_OVERRIDE`]
+/// exactly once per process, the first time [`chunks_for_work`] runs.
+///
+/// This is a thin bootstrap over [`set_min_work_per_chunk_override`], not a
+/// second knob: a one-off benchmark process sets the env var before it does
+/// any work and never changes it, so "read once" is enough and keeps the hot
+/// path (`chunks_for_work` runs on every step) down to one more atomic check
+/// after the first call. Tests that need to vary the threshold within one
+/// process call `set_min_work_per_chunk_override`/`clear_min_work_per_chunk_override`
+/// directly, which always wins over whatever the environment said.
+static MIN_WORK_ENV_APPLIED: OnceLock<()> = OnceLock::new();
+
+fn apply_min_work_env_once() {
+    MIN_WORK_ENV_APPLIED.get_or_init(|| {
+        if let Some(n) = std::env::var("CELLA_MIN_WORK")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+        {
+            MIN_WORK_OVERRIDE.store(n, Ordering::Relaxed);
+        }
+    });
+}
+
 /// How many chunks a step estimated at `total_work` neighbor visits should be
 /// split into. `1` means run serially on the calling thread.
 pub(crate) fn chunks_for_work(total_work: usize) -> usize {
+    apply_min_work_env_once();
     let threads = thread_count();
     if threads <= 1 {
         return 1;
@@ -141,6 +174,55 @@ pub(crate) fn chunks_for_work(total_work: usize) -> usize {
         n => n,
     };
     (total_work / min_work).clamp(1, threads)
+}
+
+/// Process-local override: the maximum number of ensemble members
+/// [`crate::explore::Ensemble::step`] batches together for concurrent
+/// stepping. `0` means "no override" — the engine's own size heuristic
+/// decides, exactly as before this knob existed. See docs/performance.md's
+/// 2026-09-12 "Ensemble stepping parallelism" study for why this exists and
+/// what it changes (nothing, unless it or `CELLA_MIN_WORK` is set).
+static MEMBER_PAR_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+
+/// Set a process-local override for how many ensemble members step
+/// concurrently. Used by tests/benchmarks; mirrors [`set_thread_override`].
+pub fn set_member_par_override(n: usize) {
+    MEMBER_PAR_OVERRIDE.store(n.max(1), Ordering::Relaxed);
+}
+
+/// Clear the member-parallelism override so the engine's own heuristic
+/// decides again.
+pub fn clear_member_par_override() {
+    MEMBER_PAR_OVERRIDE.store(0, Ordering::Relaxed);
+}
+
+/// Applies `CELLA_MEMBER_PAR` to [`MEMBER_PAR_OVERRIDE`] once per process,
+/// the first time [`member_par_override`] runs. Same bootstrap-only
+/// reasoning as [`apply_min_work_env_once`].
+static MEMBER_PAR_ENV_APPLIED: OnceLock<()> = OnceLock::new();
+
+fn apply_member_par_env_once() {
+    MEMBER_PAR_ENV_APPLIED.get_or_init(|| {
+        if let Some(n) = std::env::var("CELLA_MEMBER_PAR")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+        {
+            MEMBER_PAR_OVERRIDE.store(n, Ordering::Relaxed);
+        }
+    });
+}
+
+/// The current member-parallelism override, if any. `Ensemble::step` calls
+/// this once per step; `None` means "unchanged behaviour", which is the case
+/// whenever neither `set_member_par_override` nor `CELLA_MEMBER_PAR` has
+/// ever been used in this process.
+pub(crate) fn member_par_override() -> Option<usize> {
+    apply_member_par_env_once();
+    match MEMBER_PAR_OVERRIDE.load(Ordering::Relaxed) {
+        0 => None,
+        n => Some(n),
+    }
 }
 
 /// Fixed-slot cache for the common thread counts: `pool(n)` for `n <= 64` is a

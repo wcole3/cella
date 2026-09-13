@@ -67,6 +67,11 @@
 //!      SMC_TAU_OFF=1 (drop the `tau_days` gene so containment is the only stop),
 //!      SMC_FIT_DAYS (3), SMC_GENERATIONS (20 evolve / 30 map), SMC_POP (24 evolve /
 //!      32 map batch), SMC_REPEATS (2), SMC_MAP_DAYS (5).
+//!      SMC_MAX_DAYS=<n> (`open`/`assim` only, unset = run every observation
+//!      day in the scenario: stop after the n-th scored day instead. Added
+//!      for the 2026-09-12 ensemble-parallelism benchmark so a timing run
+//!      doesn't pay for the whole ~23-30 day scenario every configuration;
+//!      `SMC_MAP_DAYS` above is the pre-existing equivalent for `map` mode).
 //!      SMC_SPOT=1 (E43: switch spotting on in the config's wildfire model
 //!      — see [`enable_spotting`] — and add `model.spotting.p_spot` and
 //!      `model.spotting.median_distance` to the gene list, so `map` mode
@@ -942,6 +947,13 @@ fn main() {
     };
     let rot = envf("SMC_WIND_ROT_DEG", 0.0);
     let assim_every = envf("SMC_ASSIM_EVERY", 1.0).max(1.0) as usize;
+    // `open`/`assim` only: stop after this many *scored* observation days
+    // instead of running the whole scenario. Unset (the default) runs every
+    // day, same as before this knob existed. Added for the 2026-09-12
+    // "Ensemble stepping parallelism" study so a benchmark run doesn't have
+    // to pay for the full ~23-30 day scenario every time (`SMC_MAP_DAYS` is
+    // the equivalent knob for `map` mode, which has its own day-counted loop).
+    let max_days = env_usize("SMC_MAX_DAYS", usize::MAX);
     let envf_opt = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
     let prior: Vec<GeneSpec> = std::env::var("SMC_PRIOR")
         .ok()
@@ -1234,6 +1246,9 @@ fn main() {
             }
             prev_obs = obs;
             obs_idx += 1;
+            if scores.len() >= max_days {
+                break;
+            }
         }
     }
 

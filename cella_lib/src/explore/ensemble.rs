@@ -40,7 +40,7 @@ use super::metrics::{iou, mean_sd};
 use super::sim::Sim;
 use crate::external::{ModelError, ParamValue};
 use crate::rng::Rng;
-use crate::threads::{chunks_for_work, pool, thread_count};
+use crate::threads::{chunks_for_work, member_par_override, pool, thread_count};
 use crate::types::CellType;
 
 /// Settings for an ensemble (the `"ensemble"` block of a config).
@@ -431,16 +431,37 @@ impl Ensemble {
     /// Members step in parallel when one member is too small to be split
     /// into chunks itself, and one after another (each using the engine's
     /// own chunk parallelism) otherwise — the result is the same either way.
+    ///
+    /// `CELLA_MEMBER_PAR=<n>` (see [`crate::threads`]) overrides that choice:
+    /// members are split into batches of at most `n`, and each batch steps
+    /// concurrently on the pool before the next batch starts. `n=1` forces
+    /// the fully-sequential shape (one member at a time, each free to use
+    /// every thread for its own chunking); `n >= members.len()` forces every
+    /// member concurrently, same as the heuristic's parallel branch. Unset,
+    /// this method is unchanged from before the knob existed — see the
+    /// 2026-09-12 "Ensemble stepping parallelism" study in
+    /// docs/performance.md for why a one-off study needed this at all.
     pub fn step(&mut self) -> Result<(), ModelError> {
-        let parallel_members =
-            self.members.len() > 1 && chunks_for_work(self.total.saturating_mul(12)) <= 1;
-        if parallel_members {
-            pool(thread_count()).install(|| {
-                self.members.par_iter_mut().for_each(|m| m.sim.step());
-            });
-        } else {
-            for m in &mut self.members {
-                m.sim.step();
+        match member_par_override() {
+            Some(n) => {
+                for batch in self.members.chunks_mut(n) {
+                    pool(thread_count()).install(|| {
+                        batch.par_iter_mut().for_each(|m| m.sim.step());
+                    });
+                }
+            }
+            None => {
+                let parallel_members =
+                    self.members.len() > 1 && chunks_for_work(self.total.saturating_mul(12)) <= 1;
+                if parallel_members {
+                    pool(thread_count()).install(|| {
+                        self.members.par_iter_mut().for_each(|m| m.sim.step());
+                    });
+                } else {
+                    for m in &mut self.members {
+                        m.sim.step();
+                    }
+                }
             }
         }
         if let Some(n) = self.config.driver.as_ref().and_then(|d| d.period_steps())
@@ -773,6 +794,12 @@ mod tests {
     use crate::rng::cell_rand;
     use crate::rules::{CountOp, Neighborhood2D, Rule2D, Rule2DSubrule};
 
+    /// `cargo test` runs tests in one process with many threads; the
+    /// thread-count, member-parallelism and min-work overrides below are
+    /// process-global (see `crate::threads`), so any test that touches one
+    /// must hold this lock for the tests to be safe to run concurrently.
+    static GLOBAL_OVERRIDE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Life with a chance that a birth is skipped, on a seeded random soup.
     fn soup(w: usize, h: usize) -> Sim {
         let alive = CellType::from("Alive");
@@ -959,6 +986,7 @@ mod tests {
 
     #[test]
     fn stepping_is_identical_across_thread_counts() {
+        let _guard = GLOBAL_OVERRIDE_GUARD.lock().unwrap();
         use crate::threads::{clear_thread_override, set_thread_override};
         let run = |threads: usize| {
             set_thread_override(threads);
@@ -969,6 +997,51 @@ mod tests {
             p
         };
         assert_eq!(run(1), run(4));
+    }
+
+    /// The 2026-09-12 "Ensemble stepping parallelism" study (docs/performance.md)
+    /// added `CELLA_MEMBER_PAR`/`CELLA_MIN_WORK` as ways to force how members
+    /// batch for concurrent stepping. Same seed, same members, same answer is
+    /// the engine's standing promise (see this module's doc comment) — these
+    /// knobs must not be able to break it, on either axis or the two together.
+    #[test]
+    fn stepping_is_identical_across_member_par_and_min_work() {
+        let _guard = GLOBAL_OVERRIDE_GUARD.lock().unwrap();
+        use crate::threads::{
+            MIN_WORK_PER_CHUNK, clear_member_par_override, clear_min_work_per_chunk_override,
+            clear_thread_override, set_member_par_override, set_min_work_per_chunk_override,
+            set_thread_override,
+        };
+        set_thread_override(4);
+        let run = |member_par: Option<usize>, min_work: Option<usize>| {
+            match member_par {
+                Some(n) => set_member_par_override(n),
+                None => clear_member_par_override(),
+            }
+            match min_work {
+                Some(n) => set_min_work_per_chunk_override(n),
+                None => clear_min_work_per_chunk_override(),
+            }
+            let mut e = Ensemble::new(soup(20, 20), &cfg(6)).unwrap();
+            e.step_n(5).unwrap();
+            e.state_probability(&[CellType::from("Alive")])
+        };
+        // Baseline: both knobs unset, i.e. today's size heuristic decides —
+        // this must be the same run every one of the knobs below reproduces.
+        let baseline = run(None, None);
+        // member_par=1 (fully sequential batches) and member_par=thread_count()
+        // (one batch, every member concurrent) must both match it...
+        assert_eq!(run(Some(1), None), baseline);
+        assert_eq!(run(Some(4), None), baseline);
+        // ...and so must min_work alone (finer and coarser than the default)...
+        assert_eq!(run(None, Some(1)), baseline);
+        assert_eq!(run(None, Some(MIN_WORK_PER_CHUNK)), baseline);
+        // ...and both knobs together, at every corner of the study's grid.
+        assert_eq!(run(Some(1), Some(1)), baseline);
+        assert_eq!(run(Some(4), Some(MIN_WORK_PER_CHUNK)), baseline);
+        clear_member_par_override();
+        clear_min_work_per_chunk_override();
+        clear_thread_override();
     }
 
     #[test]
