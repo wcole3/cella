@@ -125,6 +125,20 @@ own wind law and its own learned wind multiplier"); and, for Arm B, the
 median final `wind_rot_deg` across the ensemble. Wall time is each run's
 own wall-clock seconds, timed from outside the shared runner.
 
+**Caveat on the sd bar itself (read before trusting any "beyond 2 sd"
+verdict below).** This pilot is **one seed**. There is no noise floor
+measured at this pilot's own configuration (4x clock, `arrival_x4.json`
+prior, and — Arm B — the `wind_rot_deg` gene); the sd values above are
+**E33's five-seed noise floor, borrowed from a different configuration**
+(50 ticks/day, the E25 prior, no direction gene). Using it here is a
+stand-in, not a like-for-like measurement — a faster clock, a wider
+prior, and (Arm B) an extra free gene all have their own, unmeasured,
+run-to-run variance, and there is no particular reason to expect it
+matches E33's. Treat every "beyond 1 sd" or "beyond 2 sd" verdict in this
+file as approximate, and read anything within roughly **2x** the quoted
+sd as a plausible tie rather than a confirmed move, until a five-seed
+E30b measures this configuration's own noise floor directly.
+
 ![Top: six per-fire bar panels of mean consensus IoU (seed 0) for E33, E30, Arm A and Arm B, with the Circle null as a dashed line and the E33 noise band shaded. Bottom: Arm B's learned wind_rot_deg median per fire, against a +/-90 degree axis.](figures/e30b-pilot.svg)
 
 ## Result
@@ -192,10 +206,15 @@ multiplier," not a raw, wind-blind `p0 × ticks/day`. None of the twelve
   Ferguson's large grid as the cost driver.
 - **Arm B is faster than Arm A on 5 of 6 fires**, sometimes by a lot
   (Bear 985 s vs 1347 s, Pier 1515 s vs 2121 s, Brattain 2228 s vs 2910 s).
-  Not something this pilot can explain with confidence (a coincidence of
-  which members get resampled and contained early is at least as likely
-  as any real effect of the extra gene), and is not treated as a finding
-  — see "Concerns" in the task report.
+  This is an unexplained non-finding, not a result to build on: a
+  coincidence of which members happen to get resampled or contained early
+  is at least as likely a cause as any real effect of the extra gene, and
+  the run's first ≈ 30–40 minutes shared the machine with an unrelated
+  coverage-measurement job in a separate git worktree, which may have
+  modestly inflated the earliest-finishing jobs' times (Bear/Buck/Chimney
+  Arm A) relative to later ones — noted here so a future wall-time
+  comparison against this pilot accounts for it, not because either
+  effect is confirmed.
 - **Containment is the one place Arm B does not beat Arm A**: Chimney's
   contained fraction is 0.56 (Arm A) / 0.59 (Arm B), both *below* E30's
   own 0.72 and well below E33's 0.94, even though Chimney's IoU improves
@@ -292,14 +311,30 @@ with p0 alone, on a fire where speed was never really the bottleneck.
 
 **Questions this raises.**
 
-- Is angular ensemble diversity (many different fixed member angles) doing
-  the real work here, or would a single, better *daily-varying* wind
-  input (hourly ERA5, or the station log where available) close most of
-  this same gap without a learned gene at all? This pilot cannot separate
-  "the gene helps because of diversity" from "the gene helps because the
-  input itself is coarser than reality everywhere, not just where the
-  daily mean's sign is wrong" — both are consistent with every fire
-  improving. Open.
+- **Mechanism ablation: learned bearing vs. angular diversity.** This
+  pilot cannot tell whether Arm B's gain comes from the filter *learning*
+  a genuinely better per-member bearing, or simply from giving the
+  ensemble more *angular diversity* to sample from regardless of whether
+  any single member's value is learned well — the small learned medians
+  (8.6°–43.8°) are consistent with either. Two cheap ablations would
+  separate them, and neither is run here: (i) **Arm B with mutation
+  σ = 0 on `wind_rot_deg`** — each member still draws its own fixed
+  rotation from the same ±90° range at birth, but it is never
+  mutated/resampled toward a better value across windows; if scores hold
+  up close to this pilot's Arm B, diversity alone is doing the work, not
+  learning. (ii) **Arm B with the gene's range narrowed to ±20°** — if a
+  narrower range still captures most of the gain, a wide per-member
+  spread was not necessary and a *learned*, tightly-scoped correction is
+  the more likely mechanism; if narrowing costs most of the gain, the
+  wide spread (diversity) mattered more than any single learned value.
+  Both are cheap to run alongside the full E30b's five seeds.
+- **Input quality, not mechanism.** Would a single, better
+  *daily-varying* wind input (hourly ERA5, or the station log where
+  available) close most of this same gap without any learned gene at
+  all? This is a different question from the mechanism ablations above —
+  it asks whether the ERA5 daily-mean *input* itself is the coarse thing
+  to fix, not whether the *ensemble* needs a learned correction or mere
+  diversity to work around a fixed, coarse input. Open, not tested here.
 - Arm A's Brattain result (worst in the table, on the fire predicted to
   need the least help) has no explanation in this file beyond "the clock
   cap and prior width were not Brattain's problem to begin with." What
@@ -312,11 +347,6 @@ with p0 alone, on a fire where speed was never really the bottleneck.
   period is now 200 steps, not 50), or is a lower contained fraction
   simply correct here because the fire is now (correctly) matching a
   faster-growing observed fire for longer? Open.
-- Would `SMC_WIND_ROT_GENE` at a narrower half-width (this pilot used 90°)
-  give the same gains with a tighter, more interpretable posterior, or
-  does the ensemble need the full ± 90° room to find useful per-member
-  angles? Not tested; the full E30b could scan this cheaply alongside its
-  five seeds.
 
 **Verdict.** Arm A alone: **not sufficient** — it satisfies half the
 prediction's clauses but fails on the fire (Brattain) the theory was most
@@ -329,6 +359,15 @@ running the full E30b (five seeds, plus E37b at the 4x clock) on Arm B's
 configuration** (`SMC_STEPS_SCALE=4`, `arrival_x4.json` prior,
 `SMC_WIND_ROT_GENE=90`); Arm A is not worth a five-seed run on its own
 given Arm B dominates it on every fire in this pilot.
+
+**This verdict rests on a borrowed, one-seed noise floor** (see the
+caveat under "How we scored it") — E33's five-seed sd, not a sd measured
+at this pilot's own clock/prior/gene. The clearest results (Brattain,
+Chimney, Ferguson under Arm B; Brattain under Arm A) move by 4–13x their
+quoted sd and would likely survive a real noise floor even a few times
+wider; the closer calls (Buck's +1.22 sd gain under Arm B, Bear's ≈ 1 sd
+loss under Arm A) are exactly the ones a five-seed E30b could flip to
+ties or confirm, and should be read as provisional until it does.
 
 **Later.** Not yet revisited. The full E30b (Arm B, five seeds + E37b) is
 the natural next task; the "what's actually wrong with Brattain under Arm
