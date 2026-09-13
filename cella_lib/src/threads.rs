@@ -149,16 +149,32 @@ pub fn clear_min_work_per_chunk_override() {
 /// directly, which always wins over whatever the environment said.
 static MIN_WORK_ENV_APPLIED: OnceLock<()> = OnceLock::new();
 
+/// Parses one of these env knobs' raw value: a positive `usize`, or nothing
+/// usable (absent, not a number, or zero — `0` is meaningless as a chunk
+/// threshold or a member-batch size, so it's treated the same as unset
+/// rather than silently becoming `.max(1)` the way the direct
+/// `set_*_override` calls do for a caller that already validated). Split out
+/// from `apply_*_env_once` below so the parsing itself is testable without
+/// fighting the `OnceLock`'s once-per-process semantics.
+fn parse_env_override(raw: Option<String>) -> Option<usize> {
+    raw.and_then(|v| v.parse::<usize>().ok()).filter(|&n| n >= 1)
+}
+
+/// Reads `var` from the environment and, if it parses to a positive
+/// `usize`, stores it in `target`. Otherwise `target` is left untouched.
+/// A free function (not gated by any `OnceLock` itself) so it can be
+/// exercised directly in a test with `std::env::set_var` — the
+/// once-per-process gating lives one level up, in `apply_*_env_once`,
+/// mirroring how `resolve_thread_count_uncached` is directly testable
+/// while `thread_count`'s `OnceLock` wrapper around it is not.
+fn apply_env_override(var: &str, target: &AtomicUsize) {
+    if let Some(n) = parse_env_override(std::env::var(var).ok()) {
+        target.store(n, Ordering::Relaxed);
+    }
+}
+
 fn apply_min_work_env_once() {
-    MIN_WORK_ENV_APPLIED.get_or_init(|| {
-        if let Some(n) = std::env::var("CELLA_MIN_WORK")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&n| n >= 1)
-        {
-            MIN_WORK_OVERRIDE.store(n, Ordering::Relaxed);
-        }
-    });
+    MIN_WORK_ENV_APPLIED.get_or_init(|| apply_env_override("CELLA_MIN_WORK", &MIN_WORK_OVERRIDE));
 }
 
 /// How many chunks a step estimated at `total_work` neighbor visits should be
@@ -202,15 +218,8 @@ pub fn clear_member_par_override() {
 static MEMBER_PAR_ENV_APPLIED: OnceLock<()> = OnceLock::new();
 
 fn apply_member_par_env_once() {
-    MEMBER_PAR_ENV_APPLIED.get_or_init(|| {
-        if let Some(n) = std::env::var("CELLA_MEMBER_PAR")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&n| n >= 1)
-        {
-            MEMBER_PAR_OVERRIDE.store(n, Ordering::Relaxed);
-        }
-    });
+    MEMBER_PAR_ENV_APPLIED
+        .get_or_init(|| apply_env_override("CELLA_MEMBER_PAR", &MEMBER_PAR_OVERRIDE));
 }
 
 /// The current member-parallelism override, if any. `Ensemble::step` calls
@@ -362,6 +371,43 @@ mod tests {
         assert_eq!(pool(POOL_SLOTS + 1).current_num_threads(), POOL_SLOTS + 1);
 
         clear_thread_override();
+    }
+
+    #[test]
+    fn parse_env_override_rejects_absent_invalid_and_zero() {
+        assert_eq!(parse_env_override(None), None);
+        assert_eq!(parse_env_override(Some("bad".into())), None);
+        assert_eq!(parse_env_override(Some("0".into())), None);
+        assert_eq!(parse_env_override(Some("5".into())), Some(5));
+    }
+
+    #[test]
+    fn apply_env_override_reads_the_named_var_into_the_target_atomic() {
+        // Exercises the same read-env-then-store logic `CELLA_MIN_WORK`/
+        // `CELLA_MEMBER_PAR` use, without touching either of their
+        // once-per-process `OnceLock`s (see `apply_env_override`'s doc
+        // comment) — a var name unrelated to any real knob, so this can
+        // run in any order relative to the other tests here.
+        let _guard = test_lock().lock().unwrap();
+        let var = "CELLA_TEST_APPLY_ENV_OVERRIDE_UNUSED";
+        let target = AtomicUsize::new(0);
+
+        // Absent: left at 0.
+        unsafe { std::env::remove_var(var) };
+        apply_env_override(var, &target);
+        assert_eq!(target.load(Ordering::Relaxed), 0);
+
+        // Invalid: left unchanged.
+        unsafe { std::env::set_var(var, "not-a-number") };
+        apply_env_override(var, &target);
+        assert_eq!(target.load(Ordering::Relaxed), 0);
+
+        // Valid: stored.
+        unsafe { std::env::set_var(var, "7") };
+        apply_env_override(var, &target);
+        assert_eq!(target.load(Ordering::Relaxed), 7);
+
+        unsafe { std::env::remove_var(var) };
     }
 
     #[test]

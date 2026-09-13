@@ -1156,3 +1156,171 @@ Next, in order:
     latency on the target platform; it would need `unsafe`, and the payoff
     depends entirely on that number.
 16. Hashlife (§6) as a long-term project.
+
+---
+
+## 9. Ensemble stepping parallelism (2026-09-12)
+
+**The question.** `Ensemble::step` (`cella_lib/src/explore/ensemble.rs`) steps
+every member of a 32-member wildfire ensemble once. There are two ways to
+spend 16 threads on that: step several members *at once*, each on its own
+thread (or a slice of threads), or step members *one at a time*, each one
+using all 16 threads for its own grid update. Today's code picks between
+these with a size heuristic. Is the heuristic right for the two grids the
+validation suite actually uses?
+
+**What "today" turned out to mean — a surprise before any timing ran.**
+Reading the heuristic (`chunks_for_work(total * 12) <= 1`, where `total` is
+one member's cell count) against `Bear_2020` (748×619 ≈ 463 000 cells) and
+`Ferguson_2018` (1155×1316 ≈ 1 520 000 cells) at 16 threads shows it already
+picks **one member at a time** for both — not "every member at once" the
+way a quick read of the code suggests. Both grids are big enough that a
+single member's own step would already split into more than one chunk, so
+the heuristic defers to that instead of running members concurrently. This
+matters a lot for what "the default" even means below: the honest baseline
+for these two scenarios is *already* close to "one at a time", and the
+study had to measure that baseline directly (labelled `unset` in the table)
+rather than assume it equalled the (16, 400k) config, the way the original
+study design did.
+
+**The two knobs** (`cella_lib/src/threads.rs`, `cella_lib/src/explore/ensemble.rs`),
+process-local, read once from the environment, no-ops unless set:
+
+- `CELLA_MEMBER_PAR=<n>` — step at most `n` members concurrently, in
+  batches, instead of letting the heuristic decide.
+- `CELLA_MIN_WORK=<cells>` — a bootstrap over the pre-existing
+  `set_min_work_per_chunk_override`: how many cells of estimated work a
+  chunk needs before it's worth handing to another thread (the constant is
+  400 000 today).
+
+**In plain words, what these knobs trade off.** Every time a step hands
+work to another thread, someone has to wake a parked worker, and that
+worker has to report back when it's done — this is called a *fork-join*: one
+thread forks the work out, then joins (waits for) the results. Waking a
+thread costs real time (tens of microseconds), so it only pays for itself
+if the thread then does enough work to be worth the wake-up. `CELLA_MIN_WORK`
+controls that per-chunk threshold; `CELLA_MEMBER_PAR` controls something
+similar one level up — how many members share *one* fork-join round instead
+of each paying for their own. Stepping 16 members in one batch pays for one
+wake-up-and-rejoin per step; stepping them one at a time pays for it 16
+times. There's a second cost too: a running member's grid (its cells, its
+history buffers) has to be pulled into the CPU's cache to be worked on —
+its *working set*. With several members' grids being touched by different
+threads at once, more total data is "hot" at any moment, which can push
+older data back out to slower memory (a cache miss) more often —
+*oversubscription* is the general name for asking for more concurrent work
+than the hardware can actually run at once, whether that's more threads
+than cores or more hot working sets than cache. The measurements below
+show which of these two costs actually dominates at these grid sizes.
+
+**Method.** `wildfire_smc <scenario> 32 open <out.json>`, truncated to the
+first `SMC_MAX_DAYS=5` observation days (a new knob added alongside this
+study — `SMC_MAP_DAYS` was the existing equivalent for `map` mode only), on
+`Bear_2020` and `Ferguson_2018`, under the default Bernoulli rule and the
+arrival rule (`SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus`), `SMC_SEED=0`.
+Thread count fixed at 16 via a `cella.properties` placed in each run's
+working directory (never the repo's own — see
+`validation/scripts/experiments/bench_ensemble_par.py`). Every configuration
+run twice on an otherwise-idle 16-core/62 GB machine; the table reports the
+minimum of the two (both reps are in
+`validation/results/experiments/bench_ensemble_par.json`). Binary: HEAD
+`ee4ae69`, confirmed clean (`binary_git` in every report JSON, no `-dirty`).
+
+**Timing (seconds, min of 2 reps):**
+
+| (member_par, min_work) | Bear bernoulli | Bear arrival | Ferguson bernoulli | Ferguson arrival |
+|---|---|---|---|---|
+| `unset` (today's heuristic) | 11.32 | 42.52 | 25.83 | 100.11 |
+| (16, 400k) | **4.86** | 23.69 | 17.06 | **76.25** |
+| (16, 50k) | 5.11 | **23.32** | **15.62** | 78.41 |
+| (8, 100k) | 5.90 | 24.41 | 16.39 | 79.57 |
+| (4, 50k) | 6.66 | 26.94 | 17.11 | 83.70 |
+| (2, 25k) | 8.14 | 33.33 | 18.98 | 93.60 |
+| (1, 12.5k) | 11.18 | 46.90 | 22.13 | 109.74 |
+
+Bold marks the fastest official config per column (the two are within a few
+percent of each other in every column — `min_work` barely matters once
+member-parallelism is engaged); `unset` is a bonus row, not part of the
+pre-registered grid, added because of the finding above.
+
+**Determinism.** Every report JSON, minus `binary_git`/`binary_built_utc`
+(the `open`-mode report has no `wall_time_secs` field to strip), is
+byte-identical across all seven configurations, in all four
+fire × rule combinations. Confirmed both by the unit test
+(`stepping_is_identical_across_member_par_and_min_work`,
+`cella_lib/src/explore/ensemble.rs`) and by the benchmark script itself.
+The knobs change *how* work is scheduled, never the answer.
+
+**Why: fork-join overhead, not cache pressure, is what's driving this.**
+`perf stat -e cache-misses,context-switches` on Bear/arrival, comparing
+(16, 400k) against (1, 12.5k) (`context-switches` reads 0 for both — this
+machine's `perf_event_paranoid=2` blocks the kernel-level counter without
+root, a real gap in the evidence, not a real zero):
+
+| Config | Wall (this perf run) | User CPU | Sys CPU | Cache misses |
+|---|---|---|---|---|
+| (16, 400k) | 25.14 s | 339.7 s | 6.55 s | 634 822 542 |
+| (1, 12.5k) | 42.22 s | 324.4 s | 34.20 s | 974 306 027 |
+
+Stepping one member at a time, finely chunked, costs **5.2× the system
+time** (more, smaller fork-join rounds means more time in the kernel
+parking and waking threads) and **54 % more cache misses** — the opposite
+of what "smaller chunks fit the cache better" would predict. Batching
+members amortizes the wake-up cost over more useful work per round, and
+apparently does *not* trade that away for a worse cache-working-set. The
+oversubscription story (many members' grids hot at once, more misses) is
+not what's happening here; the fork-join-per-member-per-step story is.
+
+**Runner-level: does this change how many concurrent processes to run?**
+Total wall time for 4 `Bear_2020`/Bernoulli runs (seeds 0-3), three ways:
+
+| Arrangement | Config | Total wall |
+|---|---|---|
+| 4 processes × 16 threads (oversubscribed, today's `run_all(workers=4)` shape) | `unset` | **16.81 s** |
+| 1 process at a time × 16 threads | best single-run config, (16, 50k) | 19.80 s |
+| 2 processes × 8 threads, 2 rounds | (16, 50k) | 16.19 s |
+
+Counter to the pre-registered prediction, running one process at a time —
+even with the much-faster-per-run (16, 50k) config — is **17.8 % *slower***
+for the batch of four than today's 4-way oversubscribed shape, and 2×8 is
+only a 3.7 % improvement over 4×16 (within run-to-run noise). The
+per-run speedup does not carry over to the batch: four processes sharing 16
+cores still get more total throughput than one process running four times
+in a row, because concurrency lets the *batch* overlap work that a faster
+but strictly-sequential arrangement cannot.
+
+**Prediction, checked line by line** (pre-registered before timing; see
+`.superpowers/sdd/round-6-experiments/task-11-brief.md` and
+`task-11-report.md` for the full accounting):
+
+1. *"(16, 50k) is ≥10 % faster than today on Ferguson."* Against the
+   design doc's own labelled baseline, (16, 400k): +8.4 % on Bernoulli
+   (short of 10), **−2.8 %** (slower) on arrival — fails. Against the
+   *actual* default (`unset`): +39.5 % on Bernoulli, +21.7 % on arrival —
+   holds. The prediction's truth depends entirely on which baseline "today"
+   means, which is itself the study's headline finding.
+2. *"(2, 25k)/(1, 12.5k) slower than (16, 50k) on Bernoulli, within 20 % on
+   arrival."* Slower on Bernoulli: confirmed, all four cases (+21.5 % to
+   +118.8 %). Within 20 % on arrival: mostly fails — three of four cases
+   exceed 20 % (Bear +42.9 %/+101.1 %, Ferguson (1, 12.5k) +40.0 %); only
+   Ferguson (2, 25k) at +19.4 % narrowly complies.
+3. *"1×16 beats 4×16 oversubscribed by ≥15 %."* Contradicted: 1×16 is
+   17.8 % **slower**, not faster (see runner-level table above).
+
+**Recommendation.** No default changes. The engine's own heuristic
+(`chunks_for_work(total * 12) <= 1`) is shared by every model this library
+can run, not just wildfire at these two grid sizes, and two scenarios under
+one rule family is not enough evidence to retune a heuristic that the
+existing 40+-entry benchmark suite (§4) already tunes for the general case
+— doing so without rerunning that whole suite risks a regression nobody
+would notice until it shipped. `CELLA_MIN_WORK` barely moves the needle
+once member-parallelism is already engaged (0-8 % beyond (16, 400k)), so
+its constant stays put too. What *is* worth adopting, by hand, per
+workload: a single wildfire ensemble run at these grid sizes is genuinely
+24-57 % faster (bit-identical) with `CELLA_MEMBER_PAR=<thread_count()>` set
+explicitly — but a *sweep* of several such runs launched concurrently
+(`run_all(workers=4)`, as R6's experiment scripts already do) should stay
+concurrent: the runner-level result above says switching to
+one-process-at-a-time, even tuned, loses throughput rather than gaining it.
+Full table, methodology, and self-review:
+`.superpowers/sdd/round-6-experiments/task-11-report.md`.
