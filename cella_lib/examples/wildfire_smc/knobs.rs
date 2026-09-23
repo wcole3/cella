@@ -60,6 +60,12 @@ pub(crate) struct Knobs {
     pub(crate) immigrant_reset: bool,
     pub(crate) immigrant_reset_gate: Option<f64>,
     pub(crate) state_correction: StateCorrection,
+    /// E48 (Round 7 Task 3): opt-in per-window diagnostics (consensus vs
+    /// truth head/flank decomposition, learned-gene medians, ERA5/station
+    /// wind vectors) added to `ObsScore.diag` — `None`/omitted from the
+    /// JSON when this is unset, so every existing field is unaffected. See
+    /// `crate::diag`.
+    pub(crate) diag: bool,
 }
 
 impl Knobs {
@@ -98,6 +104,7 @@ impl Knobs {
                     _ => StateCorrection::None,
                 },
             },
+            diag: env_f64("SMC_DIAG", 0.0) > 0.0,
         }
     }
 }

@@ -21,17 +21,18 @@ use cella_lib::config::CellaConfig;
 use cella_lib::explore::driver::Forcing;
 use cella_lib::explore::metrics::{brier, iou, mean_sd};
 use cella_lib::wildfire::driver::{
-    FORCING_HOURS, FORCING_WIND_FROM, FORCING_WIND_SPEED, GENE_TAU_DAYS, GENE_WIND_SCALE,
-    STATE_CONTAINED, WildfireDriver,
+    FORCING_HOURS, FORCING_WIND_FROM, FORCING_WIND_SPEED, GENE_TAU_DAYS, GENE_WIND_ROT_DEG,
+    GENE_WIND_SCALE, STATE_CONTAINED, WildfireDriver,
 };
 use cella_lib::wildfire::wind_toward_grid_deg;
 use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue};
 use serde::Serialize;
 
+use crate::diag;
 use crate::knobs::Knobs;
 use crate::modes::assim::maybe_assimilate;
 use crate::modes::evolve::FitReport;
-use crate::nulls::{anderson_lb, chamfer_from, grow_ellipse, radial_mask_from};
+use crate::nulls::{anderson_lb, chamfer_from, grow_ellipse, load_station, radial_mask_from, station_vector_mean};
 use crate::report::{provenance, write_json};
 use crate::score::ObsScore;
 use crate::{Scenario, Truth, mask_at};
@@ -110,6 +111,7 @@ pub(crate) fn run(
     burnt: &[CellType; 2],
     knobs: &Knobs,
     fit: Option<FitReport>,
+    dir: &Path,
 ) {
     let assim = mode == "assim";
     let rot = knobs.wind_rot_deg;
@@ -154,6 +156,14 @@ pub(crate) fn run(
     // ever read as "yesterday's true perimeter", never grown from itself.
     let mut prev_obs = ignition.clone();
 
+    // E48 (Round 7 Task 3) per-window diagnostics, opt-in via SMC_DIAG=1:
+    // the station log (if any) is loaded once, same lookup as `nulls`
+    // mode's own; the ignition centroid is fixed for the whole run (the
+    // pre-registered E48 entry's own wording: "downwind of the ignition
+    // centroid"). Both stay unused (and cost nothing) when the knob is off.
+    let station = if knobs.diag { load_station(dir) } else { None };
+    let ignition_centroid = diag::centroid(&ignition, sc.grid.width);
+
     eprintln!(
         "{}: {}x{}, {} members, mode {mode}, beta {}, sigma {}, immigrants {}, genes {:?}",
         sc.id,
@@ -192,7 +202,8 @@ pub(crate) fn run(
                 areas.push(mask.iter().filter(|&&b| b).count() as f64);
             }
             let thr_mask = |q: f32| -> Vec<bool> { prob.iter().map(|&p| p >= q).collect() };
-            let consensus_iou = iou(&thr_mask(0.5), &obs);
+            let consensus_mask = thr_mask(0.5);
+            let consensus_iou = iou(&consensus_mask, &obs);
             let union_iou = iou(&thr_mask(1e-9), &obs);
             let (mut best_thr_iou, mut best_thr) = (0.0, 0.0);
             for k in 1..=9 {
@@ -261,6 +272,40 @@ pub(crate) fn run(
             let (durm, _) = gene_mean_sd(&ens, "model.burn_duration", f64::NAN);
             let (wsm, _) = gene_mean_sd(&ens, GENE_WIND_SCALE, 1.0);
             let contained_fraction = ens.state_fraction(STATE_CONTAINED);
+            let window_diag = if knobs.diag {
+                let genomes = ens.genomes();
+                let (station_speed_ms, station_toward_deg) = match &station {
+                    Some(log) => {
+                        let (speed, toward_st) = station_vector_mean(log, cur.hours, next.hours);
+                        (Some(speed), Some(toward_st.to_degrees()))
+                    }
+                    None => (None, None),
+                };
+                let counts = diag::head_flank_decompose(
+                    &consensus_mask,
+                    &obs,
+                    sc.grid.width,
+                    ignition_centroid,
+                    toward,
+                );
+                Some(diag::WindowDiag {
+                    era5_speed_ms: cur.speed_ms,
+                    era5_from_deg: cur.from_deg + rot,
+                    era5_toward_deg: toward.to_degrees(),
+                    station_speed_ms,
+                    station_toward_deg,
+                    p0_median: diag::median_gene(&genomes, "model.p0").unwrap_or(f64::NAN),
+                    wind_scale_median: diag::median_gene(&genomes, GENE_WIND_SCALE)
+                        .unwrap_or(1.0),
+                    wind_rot_deg_median: diag::median_gene(&genomes, GENE_WIND_ROT_DEG),
+                    downwind_miss: counts.downwind_miss,
+                    crosswind_miss: counts.crosswind_miss,
+                    downwind_false_positive: counts.downwind_false_positive,
+                    crosswind_false_positive: counts.crosswind_false_positive,
+                })
+            } else {
+                None
+            };
             let score = ObsScore {
                 hours: t,
                 obs_burned: obs_n,
@@ -290,6 +335,7 @@ pub(crate) fn run(
                 dur_mean: durm,
                 wind_scale_mean: wsm,
                 contained_fraction,
+                diag: window_diag,
             };
             eprintln!(
                 "  t={t:5.0}h obs {obs_n:7} | member IoU mean {:.3} best {:.3} | consensus {:.3} bestthr {:.3}@{:.1} | radial {:.3} | Brier ens {:.4} radial {:.4} | ESS {:.1} | p0 {:.2}±{:.2} tau {:.1} | contained {:.0}%",

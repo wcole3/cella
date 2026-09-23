@@ -52,6 +52,66 @@ pub(crate) struct ObsScore {
     pub(crate) dur_mean: f64,
     pub(crate) wind_scale_mean: f64,
     pub(crate) contained_fraction: f64,
+    /// E48 (Round 7 Task 3) per-window diagnostics, opt-in via
+    /// `SMC_DIAG=1` — omitted from the JSON entirely when unset, so every
+    /// field above this one is byte-identical to what it was before this
+    /// field existed. See [`crate::diag::WindowDiag`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) diag: Option<crate::diag::WindowDiag>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal-but-complete `ObsScore` with every non-`diag` field set to
+    /// an arbitrary value and `diag: None` — the acceptance check this
+    /// struct's own field carries: SMC_DIAG unset (the default) must not
+    /// add a `"diag"` key to the JSON at all, byte-identical to a report
+    /// from before this field existed.
+    fn sample() -> ObsScore {
+        ObsScore {
+            hours: 24.0,
+            obs_burned: 100,
+            mean_member_iou: 0.5,
+            best_member_iou: 0.6,
+            consensus_iou: 0.5,
+            union_iou: 0.7,
+            best_threshold_iou: 0.55,
+            best_threshold: 0.4,
+            area_ratio_mean: 1.0,
+            brier_ensemble: 0.1,
+            brier_radial: 0.2,
+            brier_persistence: 0.3,
+            radial_iou: 0.4,
+            persistence_iou: 0.1,
+            ellipse_iou: 0.45,
+            brier_ellipse: 0.15,
+            lagged_persistence_iou: None,
+            brier_lagged_persistence: None,
+            lagged_circle_iou: None,
+            brier_lagged_circle: None,
+            ess: 10.0,
+            p0_mean: 0.2,
+            p0_std: 0.05,
+            tau_mean: 15.0,
+            tau_std: 2.0,
+            dur_mean: 12.0,
+            wind_scale_mean: 0.8,
+            contained_fraction: 0.1,
+            diag: None,
+        }
+    }
+
+    #[test]
+    fn diag_field_is_absent_from_the_json_when_none() {
+        let json = serde_json::to_string(&sample()).unwrap();
+        assert!(
+            !json.contains("\"diag\""),
+            "diag: None must not serialise a \"diag\" key (SMC_DIAG unset ⇒ byte-identical \
+             report to before this field existed); got: {json}"
+        );
+    }
 }
 
 /// One observation's scores in `nulls` mode (E41): the deterministic dummy

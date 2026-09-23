@@ -91,9 +91,23 @@ struct StationRow {
 }
 
 /// The station file's shape: a header we don't need plus the hourly rows.
+/// `pub(crate)`: read by `crate::diag`'s per-window diagnostics (E48) as
+/// well as [`run_nulls`] below, via [`load_station`].
 #[derive(Deserialize)]
-struct StationLog {
+pub(crate) struct StationLog {
     rows: Vec<StationRow>,
+}
+
+/// `station_hourly.json` for a scenario directory, or `None` if the fire
+/// has no station file — the same lookup [`run_nulls`] does
+/// (`SMC_STATION_WIND` env override, else `dir.join("station_hourly.json")`),
+/// factored out so `crate::diag`'s per-window diagnostics (E48) load it the
+/// same way instead of duplicating the env-var override.
+pub(crate) fn load_station(dir: &Path) -> Option<StationLog> {
+    let station_path = std::env::var("SMC_STATION_WIND")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| dir.join("station_hourly.json"));
+    station_path.exists().then(|| load(&station_path))
 }
 
 /// The vector mean of the station wind over `[start_hours, end_hours)`, as
@@ -116,7 +130,7 @@ struct StationLog {
 /// (the campaign's station files are hourly with no gaps, so this should
 /// not trigger; it exists so a thinner future log degrades instead of
 /// panicking).
-fn station_vector_mean(log: &StationLog, start_hours: f64, end_hours: f64) -> (f64, f64) {
+pub(crate) fn station_vector_mean(log: &StationLog, start_hours: f64, end_hours: f64) -> (f64, f64) {
     let in_window: Vec<&StationRow> = log
         .rows
         .iter()
@@ -401,10 +415,7 @@ pub(crate) fn run_nulls(sc: &Scenario, truth: &Truth, dir: &Path, rot: f64, out:
     let mut order: Vec<usize> = (0..total).collect();
     order.sort_by_key(|&i| (dist[i], i));
 
-    let station_path = std::env::var("SMC_STATION_WIND")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| dir.join("station_hourly.json"));
-    let station: Option<StationLog> = station_path.exists().then(|| load(&station_path));
+    let station: Option<StationLog> = load_station(dir);
     let station_available = station.is_some();
 
     let mut ellipse_era5 = ignition.clone();

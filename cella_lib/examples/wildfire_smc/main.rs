@@ -103,6 +103,17 @@
 //!      top of any fixed SMC_WIND_ROT_DEG rotation of the whole schedule
 //!      above — the fixed knob rotates the input once for everyone, this
 //!      one lets the filter search for a per-member correction to it).
+//!      SMC_DIAG=1 (off; E48/Round 7 Task 3: opt-in per-window diagnostics
+//!      on `open`/`assim`'s `ObsScore` -- a new `diag` field, `None`/
+//!      omitted from the JSON when this is unset so every existing field
+//!      is byte-identical to before this knob existed. See [`diag`] for
+//!      what it adds: the ERA5 wind vector and (when `station_hourly.json`
+//!      exists for the scenario) the station vector mean for the window,
+//!      the ensemble's per-window median `model.p0`/`wind_scale`/
+//!      `wind_rot_deg` (the last `None` unless SMC_WIND_ROT_GENE is set),
+//!      and a head-vs-flank decomposition of the consensus-vs-truth miss
+//!      and false-positive cells (downwind of the ignition centroid, by
+//!      the window's ERA5 "toward" direction, vs cross/upwind).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -119,7 +130,8 @@
 //! dummy forecaster (persistence, Circle, Ellipse, their lagged variants);
 //! `score` holds the per-observation report-row structs; `report` holds the
 //! JSON-writing and build-provenance boilerplate every mode's report ends
-//! with.
+//! with; `diag` holds the opt-in (`SMC_DIAG=1`) per-window diagnostics
+//! (E48) that `modes::open::run` attaches to `ObsScore.diag`.
 
 use std::path::{Path, PathBuf};
 
@@ -128,6 +140,7 @@ use cella_lib::wildfire::driver::WeatherWindow;
 use cella_lib::{CellType, GeneSpec};
 use serde::Deserialize;
 
+mod diag;
 mod knobs;
 mod modes;
 mod nulls;
@@ -286,5 +299,6 @@ fn main() {
         &burnt,
         &knobs,
         fit,
+        &dir,
     );
 }
