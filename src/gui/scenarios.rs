@@ -19,57 +19,73 @@ use cella_lib::*;
 use rfd::FileDialog;
 
 impl CellaApp {
-    /// Resize the current grid to `grid_width` x `grid_height`, preserving existing
-    /// cell data where it overlaps and filling new cells with Inactive.
+    /// Change the grid to `grid_width` x `grid_height` through the library's
+    /// `resize`: the overlap keeps its cells, ages and history (anchored
+    /// top-left), and the step, rule, seed and model carry on. The Reset
+    /// target is resized the same way, so Reset returns to the resized start
+    /// and a save's `initial` matches the new size. All or nothing: if the
+    /// live grid or the Reset target refuses, nothing changes and the status
+    /// bar says why.
     pub(in crate::gui) fn resize_grid(&mut self) {
-        let new_w = self.inputs.grid_width.max(1);
-        let new_h = self.inputs.grid_height.max(1);
-        match self.scenario.dim {
-            Some(Dim::D1) => {
-                if let Some(g) = &self.scenario.d1 {
-                    let old_w = g.width;
-                    let rule = g.rule.clone();
-                    let hist = g.history_limit;
-                    let mut init: Vec<CellType> = vec![CellType::inactive(); new_w];
-                    for (x, cell) in init.iter_mut().take(new_w.min(old_w)).enumerate() {
-                        *cell = g.cell_type(x);
-                    }
-                    self.scenario.d1 = Some(Grid1D::new(new_w, hist, init, rule));
-                    self.scenario.initial_state =
-                        self.scenario.d1.as_ref().map(GridState::from_grid1d);
-                    self.view.history_1d.clear();
-                    self.edit.undo_stack.clear();
-                    self.edit.rule_undo.clear();
-                    self.edit.current_paint_batch = None;
-                    self.stats_clear_and_init();
-                    self.set_status(format!("Resized 1D grid to width {}", new_w));
-                }
+        let (w, h) = (self.inputs.grid_width.max(1), self.inputs.grid_height.max(1));
+        let result = match self.scenario.dim {
+            Some(Dim::D1) => self.resized_1d(w),
+            Some(Dim::D2) => self.resized_2d(w, h),
+            None => return,
+        };
+        match result {
+            Ok(size) => {
+                // Paint undo stores flat cell indices, which a width change
+                // would point at the wrong cells.
+                self.edit.undo_stack.clear();
+                self.edit.current_paint_batch = None;
+                self.explore_on_grid_replaced();
+                self.set_status(format!("Resized grid to {size}"));
             }
-            Some(Dim::D2) => {
-                if let Some(g) = &self.scenario.d2 {
-                    let old_w = g.width;
-                    let old_h = g.height;
-                    let rule = g.rule.clone();
-                    let hist = g.history_limit;
-                    let mut init: Vec<CellType> = vec![CellType::inactive(); new_w * new_h];
-                    for y in 0..new_h.min(old_h) {
-                        for x in 0..new_w.min(old_w) {
-                            init[y * new_w + x] = g.cell_type(y * old_w + x);
-                        }
-                    }
-                    self.scenario.d2 = Some(Grid2D::new(new_w, new_h, hist, init, rule));
-                    self.scenario.initial_state =
-                        self.scenario.d2.as_ref().map(GridState::from_grid2d);
-                    self.view.history_1d.clear();
-                    self.edit.undo_stack.clear();
-                    self.edit.rule_undo.clear();
-                    self.edit.current_paint_batch = None;
-                    self.stats_clear_and_init();
-                    self.set_status(format!("Resized 2D grid to {}×{}", new_w, new_h));
-                }
-            }
-            None => {}
+            Err(why) => self.set_status(format!("Resize failed: {why}")),
         }
+    }
+
+    /// Resize the live 1D grid and its Reset target together; nothing is
+    /// stored unless both succeed.
+    fn resized_1d(&mut self, w: usize) -> Result<String, String> {
+        let Some(g) = &self.scenario.d1 else {
+            return Err("no 1D grid is loaded".into());
+        };
+        let mut live = g.clone();
+        live.resize(w).map_err(|e| e.to_string())?;
+        let initial = match &self.scenario.initial_state {
+            Some(st) => {
+                let mut ig = Grid1D::from_state(st).ok_or("the Reset target could not be rebuilt")?;
+                ig.resize(w).map_err(|e| e.to_string())?;
+                Some(GridState::from_grid1d(&ig))
+            }
+            None => None,
+        };
+        self.scenario.d1 = Some(live);
+        self.scenario.initial_state = initial;
+        Ok(format!("width {w}"))
+    }
+
+    /// Resize the live 2D grid and its Reset target together; nothing is
+    /// stored unless both succeed.
+    fn resized_2d(&mut self, w: usize, h: usize) -> Result<String, String> {
+        let Some(g) = &self.scenario.d2 else {
+            return Err("no 2D grid is loaded".into());
+        };
+        let mut live = g.clone();
+        live.resize(w, h).map_err(|e| e.to_string())?;
+        let initial = match &self.scenario.initial_state {
+            Some(st) => {
+                let mut ig = Grid2D::from_state(st).ok_or("the Reset target could not be rebuilt")?;
+                ig.resize(w, h).map_err(|e| e.to_string())?;
+                Some(GridState::from_grid2d(&ig))
+            }
+            None => None,
+        };
+        self.scenario.d2 = Some(live);
+        self.scenario.initial_state = initial;
+        Ok(format!("{w}×{h}"))
     }
     // ----- Scenario loading -----
     pub(in crate::gui) fn load_demo_life(&mut self) {
@@ -453,7 +469,9 @@ fn load_status_message(dim: &str, name: &str, resume: bool, resumed_ok: bool) ->
 mod tests {
     use super::*;
     use crate::gui::actions::Action;
+    use crate::gui::actions::SnapshotChoice;
     use crate::gui::sim::tests::test_app;
+    use cella_lib::config::CellaConfig;
     use std::path::Path;
 
     fn status(app: &CellaApp) -> String {
@@ -842,5 +860,156 @@ mod tests {
         app.apply_startup_config(None);
         assert!(matches!(app.scenario.dim, Some(Dim::D2)));
         assert_eq!((app.inputs.grid_width, app.inputs.grid_height), (50, 30));
+    }
+
+    /// A temp-dir path that parallel tests won't share.
+    fn unique_temp_path(label: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("cella_gui_{label}_{}_{stamp}.json", std::process::id()))
+    }
+
+    #[test]
+    fn resize_keeps_the_model_step_colours_and_resizes_the_reset_target() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_demo.json"));
+        for _ in 0..10 {
+            app.scenario.d2.as_mut().unwrap().step();
+        }
+        let colours = app.view.colors.clone();
+        app.apply_action(Action::Resize { w: 70, h: 44 });
+        let g = app.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (70, 44, 10));
+        assert!(g.model.is_some(), "the model survives the resize");
+        assert_eq!(app.view.colors, colours);
+        let reset = Grid2D::from_state(app.scenario.initial_state.as_ref().unwrap()).unwrap();
+        assert_eq!((reset.width, reset.height, reset.step), (70, 44, 0));
+        assert!(status(&app).contains("70"), "got {:?}", status(&app));
+        // The fire keeps burning: the model still drives the grid.
+        app.scenario.d2.as_mut().unwrap().step();
+        let g = app.scenario.d2.as_ref().unwrap();
+        assert!((0..g.width * g.height).any(|i| g.cell_type(i) != g.inactive));
+    }
+
+    #[test]
+    fn reset_after_resize_returns_to_step_0_at_the_new_size() {
+        let mut app = test_app();
+        app.load_demo_life();
+        app.scenario.d2.as_mut().unwrap().step();
+        app.apply_action(Action::Resize { w: 20, h: 12 });
+        app.reset_to_initial();
+        let g = app.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (20, 12, 0));
+    }
+
+    #[test]
+    fn resize_1d_keeps_the_step_and_the_history_view() {
+        let mut app = test_app();
+        app.load_demo_1d_rule30();
+        for _ in 0..3 {
+            app.step_once(); // src/gui/sim.rs: steps and pushes a history_1d row
+        }
+        let rows = app.view.history_1d.len();
+        let step = app.scenario.d1.as_ref().unwrap().step;
+        app.apply_action(Action::Resize { w: 40, h: 1 });
+        assert_eq!(app.scenario.d1.as_ref().unwrap().width, 40);
+        assert_eq!(app.scenario.d1.as_ref().unwrap().step, step);
+        assert_eq!(app.view.history_1d.len(), rows);
+    }
+
+    #[test]
+    fn save_then_load_after_a_resize_round_trips() {
+        let mut app = test_app();
+        app.load_demo_life();
+        app.step_once();
+        app.step_once();
+        app.apply_action(Action::Resize { w: 20, h: 12 });
+        let colors = app.color_map_for_save();
+        let initial = app.scenario.initial_state.clone().expect("reset target");
+        let g = app.scenario.d2.as_ref().expect("2D grid loaded");
+        let cfg = CellaConfig::save_2d(&initial, g, colors);
+        let path = unique_temp_path("resize_round_trip");
+        cfg.to_file_pretty(&path).expect("write test config");
+        let mut again = test_app();
+        again.load_config_from_path(&path);
+        again.resolve_snapshot_load(SnapshotChoice::Resume);
+        let _ = std::fs::remove_file(&path);
+        let g = again.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (20, 12, 2));
+        again.reset_to_initial();
+        let g = again.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (20, 12, 0));
+    }
+
+    #[test]
+    fn a_resize_the_library_refuses_reports_the_error_and_touches_nothing() {
+        let mut app = test_app();
+        app.load_demo_life();
+        app.step_once();
+        let g = app.scenario.d2.as_ref().unwrap();
+        let dims_before = (g.width, g.height);
+        let step_before = g.step;
+        let initial_before =
+            Grid2D::from_state(app.scenario.initial_state.as_ref().unwrap()).unwrap();
+        let initial_dims_before = (initial_before.width, initial_before.height);
+        let colours_before = app.view.colors.clone();
+        // width * height overflows usize, so the library's `checked_cells`
+        // refuses before touching anything: `ResizeError::TooLarge`.
+        app.apply_action(Action::Resize { w: usize::MAX, h: 2 });
+        assert!(
+            status(&app).starts_with("Resize failed"),
+            "got {:?}",
+            status(&app)
+        );
+        let g = app.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height), dims_before, "the live grid is untouched");
+        assert_eq!(g.step, step_before);
+        let initial_after =
+            Grid2D::from_state(app.scenario.initial_state.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            (initial_after.width, initial_after.height),
+            initial_dims_before,
+            "the Reset target is untouched"
+        );
+        assert_eq!(app.view.colors, colours_before);
+    }
+
+    #[test]
+    fn a_1d_resize_the_library_refuses_reports_the_error_and_touches_nothing() {
+        let mut app = test_app();
+        app.load_demo_1d_rule30();
+        app.step_once();
+        let g = app.scenario.d1.as_ref().unwrap();
+        // `Grid1D::resize`'s overflow check multiplies by `history_limit.max(1)`,
+        // so this only overflows for `usize::MAX` width when history_limit > 1;
+        // the Rule 30 demo uses 5, so this reaches `ResizeError::TooLarge`.
+        assert!(
+            g.history_limit > 1,
+            "demo's history_limit changed; this test needs it > 1 to overflow"
+        );
+        let width_before = g.width;
+        let step_before = g.step;
+        let initial_before =
+            Grid1D::from_state(app.scenario.initial_state.as_ref().unwrap()).unwrap();
+        let initial_width_before = initial_before.width;
+        let colours_before = app.view.colors.clone();
+        app.apply_action(Action::Resize { w: usize::MAX, h: 1 });
+        assert!(
+            status(&app).starts_with("Resize failed"),
+            "got {:?}",
+            status(&app)
+        );
+        let g = app.scenario.d1.as_ref().unwrap();
+        assert_eq!(g.width, width_before, "the live grid is untouched");
+        assert_eq!(g.step, step_before);
+        let initial_after =
+            Grid1D::from_state(app.scenario.initial_state.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            initial_after.width, initial_width_before,
+            "the Reset target is untouched"
+        );
+        assert_eq!(app.view.colors, colours_before);
     }
 }

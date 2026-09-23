@@ -240,7 +240,7 @@ The egui GUI (launched with `--gui`) provides:
 - **Live rule editor** — add/remove subrules, change operators, neighborhoods, and ranges
 - **Grid viewport** — zoomable, pannable cell grid with click-to-paint drawing
 - **Playback controls** — play/pause, step, adjustable speed
-- **Resize & reset** — change grid dimensions on the fly
+- **Resize & reset** — change grid dimensions mid-run; cells, model and step carry on
 - **Color customisation** — per-type color picker plus configurable Inactive/background color
 - **Statistics panel** — live population counts and line charts (via `egui_plot`)
 - **Import / Export** — load/save JSON configs, resuming a run mid-simulation on load if it was saved past step 0; export animated GIFs

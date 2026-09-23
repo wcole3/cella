@@ -3,6 +3,7 @@
 
 use crate::gui::actions::{Action, Demo};
 use crate::gui::app::{CellaApp, Dim};
+use crate::gui::interact::GridDims;
 use crate::gui::theme::section;
 use egui::TextEdit;
 
@@ -63,11 +64,27 @@ impl CellaApp {
                     ui.label("H");
                     ui.add(egui::DragValue::new(&mut self.inputs.grid_height).range(1..=2000));
                 }
+                let target = match self.scenario.dim {
+                    Some(Dim::D2) => (self.inputs.grid_width, self.inputs.grid_height),
+                    _ => (self.inputs.grid_width, 1),
+                };
+                // Height is always 1 for a 1D grid; `grid_dims`'s D1 case
+                // reports history rows there instead, so translate it here
+                // rather than adding a second `(width, height)` accessor.
+                let current = match self.grid_dims() {
+                    Some(GridDims::D1 { width, .. }) => Some((width, 1)),
+                    Some(GridDims::D2 { width, height }) => Some((width, height)),
+                    None => None,
+                };
+                let changed = current.is_some_and(|d| d != target);
                 if ui
-                    .button("Resize")
+                    .add_enabled(changed, egui::Button::new("Resize"))
                     .on_hover_text(
-                        "Rebuild the grid at this size. Cells that overlap are kept; new cells are Inactive.",
+                        "Change the grid size. Cells, ages and history in the overlap are kept \
+                         (anchored top-left); new cells are Inactive. The step, rule, seed and \
+                         model carry on.",
                     )
+                    .on_disabled_hover_text("The grid is already this size.")
                     .clicked()
                 {
                     pending.push(Action::Resize {

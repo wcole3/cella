@@ -282,7 +282,7 @@ use rfd::FileDialog;
 impl CellaApp {
     /// Every explicit colour override plus the Inactive background colour,
     /// as `#rrggbb` strings — what a save file's `colors` block holds.
-    fn color_map_for_save(&self) -> BTreeMap<String, String> {
+    pub(in crate::gui) fn color_map_for_save(&self) -> BTreeMap<String, String> {
         let mut colors: BTreeMap<String, String> = self
             .view
             .colors

@@ -161,6 +161,15 @@ while playing; playback and view keys always work.
 straight-line), *Load Config JSON…*, the custom 1D builder (Wolfram code +
 radius), grid size + *Resize*, and the 1D history row count.
 
+Resize changes the grid size without restarting the run. The top-left part
+of the grid is kept, including each cell's age and history. New cells are
+Inactive. The step count, rule, seed, model and colours carry on, and Reset
+goes back to the starting grid at the new size. Paint undo is cleared,
+because it remembers cells by position. The button is greyed out when the
+grid is already the size you typed. Changing the width also changes the
+random numbers for most cells from then on; see docs/lib.md, "Resizing a
+grid".
+
 **Save (💾 / `Ctrl+S`) and Load, together.** Save writes the whole scenario
 as one JSON config: dimensions, rule, model, seed, and every colour you have
 set (including Inactive). If the grid is still at step 0, that's the whole

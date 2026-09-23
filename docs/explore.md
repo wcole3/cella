@@ -621,7 +621,9 @@ types.
 
 Replacing the grid (load, resize, random fill with "clear first") drops
 the worker and its map; the best genome and fitness history survive so
-Reset → Apply → Play works.
+Reset → Apply → Play works. A resize drops the worker and its map the same
+way, but the grid itself now keeps its run — step, rule, seed and model all
+carry on at the new size.
 
 ## 15. Migrating from the September 2026 `ensemble` block
 
