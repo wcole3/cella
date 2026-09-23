@@ -175,6 +175,8 @@ pub(in crate::gui) enum Action {
     RandomFillDraft,
     SurpriseMeDraft,
     MutateRuleDraft,
+    /// Close the notice popup.
+    DismissNotice,
 }
 
 /// Most actions applied in one frame before the drain gives up; a reducer arm
@@ -393,6 +395,7 @@ impl CellaApp {
                     sigma: self.edit.mutate_sigma,
                 });
             }
+            Action::DismissNotice => self.chrome.notice = None,
         }
     }
 

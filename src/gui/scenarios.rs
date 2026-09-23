@@ -105,6 +105,7 @@ impl CellaApp {
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
         self.set_status("Loaded demo: Life (2D)");
+        self.explore_scenario_loaded(None, None);
     }
     pub(in crate::gui) fn load_demo_1d_rule30(&mut self) {
         let width = 201usize;
@@ -126,6 +127,7 @@ impl CellaApp {
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
+        self.explore_scenario_loaded(None, None);
     }
     pub(in crate::gui) fn load_demo_1d_n2(&mut self) {
         let code: u128 = 0xAAAAAAAA;
@@ -148,6 +150,7 @@ impl CellaApp {
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
+        self.explore_scenario_loaded(None, None);
     }
     pub(in crate::gui) fn load_demo_2d_three_state_cycle(&mut self) {
         let (w, h, hist) = (48usize, 27usize, 3usize);
@@ -166,6 +169,7 @@ impl CellaApp {
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
+        self.explore_scenario_loaded(None, None);
     }
     pub(in crate::gui) fn load_demo_2d_straightline(&mut self) {
         let (w, h, hist) = (48usize, 27usize, 3usize);
@@ -184,6 +188,7 @@ impl CellaApp {
         self.update_selected_draw_type_default();
         self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
+        self.explore_scenario_loaded(None, None);
     }
     pub(in crate::gui) fn load_demo_1d_custom_from_inputs(&mut self) {
         let wolfram_code: u128 = self.inputs.custom_code.trim().parse().unwrap_or(30);
@@ -212,6 +217,7 @@ impl CellaApp {
             self.update_selected_draw_type_default();
             self.stats_clear_and_init();
             self.refresh_rule_editor_from_current();
+            self.explore_scenario_loaded(None, None);
         }
     }
     /// "Load Config JSON..." button: ask for a file, then load it.
@@ -329,6 +335,7 @@ impl CellaApp {
                 self.scenario.initial_state = initial_state;
                 self.set_status(load_status_message("1D", name, resume, resumed_ok));
                 self.finish_scenario_load(w, h, cfg.colors());
+                self.explore_scenario_loaded(cfg.ensemble().cloned(), cfg.evolve().cloned());
             }
             config::CellaConfig::D2(_) => {
                 let resumed = resume.then(|| cfg.build_grid2d_resumed()).flatten();
@@ -345,6 +352,7 @@ impl CellaApp {
                 self.scenario.initial_state = initial_state;
                 self.set_status(load_status_message("2D", name, resume, resumed_ok));
                 self.finish_scenario_load(w, h, cfg.colors());
+                self.explore_scenario_loaded(cfg.ensemble().cloned(), cfg.evolve().cloned());
             }
         }
     }
@@ -470,6 +478,7 @@ mod tests {
     use super::*;
     use crate::gui::actions::Action;
     use crate::gui::actions::SnapshotChoice;
+    use crate::gui::explore::{ExploreMode, SearchChoice};
     use crate::gui::sim::tests::test_app;
     use cella_lib::config::CellaConfig;
     use std::path::Path;
@@ -1011,5 +1020,50 @@ mod tests {
             "the Reset target is untouched"
         );
         assert_eq!(app.view.colors, colours_before);
+    }
+
+    #[test]
+    fn loading_an_ensemble_config_fills_the_panel_and_shows_a_notice() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        let cfg = CellaConfig::from_file("configs/2d_wildfire_ensemble.json").unwrap();
+        let block = cfg.ensemble().unwrap();
+        assert_eq!(app.explore.mode, ExploreMode::MonteCarlo);
+        assert_eq!(app.explore.mc.members, block.members);
+        assert_eq!(app.explore.mc.beta, block.beta);
+        let ticked: Vec<&str> = app.explore.genes.iter().filter(|r| r.vary).map(|r| r.desc.key.as_str()).collect();
+        for g in &block.genes {
+            let has_row = app.explore.genes.iter().any(|r| r.desc.key == g.key);
+            assert_eq!(ticked.contains(&g.key.as_str()), has_row, "gene {}", g.key);
+        }
+        assert!(app.explore.base_ensemble.is_some());
+        let kept = app.explore.kept_ensemble.join("; ");
+        assert!(kept.contains("driver"), "kept: {kept}");
+        let notice = app.chrome.notice.as_ref().expect("a load notice");
+        assert!(notice.lines.iter().any(|l| l.contains("members")), "{notice:?}");
+        assert!(notice.lines.iter().any(|l| l.contains("Kept as-is")), "{notice:?}");
+    }
+
+    #[test]
+    fn loading_an_evolve_config_selects_evolve_and_notes_what_it_keeps() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_map_elites_life_classes.json"));
+        assert_eq!(app.explore.mode, ExploreMode::Evolve);
+        assert_eq!(app.explore.evo.search, SearchChoice::MapElites);
+        let kept = app.explore.kept_evolve.join("; ");
+        assert!(kept.contains("random initial grids"), "kept: {kept}");
+        assert!(app.explore.base_evolve.is_some());
+    }
+
+    #[test]
+    fn a_plain_config_or_demo_clears_the_base_and_shows_no_notice() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        app.apply_action(Action::DismissNotice);
+        assert!(app.chrome.notice.is_none());
+        app.load_demo_life();
+        assert!(app.explore.base_ensemble.is_none());
+        assert!(app.explore.panel_at_load.is_some(), "a baseline is taken on every load");
+        assert!(app.chrome.notice.is_none());
     }
 }

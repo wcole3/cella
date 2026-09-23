@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use cella_lib::explore::{
     ArchiveSnapshot, AssimilationReport, DescriptorSpec, Ensemble, EnsembleConfig, Evolution,
-    EvolveConfig, GeneSpace, GeneSpec, GenerationReport, Genome, Goal, MaskScore, Metric,
-    Objective, Scale, Search, Sim, When,
+    EvolveConfig, GeneSpace, GeneSpec, GenerationReport, Genome, Goal, InitialCondition,
+    MaskScore, Metric, Objective, Scale, Search, Selection, Sim, StateCorrection, When,
 };
 use cella_lib::rng::Rng;
 use cella_lib::{CellType, GridState, ParamDesc, ParamKind, ParamValue};
@@ -30,7 +30,8 @@ use lasso2::Spur;
 
 use super::app::{CellaApp, Dim};
 use super::layers::ProbabilityMap;
-use super::state::RULE_UNDO_CAP;
+use super::panels::explore::MAX_MEMBERS;
+use super::state::{Notice, RULE_UNDO_CAP};
 
 /// Which engine the tab is set up for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -240,6 +241,49 @@ impl MetricChoice {
             MetricChoice::Period => Metric::Period { window: 64 },
         }
     }
+
+    /// The picker entry for a library metric, or `None` when the panel has
+    /// no entry for it. A saved block then keeps that metric exactly as it
+    /// was loaded.
+    pub(in crate::gui) fn from_metric(m: &Metric) -> Option<MetricChoice> {
+        Some(match m {
+            Metric::Fraction { .. } => MetricChoice::Fraction,
+            Metric::Activity => MetricChoice::Activity,
+            Metric::Entropy => MetricChoice::Entropy,
+            Metric::Lifetime => MetricChoice::Lifetime,
+            Metric::TargetMask { .. } => MetricChoice::MatchGrid,
+            Metric::BboxFraction { .. } => MetricChoice::BboxFraction,
+            Metric::Elongation { .. } => MetricChoice::Elongation,
+            Metric::CentroidSpeed { .. } => MetricChoice::CentroidSpeed,
+            Metric::Growth { .. } => MetricChoice::Growth,
+            Metric::Period { window: 64 } => MetricChoice::Period,
+            Metric::Period { .. } | Metric::Series { .. } | Metric::DensityClassification { .. } => {
+                return None;
+            }
+        })
+    }
+}
+
+/// The type names a metric measures, if it takes any.
+fn metric_types(m: &Metric) -> Option<&[String]> {
+    match m {
+        Metric::Fraction { types }
+        | Metric::TargetMask { types, .. }
+        | Metric::Series { types, .. }
+        | Metric::BboxFraction { types }
+        | Metric::Elongation { types }
+        | Metric::CentroidSpeed { types }
+        | Metric::Growth { types } => Some(types),
+        _ => None,
+    }
+}
+
+/// A metric's name as the config file spells it (its `"metric"` tag).
+fn metric_name(m: &Metric) -> String {
+    serde_json::to_value(m)
+        .ok()
+        .and_then(|v| v.get("metric")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "metric".into())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -468,6 +512,43 @@ pub(in crate::gui) struct ExploreState {
     pub message: Option<String>,
     /// The egui context, remembered each frame so a worker can wake the UI.
     pub ctx: Option<egui::Context>,
+    /// The `ensemble` block of the last loaded file (None for a demo or a
+    /// file without one). Save and Run start from it, so fields this panel
+    /// cannot edit survive.
+    pub base_ensemble: Option<EnsembleConfig>,
+    /// The same for the `evolve` block.
+    pub base_evolve: Option<EvolveConfig>,
+    /// What the panel could not show from the loaded blocks, for the
+    /// notices. The saved block keeps those fields as loaded.
+    pub kept_ensemble: Vec<String>,
+    pub kept_evolve: Vec<String>,
+    /// The panel right after the last scenario load. Save and Run compare
+    /// against it to tell which settings the user changed since.
+    pub panel_at_load: Option<PanelBaseline>,
+    /// A run of that mode started since the last scenario load.
+    pub ensemble_ran: bool,
+    pub evolve_ran: bool,
+}
+
+/// A copy of the Explore panel taken right after a scenario load.
+///
+/// Nothing in this task reads the fields back; they are written by
+/// [`CellaApp::explore_scenario_loaded`] so a later task's Save and Run can
+/// diff the panel's current settings against them. `#[allow(dead_code)]`
+/// silences the warning that would otherwise fire until that reader lands.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(in crate::gui) struct PanelBaseline {
+    /// What the ensemble builder produced, as JSON.
+    pub ensemble: serde_json::Value,
+    /// What the evolve builder produced, as JSON (None if it could not build).
+    pub evolve: Option<serde_json::Value>,
+    pub mc: McConfig,
+    pub evo: EvoConfig,
+    pub objective: ObjectiveChoice,
+    /// JSON of the ticked genes (`gene_specs`).
+    pub genes: serde_json::Value,
+    pub tracked: BTreeSet<Spur>,
 }
 
 /// Rough memory an ensemble needs, in bytes: two cell buffers, ages and the
@@ -1125,7 +1206,7 @@ impl CellaApp {
     }
 
     /// The evolve block the Evolve controls describe.
-    pub(in crate::gui) fn current_evolve_config(&self) -> Option<EvolveConfig> {
+    pub(in crate::gui) fn panel_evolve_config(&self) -> Option<EvolveConfig> {
         let evo = &self.explore.evo;
         let objective = self.current_objective()?;
         let names = self.tracked_names();
@@ -1176,7 +1257,7 @@ impl CellaApp {
     }
 
     /// The ensemble block the Monte Carlo controls describe.
-    pub(in crate::gui) fn current_ensemble_config(&self) -> EnsembleConfig {
+    pub(in crate::gui) fn panel_ensemble_config(&self) -> EnsembleConfig {
         let mc = &self.explore.mc;
         EnsembleConfig {
             members: mc.members.max(1),
@@ -1189,9 +1270,277 @@ impl CellaApp {
             crossover: 0.0,
             immigrant_reset: false,
             immigrant_reset_gate: None,
-            state_correction: cella_lib::StateCorrection::None,
+            state_correction: StateCorrection::None,
             driver: None,
         }
+    }
+
+    /// The ensemble block Run and Save use. (Task 5 merges the loaded base in.)
+    pub(in crate::gui) fn current_ensemble_config(&self) -> EnsembleConfig {
+        self.panel_ensemble_config()
+    }
+    /// The evolve block Run and Save use. (Task 5 merges the loaded base in.)
+    pub(in crate::gui) fn current_evolve_config(&self) -> Option<EvolveConfig> {
+        self.panel_evolve_config()
+    }
+
+    /// The Explore side of a scenario load: show the file's blocks in the
+    /// panel, remember them as the base for Save and Run, take a fresh
+    /// baseline, and pop up a notice when a block was loaded. Every scenario
+    /// load calls this, including demos with `(None, None)`, so a previous
+    /// file's base never leaks into the next scenario.
+    pub(in crate::gui) fn explore_scenario_loaded(
+        &mut self,
+        ensemble: Option<EnsembleConfig>,
+        evolve: Option<EvolveConfig>,
+    ) {
+        self.reconcile_explore_state();
+        self.explore.kept_ensemble.clear();
+        self.explore.kept_evolve.clear();
+        let mut lines = Vec::new();
+        // Evolve first, then ensemble: the gene table and tracked set are
+        // shared, and when a file has both, the ensemble's win (its mode is
+        // selected). The evolve block keeps its own genes through the merge.
+        if let Some(e) = &evolve {
+            self.explore.kept_evolve = self.apply_evolve_to_panel(e);
+            self.explore.mode = ExploreMode::Evolve;
+            lines.push(format!(
+                "Evolve: population {}, {} generations, {} genes.",
+                e.population, e.generations, e.genes.len()
+            ));
+            if !self.explore.kept_evolve.is_empty() {
+                lines.push(format!(
+                    "Kept as-is (not editable here): {}.",
+                    self.explore.kept_evolve.join("; ")
+                ));
+            }
+        }
+        if let Some(e) = &ensemble {
+            self.explore.kept_ensemble = self.apply_ensemble_to_panel(e);
+            self.explore.mode = ExploreMode::MonteCarlo;
+            let track = if e.track.is_empty() { "all types".to_string() } else { e.track.join(", ") };
+            lines.insert(0, format!(
+                "Ensemble: {} members, {} genes, tracking {track}.",
+                e.members, e.genes.len()
+            ));
+            if !self.explore.kept_ensemble.is_empty() {
+                lines.insert(1, format!(
+                    "Kept as-is (not editable here): {}.",
+                    self.explore.kept_ensemble.join("; ")
+                ));
+            }
+        }
+        self.explore.base_ensemble = ensemble;
+        self.explore.base_evolve = evolve;
+        self.explore.ensemble_ran = false;
+        self.explore.evolve_ran = false;
+        self.explore.panel_at_load = Some(self.panel_baseline());
+        if !lines.is_empty() {
+            self.chrome.notice = Some(Notice {
+                title: "Explore settings loaded".into(),
+                lines,
+            });
+        }
+    }
+
+    /// Snapshot the panel as it is now (see [`PanelBaseline`]).
+    fn panel_baseline(&self) -> PanelBaseline {
+        PanelBaseline {
+            ensemble: serde_json::to_value(self.panel_ensemble_config()).unwrap_or_default(),
+            evolve: self.panel_evolve_config().and_then(|c| serde_json::to_value(c).ok()),
+            mc: self.explore.mc.clone(),
+            evo: self.explore.evo.clone(),
+            objective: self.explore.objective.clone(),
+            genes: serde_json::to_value(gene_specs(&self.explore.genes)).unwrap_or_default(),
+            tracked: self.explore.tracked.clone(),
+        }
+    }
+
+    /// Tick the gene rows a block names and set their ranges; untick every
+    /// other row. Returns a note naming each gene that has no row here (a
+    /// free, driver or wildcard gene); the saved block keeps those as loaded.
+    fn apply_genes_to_panel(&mut self, genes: &[GeneSpec]) -> Vec<String> {
+        for row in &mut self.explore.genes {
+            row.vary = false;
+        }
+        let mut no_row = Vec::new();
+        for spec in genes {
+            let Some(row) = self.explore.genes.iter_mut().find(|r| r.desc.key == spec.key) else {
+                no_row.push(spec.key.clone());
+                continue;
+            };
+            row.vary = true;
+            match &row.desc.kind {
+                ParamKind::Float { .. } | ParamKind::Int { .. } => {
+                    // `range: None` means "use the knob's full declared
+                    // range" (see `GeneSpec::new`'s docs), not "leave
+                    // whatever this row had from the previous scenario".
+                    (row.lo, row.hi) = match spec.range {
+                        Some([lo, hi]) => clamp_range(lo, hi, &row.desc.kind),
+                        None => match &row.desc.kind {
+                            ParamKind::Float { min, max, .. } => (*min, *max),
+                            ParamKind::Int { min, max } => (*min as f64, *max as f64),
+                            _ => (row.lo, row.hi),
+                        },
+                    };
+                    row.log = matches!(spec.scale, Scale::Log);
+                }
+                ParamKind::Choice { options } => {
+                    row.choices = match &spec.choices {
+                        Some(chosen) => options.iter().map(|o| chosen.contains(o)).collect(),
+                        None => vec![true; options.len()],
+                    };
+                }
+                ParamKind::Bool | ParamKind::Bits { .. } => {}
+            }
+        }
+        if no_row.is_empty() {
+            Vec::new()
+        } else {
+            vec![format!("{} gene(s) with no row here: {}", no_row.len(), no_row.join(", "))]
+        }
+    }
+
+    /// Track the named types; an empty list means every declared type.
+    /// Names the grid does not declare are ignored.
+    fn apply_track_to_panel(&mut self, names: &[String]) {
+        let declared: BTreeSet<Spur> = self
+            .declared_types()
+            .into_iter()
+            .filter(|t| *t != CellType::inactive())
+            .map(|t| t.0)
+            .collect();
+        let chosen: BTreeSet<Spur> = names
+            .iter()
+            .map(|n| CellType::new(n).0)
+            .filter(|s| declared.contains(s))
+            .collect();
+        self.explore.tracked = if chosen.is_empty() { declared } else { chosen };
+    }
+
+    /// Show a loaded ensemble block in the Monte Carlo controls. Returns what
+    /// the panel cannot show.
+    fn apply_ensemble_to_panel(&mut self, e: &EnsembleConfig) -> Vec<String> {
+        let mut kept = self.apply_genes_to_panel(&e.genes);
+        self.apply_track_to_panel(&e.track);
+        let mc = &mut self.explore.mc;
+        mc.members = e.members.clamp(1, MAX_MEMBERS);
+        mc.seed = e.seed;
+        mc.beta = e.beta;
+        mc.sigma = e.sigma;
+        mc.immigrants = e.immigrants;
+        if e.members > MAX_MEMBERS {
+            kept.push(format!("{} members (the panel shows at most {MAX_MEMBERS})", e.members));
+        }
+        if e.driver.is_some() {
+            kept.push("driver".into());
+        }
+        if e.crossover != 0.0 {
+            kept.push(format!("crossover {}", e.crossover));
+        }
+        if e.immigrant_reset {
+            kept.push("immigrant reset".into());
+        }
+        if e.immigrant_reset_gate.is_some() {
+            kept.push("immigrant reset gate".into());
+        }
+        if !matches!(e.state_correction, StateCorrection::None) {
+            kept.push("state correction".into());
+        }
+        kept
+    }
+
+    /// Show a loaded evolve block in the Evolve controls. Returns what the
+    /// panel cannot show.
+    fn apply_evolve_to_panel(&mut self, e: &EvolveConfig) -> Vec<String> {
+        let mut kept = self.apply_genes_to_panel(&e.genes);
+        {
+            let evo = &mut self.explore.evo;
+            evo.population = e.population;
+            evo.generations = e.generations.min(u32::MAX as usize) as u32;
+            evo.seed = e.seed;
+            evo.steps = e.steps;
+            evo.repeats = e.repeats;
+            evo.elite = e.elite;
+            evo.crossover = e.crossover;
+            evo.mutation = e.mutation;
+            evo.sigma = e.sigma;
+            evo.immigrants = e.immigrants;
+            evo.search = match &e.search {
+                Search::Objective => SearchChoice::Objective,
+                Search::Novelty { k, threshold } => {
+                    if *k != 15 || threshold.is_some() {
+                        kept.push(format!("novelty settings (k {k})"));
+                    }
+                    SearchChoice::Novelty
+                }
+                Search::MapElites { batch, iso_line } => {
+                    kept.push(format!("map-elites batch {batch}, iso-line {iso_line}"));
+                    SearchChoice::MapElites
+                }
+            };
+            let mut rows = Vec::new();
+            for d in &e.descriptors {
+                match (MetricChoice::from_metric(&d.metric), &d.when) {
+                    (Some(metric), When::Mean | When::End) if d.range.is_none() => {
+                        rows.push(DescriptorRow { metric, mean: matches!(d.when, When::Mean), bins: d.bins });
+                    }
+                    _ => kept.push(format!("descriptor '{}'", metric_name(&d.metric))),
+                }
+            }
+            if !rows.is_empty() {
+                evo.descriptors = rows;
+            }
+        }
+        match &e.objective {
+            Some(o) => match MetricChoice::from_metric(&o.metric) {
+                Some(metric) => {
+                    let obj = &mut self.explore.objective;
+                    obj.metric = metric;
+                    obj.goal = match o.goal {
+                        Goal::Maximise => GoalChoice::Maximise,
+                        Goal::Minimise => GoalChoice::Minimise,
+                        Goal::Target(t) => {
+                            obj.target = t;
+                            GoalChoice::Target
+                        }
+                    };
+                    match o.when {
+                        When::End => obj.at_end = true,
+                        When::Step(k) => {
+                            obj.at_end = false;
+                            obj.at_step = k;
+                        }
+                        When::Mean => kept.push("objective averaged over the run".into()),
+                    }
+                    if matches!(o.metric, Metric::TargetMask { .. }) {
+                        kept.push("objective target mask".into());
+                    }
+                    if let Some(types) = metric_types(&o.metric) {
+                        let types = types.to_vec();
+                        self.apply_track_to_panel(&types);
+                    }
+                }
+                None => kept.push(format!("objective '{}'", metric_name(&o.metric))),
+            },
+            None => kept.push("no objective (archive only)".into()),
+        }
+        if !matches!(e.selection, Selection::Tournament { k: 3 }) {
+            kept.push("selection".into());
+        }
+        if !matches!(e.initial, InitialCondition::Fixed) {
+            kept.push("random initial grids".into());
+        }
+        if e.driver.is_some() {
+            kept.push("driver".into());
+        }
+        if !e.forcing.is_empty() {
+            kept.push("forcing".into());
+        }
+        if !e.thumbnails {
+            kept.push("thumbnails off".into());
+        }
+        kept
     }
 }
 
@@ -1434,6 +1783,45 @@ mod tests {
         app.load_demo_life();
         app.reconcile_explore_state();
         app
+    }
+
+    #[test]
+    fn every_metric_choice_round_trips_through_the_library_metric() {
+        for c in MetricChoice::ALL {
+            let m = c.to_metric(&["A".to_string()], &[true]);
+            assert_eq!(MetricChoice::from_metric(&m), Some(c), "{c:?}");
+        }
+        assert_eq!(MetricChoice::from_metric(&Metric::Period { window: 32 }), None);
+    }
+
+    #[test]
+    fn apply_genes_to_panel_resets_a_none_range_to_the_knobs_declared_bounds() {
+        let mut app = life_app();
+        // Pretend a previous scenario narrowed this row's range.
+        let row = app
+            .explore
+            .genes
+            .iter_mut()
+            .find(|r| r.desc.key == "rule.subrules[0].count")
+            .unwrap();
+        row.lo = 3.0;
+        row.hi = 5.0;
+        // A `GeneSpec::new` gene has `range: None`: "use the knob's full
+        // declared range" per its docs, not "leave the row's stale range".
+        let spec = GeneSpec::new("rule.subrules[0].count".to_string());
+        assert!(spec.range.is_none());
+        app.apply_genes_to_panel(&[spec]);
+        let row = app
+            .explore
+            .genes
+            .iter()
+            .find(|r| r.desc.key == "rule.subrules[0].count")
+            .unwrap();
+        assert_eq!(
+            (row.lo, row.hi),
+            (0.0, 8.0),
+            "a None range should reset to the knob's declared bounds, not keep the stale narrow one"
+        );
     }
 
     #[test]

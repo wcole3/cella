@@ -312,6 +312,7 @@ impl eframe::App for CellaApp {
         self.ui_viewport(ui);
         self.ui_shortcuts_overlay(ctx);
         self.ui_snapshot_load_modal(ctx);
+        self.ui_notice_modal(ctx);
 
         // Everything the panels asked for lands here, after they were drawn.
         self.drain_actions();

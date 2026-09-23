@@ -24,7 +24,7 @@ use egui_plot::{Legend, Line, Plot, PlotPoints};
 
 /// Most members the tab will start; above this the grid clones alone take
 /// gigabytes on an ordinary grid.
-const MAX_MEMBERS: usize = 512;
+pub(in crate::gui) const MAX_MEMBERS: usize = 512;
 
 impl CellaApp {
     /// The Explore tab body.

@@ -318,6 +318,19 @@ pub(in crate::gui) struct Chrome {
     /// `ui_snapshot_load_modal` (in `panels::toolbar`) to draw that modal;
     /// it clears itself once a choice is made.
     pub(in crate::gui) pending_snapshot_load: Option<PendingSnapshotLoad>,
+    /// A one-off message waiting for the user to press OK, e.g. what a
+    /// scenario load did with the Explore settings. `ui_notice_modal` (in
+    /// `panels::toolbar`) draws it and clears it via
+    /// [`Action::DismissNotice`](super::actions::Action::DismissNotice).
+    pub(in crate::gui) notice: Option<Notice>,
+}
+
+/// A one-off message the user acknowledges with OK, e.g. what a load or a
+/// save did with the Explore settings.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::gui) struct Notice {
+    pub(in crate::gui) title: String,
+    pub(in crate::gui) lines: Vec<String>,
 }
 
 /// A config loaded from disk whose run is mid-simulation, waiting for the
@@ -345,6 +358,7 @@ impl Chrome {
             workbench_tab: WorkbenchTab::default(),
             show_shortcuts: false,
             pending_snapshot_load: None,
+            notice: None,
         }
     }
 }

@@ -288,6 +288,31 @@ impl CellaApp {
             self.push(Action::ResolveSnapshotLoad(choice));
         }
     }
+
+    /// The notice popup (see [`Notice`]). Waits while the snapshot-load
+    /// question is open, so only one popup shows at a time.
+    pub(in crate::gui) fn ui_notice_modal(&mut self, ctx: &Context) {
+        if self.chrome.pending_snapshot_load.is_some() {
+            return;
+        }
+        let Some(notice) = self.chrome.notice.clone() else {
+            return;
+        };
+        let mut dismiss = false;
+        let response = egui::Modal::new(egui::Id::new("notice_modal")).show(ctx, |ui| {
+            ui.heading(&notice.title);
+            for line in &notice.lines {
+                ui.label(line);
+            }
+            ui.add_space(crate::gui::theme::SPACE_MD);
+            if ui.button("OK").clicked() {
+                dismiss = true;
+            }
+        });
+        if dismiss || response.should_close() {
+            self.push(Action::DismissNotice);
+        }
+    }
 }
 
 #[cfg(test)]
