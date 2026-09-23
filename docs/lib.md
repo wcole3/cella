@@ -186,7 +186,20 @@ feature (`explore::Ensemble`, [explore.md](explore.md)); the wildfire model
 takes part through `WildfireDriver`, which applies the wind schedule,
 optional `tau_days` decay and the FSim-style daily containment roll to each
 member. `configs/2d_wildfire_ensemble.json` shows the `"ensemble"` block;
-`examples/wildfire_smc.rs` is the validation runner built on it.
+`examples/wildfire_smc/` is the validation runner built on it — a small
+module tree, not a single file (Round 7: the six-fire validation campaign
+keeps adding to it, so it is split to stay readable). `main.rs` parses the
+CLI/env and the scenario files and dispatches to a mode; `knobs.rs`
+centralises the mode-independent `SMC_*` env parsing into one `Knobs`
+struct; `priors.rs` builds the gene list and the config-time
+spread/spotting overrides; `nulls.rs` holds every deterministic dummy
+forecaster (persistence, Circle, Ellipse, and their lagged variants);
+`score.rs` holds the per-observation report-row structs; `report.rs` holds
+the JSON-writing and build-provenance boilerplate every mode's report ends
+with; and `modes/{open,assim,evolve,map}.rs` hold one mode each (`replay`
+lives beside `map`, since it re-evaluates a `map`-mode archive; `nulls`
+mode lives in `nulls.rs`, next to the null-forecaster code it is entirely
+built from).
 `wildfire::wind_field::mass_consistent` / `MassConsistentBasis` downscale one
 wind over the elevation layer (WindNinja-style mass conservation: ridges
 speed up, valleys channel) into a per-cell field for

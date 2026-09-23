@@ -729,9 +729,12 @@ in `validation/results/analysis/`.
 5. A fuel term in the containment operator, and the ICS-209 check's own
    follow-up (does ICS-209's containment-line lag scale with fire size or
    fuel type?) — carried from Round 4/5.
-6. Pre-existing gaps: crate coverage ≈ 98.3 % vs. the 99 % gate; `make
-   clippy` does not lint `cella_lib`'s own examples; `wildfire_smc.rs`'s
-   size.
+6. Pre-existing gap: crate coverage ≈ 98.3 % vs. the 99 % gate. (Two other
+   items that used to sit here — `make clippy` not linting `cella_lib`'s
+   own examples, and `wildfire_smc.rs`'s size — were fixed in Round 7
+   Task 1: `make clippy` now also runs from `cella_lib/`, and
+   `cella_lib/examples/wildfire_smc/` is a small module tree instead of
+   one 2,420-line file.)
 
 Full context for each item: `validation/experiments/round-6.md`, "Still
 open after this round."

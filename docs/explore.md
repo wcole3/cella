@@ -449,7 +449,8 @@ has the generation log, the hall of fame, `best_config`, and for
 MAP-Elites/novelty the archive (dims, ranges, labels, per-generation
 statistics, final cells).
 
-The wildfire validation runner `cella_lib/examples/wildfire_smc.rs` is the
+The wildfire validation runner `cella_lib/examples/wildfire_smc/` (a small
+module tree, not a single file — see [lib.md](lib.md)'s module map) is the
 same engine with the fire's weather schedule and observation series wired
 in; its command line and report fields did not change when the engine was
 generalised (experiment E31 checks that).

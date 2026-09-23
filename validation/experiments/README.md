@@ -107,8 +107,9 @@ task from a run that saw nothing. Tables that mix them say so.
 
 **Tooling**: `cella_lib/examples/wildfire_experiment.rs` (hooks
 `EXP_P0_SCALE`, `EXP_WIND_SCALE`, `EXP_WIND_ROT_DEG`, `EXP_SEED_BASE`, and
-later ones named in each file), `cella_lib/examples/wildfire_smc.rs`
-(Rounds 4–5), and the runners in `../scripts/experiments/`. Results land
+later ones named in each file), `cella_lib/examples/wildfire_smc/` (Rounds
+4–5; a module tree since Round 7 Task 1, same CLI and report), and the
+runners in `../scripts/experiments/`. Results land
 in the gitignored `../results/experiments/`. **Build root trap:** runners
 must call `cella_lib/target/release/examples/...`, not the repo-root
 `target/`.
