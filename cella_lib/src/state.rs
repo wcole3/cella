@@ -1,4 +1,14 @@
-//! Grid state snapshots and (de)serialization helpers.
+//! In-memory grid snapshots.
+//!
+//! [`GridState`] is not serializable — it used to be the save-file format,
+//! but round-tripping it directly wrote per-cell state with no scenario
+//! context (no rule name, no colours, nothing to reset back to). It is now
+//! purely an in-memory handoff: [`crate::config::CellaConfig`] builds one
+//! from a live grid to save it (see `save_1d`/`save_2d`), and reads one back
+//! out of a saved snapshot to restore a grid (see `build_grid1d_resumed`/
+//! `build_grid2d_resumed`), both by calling into [`Grid1D::from_state`]/
+//! [`Grid2D::from_state`] below. [`crate::explore::Sim::to_state`]/
+//! `from_state` use it the same way to clone a running simulation.
 
 use crate::CellType;
 use crate::grid1d::Grid1D;
@@ -6,23 +16,19 @@ use crate::grid2d::Grid2D;
 use crate::rules::{Rule1D, Rule2D};
 use crate::types::{CellState, interner};
 use lasso2::Spur;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Serializable snapshot of either a 1D or 2D grid.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// In-memory snapshot of either a 1D or 2D grid.
+#[derive(Clone, Debug)]
 pub enum GridState {
     D1 {
         width: usize,
         history_limit: usize,
         cell_states: Vec<CellState>,
         step: u64,
-        #[serde(default)]
         seed: u64,
         rule: Rule1D,
-        #[serde(default)]
         counts_current: HashMap<String, u64>,
-        #[serde(default)]
         peak_counts: HashMap<String, u64>,
     },
     D2 {
@@ -31,14 +37,10 @@ pub enum GridState {
         history_limit: usize,
         cell_states: Vec<CellState>,
         step: u64,
-        #[serde(default)]
         seed: u64,
         rule: Rule2D,
-        #[serde(default)]
         counts_current: HashMap<String, u64>,
-        #[serde(default)]
         peak_counts: HashMap<String, u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<Box<dyn crate::external::ExternalModel>>,
     },
 }
@@ -76,16 +78,6 @@ impl GridState {
             peak_counts: peak_count_map,
             model: g.model.clone(),
         }
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap()
-    }
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-    pub fn from_json(s: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(s)
     }
 }
 
@@ -195,10 +187,6 @@ impl Grid2D {
             _ => None,
         }
     }
-}
-
-pub fn grid2d_to_json(g: &Grid2D) -> String {
-    GridState::from_grid2d(g).to_json_pretty()
 }
 
 fn convert_map_string_to_spur(
@@ -316,16 +304,12 @@ mod tests {
     }
 
     #[test]
-    fn json_helpers_and_mismatched_from_state_paths_are_covered() {
+    fn mismatched_from_state_paths_are_covered() {
         let a = CellType::from("A");
         let g2 = Grid2D::new(1, 1, 0, vec![a], Rule2D { subrules: vec![] });
-        let pretty = GridState::from_grid2d(&g2).to_json_pretty();
-        assert!(pretty.contains("D2"));
-
-        let via_fn = grid2d_to_json(&g2);
-        assert!(via_fn.contains("D2"));
 
         let s2 = GridState::from_grid2d(&g2);
+        assert!(matches!(s2, GridState::D2 { .. }));
         assert!(Grid1D::from_state(&s2).is_none());
 
         let g1 = Grid1D::new(1, 0, vec![a], Rule1D { subrules: vec![] });

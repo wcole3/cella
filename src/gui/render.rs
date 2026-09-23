@@ -48,6 +48,11 @@ pub fn parse_hex_color(s: &str) -> Option<Color32> {
     Some(Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
 }
 
+/// Format a colour as `#rrggbb`, the inverse of [`parse_hex_color`].
+pub fn color_to_hex(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
 /// One palette slot per name, with no two names sharing a slot while slots
 /// last: the i-th name gets slot i. Past the palette's length there is nothing
 /// left to hand out, so those names fall back to the hashed slot.
@@ -150,6 +155,13 @@ mod tests {
         assert_eq!(parse_hex_color("#12345"), None);
         assert_eq!(parse_hex_color("#gg0000"), None);
         assert_eq!(parse_hex_color("red"), None);
+    }
+
+    #[test]
+    fn color_to_hex_round_trips_through_parse_hex_color() {
+        let c = Color32::from_rgb(0x2e, 0x8b, 0x57);
+        assert_eq!(color_to_hex(c), "#2e8b57");
+        assert_eq!(parse_hex_color(&color_to_hex(c)), Some(c));
     }
 
     #[test]

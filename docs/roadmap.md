@@ -733,11 +733,16 @@ the `runs_for` helper in `src/gui/painter.rs`.
 
 **No new serialization work is needed.** Parameters live in each model's own
 serde-derived fields, and `Box<dyn ExternalModel>` already round-trips through
-`typetag` in both `CellaConfig` and `GridState`. So a value edited in the GUI is
-captured by "Save Final State" for free.
+`typetag` as part of `CellaConfig`'s `model` block. So a value edited in the
+GUI is captured by "Save" for free.
 
 Add one integration test that proves it: set a parameter, snapshot, restore, and
 assert `get_param` returns the edited value.
+
+*(Later note: saved files are `CellaConfig` JSON with an optional `snapshot`
+block — see `docs/lib.md` "Saving and resuming a run" — not raw `GridState`
+JSON as an earlier draft of this plan assumed. `GridState` itself is now
+in-memory only; nothing in the library serializes it directly.)*
 
 ### 3.6 The acceptance test
 

@@ -6,7 +6,7 @@
 //! frame. The only state it edits directly is the "Run to +N" draft value,
 //! which is a form field, not simulation state.
 
-use crate::gui::actions::{Action, speed_of};
+use crate::gui::actions::{Action, SnapshotChoice, speed_of};
 use crate::gui::app::CellaApp;
 use crate::gui::shortcuts::tooltip;
 use crate::gui::state::Pacing;
@@ -249,6 +249,43 @@ impl CellaApp {
         });
         if response.should_close() {
             self.chrome.show_shortcuts = false;
+        }
+    }
+
+    /// The "resume mid-run, or start over" prompt for a config loaded with a
+    /// `snapshot` past step 0. Modelled on `ui_shortcuts_overlay` (a modal,
+    /// closable via Escape or a click outside), except its buttons queue an
+    /// [`Action::ResolveSnapshotLoad`] rather than mutate the scenario
+    /// directly — resolving a snapshot load rebuilds the grid, which only
+    /// the reducer in `apply_action` is allowed to do.
+    pub(in crate::gui) fn ui_snapshot_load_modal(&mut self, ctx: &Context) {
+        let Some(pending) = &self.chrome.pending_snapshot_load else {
+            return;
+        };
+        let step = pending.cfg.snapshot().map(|s| s.step).unwrap_or(0);
+        let name = pending.name.clone();
+        let mut choice = None;
+        let response = egui::Modal::new(egui::Id::new("snapshot_load_modal")).show(ctx, |ui| {
+            ui.heading("Resume this run?");
+            ui.label(format!("'{name}' was saved at step {step}."));
+            ui.add_space(crate::gui::theme::SPACE_MD);
+            ui.horizontal(|ui| {
+                if ui.button(format!("Resume at step {step}")).clicked() {
+                    choice = Some(SnapshotChoice::Resume);
+                }
+                if ui.button("Start from initial (step 0)").clicked() {
+                    choice = Some(SnapshotChoice::Initial);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapshotChoice::Cancel);
+                }
+            });
+        });
+        if response.should_close() {
+            choice.get_or_insert(SnapshotChoice::Cancel);
+        }
+        if let Some(choice) = choice {
+            self.push(Action::ResolveSnapshotLoad(choice));
         }
     }
 }

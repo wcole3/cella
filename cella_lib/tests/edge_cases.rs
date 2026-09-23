@@ -416,15 +416,28 @@ fn grid_state_1d_roundtrip_counts_and_peaks() {
         inactive.clone(),
     ];
     let mut g = Grid1D::new(5, 2, init, rule);
+    let initial = GridState::from_grid1d(&g);
     g.step();
-    let st = GridState::from_grid1d(&g);
-    let json = st.to_json();
-    let st2 = GridState::from_json(&json).unwrap();
-    let g2 = Grid1D::from_state(&st2).unwrap();
+    // Round-trip through a saved config (the new format), not raw GridState
+    // JSON, which no longer exists.
+    let cfg = cella_lib::config::CellaConfig::save_1d(&initial, &g, Default::default());
+    let json = serde_json::to_string(&cfg).unwrap();
+    let cfg2: cella_lib::config::CellaConfig = serde_json::from_str(&json).unwrap();
+    let g2 = cfg2.build_grid1d_resumed().unwrap();
     assert_eq!(g.width, g2.width);
     assert_eq!(g.step, g2.step);
-    assert_eq!(g.counts_current, g2.counts_current);
+    // `counts_current` is recomputed from the cells on restore (the new
+    // format doesn't save it), so a type that fell to zero cells is simply
+    // absent afterward, where the live grid may still carry a stale
+    // zero-valued entry from before the drop. Compare with those dropped.
+    assert_eq!(non_zero(&g.counts_current), non_zero(&g2.counts_current));
     assert_eq!(g.peak_counts, g2.peak_counts);
+}
+
+/// Drop zero-valued entries: a type absent from a recomputed counts map and
+/// a type present with count 0 in a live one mean the same thing.
+fn non_zero(m: &std::collections::HashMap<lasso2::Spur, u64>) -> std::collections::HashMap<lasso2::Spur, u64> {
+    m.iter().filter(|&(_, &v)| v != 0).map(|(&k, &v)| (k, v)).collect()
 }
 
 #[test]
@@ -447,14 +460,19 @@ fn grid_state_2d_roundtrip_counts_and_peaks() {
     let mut init = vec![a.clone(); 9];
     init[4] = b.clone();
     let mut g = Grid2D::new(3, 3, 2, init, rule);
+    let initial = GridState::from_grid2d(&g);
     g.step();
-    let st = GridState::from_grid2d(&g);
-    let json = st.to_json();
-    let st2 = GridState::from_json(&json).unwrap();
-    let g2 = Grid2D::from_state(&st2).unwrap();
+    // Round-trip through a saved config (the new format), not raw GridState
+    // JSON, which no longer exists.
+    let cfg = cella_lib::config::CellaConfig::save_2d(&initial, &g, Default::default());
+    let json = serde_json::to_string(&cfg).unwrap();
+    let cfg2: cella_lib::config::CellaConfig = serde_json::from_str(&json).unwrap();
+    let g2 = cfg2.build_grid2d_resumed().unwrap();
     assert_eq!(g.width, g2.width);
     assert_eq!(g.height, g2.height);
     assert_eq!(g.step, g2.step);
-    assert_eq!(g.counts_current, g2.counts_current);
+    // See the 1D test above: a stale zero-valued entry on the live grid is
+    // simply absent once counts are recomputed from cells on restore.
+    assert_eq!(non_zero(&g.counts_current), non_zero(&g2.counts_current));
     assert_eq!(g.peak_counts, g2.peak_counts);
 }

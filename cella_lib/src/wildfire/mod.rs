@@ -2706,15 +2706,20 @@ mod tests {
     #[test]
     fn an_edited_parameter_survives_a_snapshot_round_trip() {
         // Roadmap 3.5: parameters live in the model's own serde fields and the
-        // model rides along in GridState, so an edit is saved with no extra
-        // serialization work.
+        // model rides along in the saved config's `model` block, so an edit
+        // is saved with no extra serialization work. A snapshot at step > 0
+        // restores through `build_grid2d_resumed`, which re-runs attach.
+        use crate::config::CellaConfig;
         use crate::state::GridState;
         let mut g = param_grid(None);
         g.set_model_param("wind_from_deg", ParamValue::Float(45.0))
             .unwrap();
-        let json = GridState::from_grid2d(&g).to_json();
-        let state = GridState::from_json(&json).expect("snapshot parses");
-        let mut back = crate::Grid2D::from_state(&state).expect("snapshot restores");
+        let initial = GridState::from_grid2d(&g);
+        g.step();
+        let cfg = CellaConfig::save_2d(&initial, &g, Default::default());
+        let json = serde_json::to_string(&cfg).unwrap();
+        let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
+        let mut back = cfg2.build_grid2d_resumed().expect("snapshot restores");
         assert_eq!(
             back.model_mut().unwrap().get_param("wind_from_deg"),
             Some(ParamValue::Float(45.0)),

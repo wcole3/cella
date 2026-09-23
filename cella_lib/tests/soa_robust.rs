@@ -292,6 +292,7 @@ fn soa_serialization_roundtrip_1d() {
         })
         .collect();
     let mut g = Grid1D::new(width, hist, init, rule);
+    let initial = GridState::from_grid1d(&g);
 
     for _ in 0..(hist + 3) {
         g.step();
@@ -302,11 +303,13 @@ fn soa_serialization_roundtrip_1d() {
     let cell_ages: Vec<_> = (0..width).map(|i| g.cell_age(i)).collect();
     let cell_hists: Vec<_> = (0..width).map(|i| g.cell_history(i)).collect();
 
-    let state = GridState::from_grid1d(&g);
-    let json = state.to_json();
-    let state2 = GridState::from_json(&json).unwrap();
+    // Round-trip through a saved config (the new format), not raw GridState
+    // JSON, which no longer exists.
+    let cfg = cella_lib::config::CellaConfig::save_1d(&initial, &g, Default::default());
+    let json = serde_json::to_string(&cfg).unwrap();
+    let cfg2: cella_lib::config::CellaConfig = serde_json::from_str(&json).unwrap();
 
-    let mut g2 = Grid1D::from_state(&state2).expect("roundtrip should succeed");
+    let mut g2 = cfg2.build_grid1d_resumed().expect("roundtrip should succeed");
     assert_eq!(g2.width, width);
     assert_eq!(g2.step, step_count);
     assert_eq!(g2.history_limit, hist);
@@ -392,6 +395,7 @@ fn soa_serialization_roundtrip_2d() {
         })
         .collect();
     let mut g = Grid2D::new(w, h, hist, init, rule);
+    let initial = GridState::from_grid2d(&g);
 
     for _ in 0..(hist + 3) {
         g.step();
@@ -403,10 +407,12 @@ fn soa_serialization_roundtrip_2d() {
     let cell_ages: Vec<_> = (0..total).map(|i| g.cell_age(i)).collect();
     let cell_hists: Vec<_> = (0..total).map(|i| g.cell_history(i)).collect();
 
-    let state = GridState::from_grid2d(&g);
-    let json = state.to_json();
-    let state2 = GridState::from_json(&json).unwrap();
-    let mut g2 = Grid2D::from_state(&state2).expect("roundtrip should succeed");
+    // Round-trip through a saved config (the new format), not raw GridState
+    // JSON, which no longer exists.
+    let cfg = cella_lib::config::CellaConfig::save_2d(&initial, &g, Default::default());
+    let json = serde_json::to_string(&cfg).unwrap();
+    let cfg2: cella_lib::config::CellaConfig = serde_json::from_str(&json).unwrap();
+    let mut g2 = cfg2.build_grid2d_resumed().expect("roundtrip should succeed");
 
     assert_eq!(g2.width, w);
     assert_eq!(g2.height, h);

@@ -82,9 +82,11 @@ This is typical of WSL without a user session. Any one of these fixes it:
   Windows and reopen. You also need `xdg-desktop-portal-gtk` installed.
 - **Skip the dialog**: launch with `--config PATH` as above.
 
-Save Final State and Export GIF use the same dialog and fail the same way;
-their status messages say "No save path chosen" / "No GIF path chosen". To
-see more detail from `rfd`, run with `RUST_LOG=rfd=debug`.
+Save and Export GIF use the same dialog and fail the same way; their status
+messages say "No save path chosen" / "No GIF path chosen". A dialog that does
+open but writes to an unwritable path reports the write error itself (e.g.
+"Failed to save: ..."), rather than silently doing nothing. To see more
+detail from `rfd`, run with `RUST_LOG=rfd=debug`.
 
 ### The workbench, in one picture
 
@@ -128,7 +130,7 @@ disagree. Press `?` in the app for the same list.
 | ⛶ | Zoom to fit the grid in the viewport | `F` |
 | ↺ | Reset to the initial state | `Ctrl+R` |
 | 🎞 | Export a GIF (opens the Edit tab's Export section) | `Ctrl+E` |
-| 💾 | Save the current state as JSON | `Ctrl+S` |
+| 💾 | Save the scenario as a config file, including the run if past step 0 | `Ctrl+S` |
 | ◧ / ◨ | Show or hide the control / workbench panel | `L` / `W` |
 | ? | The shortcut list | `?` |
 | | Toggle grid lines / age layer / probability layer | `G` / `A` / `P` |
@@ -158,6 +160,22 @@ while playing; playback and view keys always work.
 **Scenario.** Built-in demos (Life, Rule 30, radius-2, three-state 2D,
 straight-line), *Load Config JSON…*, the custom 1D builder (Wolfram code +
 radius), grid size + *Resize*, and the 1D history row count.
+
+**Save (💾 / `Ctrl+S`) and Load, together.** Save writes the whole scenario
+as one JSON config: dimensions, rule, model, seed, and every colour you have
+set (including Inactive). If the grid is still at step 0, that's the whole
+file. If you have stepped past 0, the file also gets a `snapshot` block
+holding the run itself — current cells, ages, per-cell history and peak
+counts — so the exact same "Load Config JSON…" button opens it again. Loading
+a file whose `snapshot` is past step 0 pops up a small prompt: **Resume at
+step N** puts the grid back exactly where it was; **Start from initial**
+begins at step 0 instead, the same as any other config. Either way Reset
+always goes back to step 0, and both choices restore the file's colours.
+Cancel leaves whatever was already loaded untouched. See `docs/lib.md`
+"Saving and resuming a run" for the file format. One limitation: resuming a
+wildfire scenario under `spread: "arrival"` recomputes its arrival-time table
+from the resumed cells rather than restoring the original one, since that
+table was never saved in the first place — see the same doc section.
 
 **Edit.**
 - *Tool*: **Cycle** (click a cell to step it to the next type), **Paint**

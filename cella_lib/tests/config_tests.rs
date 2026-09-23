@@ -23,6 +23,7 @@ fn test_config_1d_file_io() {
         history_limit: 5,
         initial: init.clone(),
         rule: rule.clone(),
+        snapshot: None,
     });
 
     // Save
@@ -67,6 +68,7 @@ fn test_config_2d_file_io() {
         initial: init.clone(),
         rule: rule.clone(),
         model: None,
+        snapshot: None,
     });
 
     // Save
@@ -102,6 +104,7 @@ fn test_build_grid1d_success() {
         history_limit: 2,
         initial: init,
         rule,
+        snapshot: None,
     });
 
     let g = cfg.build_grid1d().expect("Should build Grid1D");
@@ -122,6 +125,7 @@ fn test_build_grid1d_fail_length() {
         history_limit: 2,
         initial: init,
         rule,
+        snapshot: None,
     });
 
     assert!(
@@ -145,6 +149,7 @@ fn test_build_grid1d_fail_wrong_dim() {
         initial: init,
         rule,
         model: None,
+        snapshot: None,
     });
 
     assert!(
@@ -173,6 +178,7 @@ fn test_build_grid2d_success() {
         initial: init,
         rule,
         model: None,
+        snapshot: None,
     });
 
     let g = cfg.build_grid2d().expect("Should build Grid2D");
@@ -196,6 +202,7 @@ fn test_build_grid2d_fail_length() {
         initial: init,
         rule,
         model: None,
+        snapshot: None,
     });
 
     assert!(
@@ -217,6 +224,7 @@ fn test_build_grid2d_fail_wrong_dim() {
         history_limit: 2,
         initial: init,
         rule,
+        snapshot: None,
     });
 
     assert!(

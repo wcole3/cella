@@ -638,16 +638,21 @@ fn model_mut_downcast_adjusts_wind_between_steps() {
 }
 
 #[test]
-fn gridstate_round_trip_with_model_continues_identically() {
+fn config_snapshot_round_trip_with_model_continues_identically() {
+    use cella_lib::config::CellaConfig;
+    let initial_state = GridState::from_grid2d(&wildfire_grid(16, 16, 21, 2));
     let mut reference = wildfire_grid(16, 16, 21, 2);
     let mut restored_src = wildfire_grid(16, 16, 21, 2);
     for _ in 0..10 {
         reference.step();
         restored_src.step();
     }
-    // Snapshot mid-run, restore, and keep stepping both.
-    let json = GridState::from_grid2d(&restored_src).to_json_pretty();
-    let mut restored = Grid2D::from_state(&GridState::from_json(&json).unwrap()).unwrap();
+    // Snapshot mid-run (through a saved config, the new format), restore,
+    // and keep stepping both.
+    let cfg = CellaConfig::save_2d(&initial_state, &restored_src, Default::default());
+    let json = serde_json::to_string_pretty(&cfg).unwrap();
+    let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
+    let mut restored = cfg2.build_grid2d_resumed().unwrap();
     assert!(restored.model.is_some(), "model survives the snapshot");
     for _ in 0..10 {
         reference.step();
@@ -665,7 +670,8 @@ fn gridstate_round_trip_with_model_continues_identically() {
 }
 
 #[test]
-fn gridstate_without_model_still_round_trips() {
+fn config_without_model_still_round_trips() {
+    use cella_lib::config::CellaConfig;
     let alive = CellType::new("Alive");
     let g = Grid2D::new(
         2,
@@ -674,12 +680,15 @@ fn gridstate_without_model_still_round_trips() {
         vec![alive, alive, CellType::inactive(), CellType::inactive()],
         empty_rule(),
     );
-    let json = GridState::from_grid2d(&g).to_json_pretty();
+    let initial_state = GridState::from_grid2d(&g);
+    let cfg = CellaConfig::save_2d(&initial_state, &g, Default::default());
+    let json = serde_json::to_string_pretty(&cfg).unwrap();
     assert!(
         !json.contains("\"model\""),
         "no model field serialized when absent"
     );
-    let restored = Grid2D::from_state(&GridState::from_json(&json).unwrap()).unwrap();
+    let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
+    let restored = cfg2.build_grid2d().unwrap();
     assert!(restored.model.is_none());
 }
 

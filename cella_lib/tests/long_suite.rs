@@ -232,6 +232,7 @@ fn export_config_2d(name: &str, g: &Grid2D) {
         initial,
         rule: g.rule.clone(),
         model: g.model.clone(),
+        snapshot: None,
     });
     let dir = configs_dir();
     let _ = fs::create_dir_all(&dir);
@@ -256,6 +257,7 @@ fn export_config_1d(name: &str, g: &Grid1D) {
         history_limit: g.history_limit,
         initial,
         rule: g.rule.clone(),
+        snapshot: None,
     });
     let dir = configs_dir();
     let _ = fs::create_dir_all(&dir);
@@ -1780,6 +1782,7 @@ fn stress_config_load_and_run() {
         initial,
         rule,
         model: None,
+        snapshot: None,
     });
 
     // Save

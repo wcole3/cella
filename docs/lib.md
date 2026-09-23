@@ -16,8 +16,8 @@ The library is designed with a focus on:
 | `types` | `CellType`, `CellState`, `INACTIVE`, the global string `interner()` |
 | `rules` | `Rule1D`/`Rule2D` + subrules, `CountOp`, `Neighborhood2D`, `neighborhood_offsets`, `RuleError`, `TypeCounter` |
 | `grid1d` / `grid2d` | `Grid1D` / `Grid2D`: SoA storage, stepping, history access |
-| `state` | `GridState` snapshots and `Grid*::from_state` |
-| `config` | `CellaConfig`, `Config1D`, `Config2D` — JSON scenario loading |
+| `state` | `GridState`: an in-memory grid snapshot and `Grid*::from_state` — not a file format |
+| `config` | `CellaConfig`, `Config1D`, `Config2D`, `RunSnapshot` — JSON scenario loading, plus saving/resuming a run mid-simulation |
 | `threads` | `thread_count()`, `MIN_WORK_PER_CHUNK`, worker pools, test overrides |
 | `external` | `ExternalModel` plugin trait, `ChunkCtx`, `ModelEvent`, `GridView`, `ParamDesc`/`ParamKind`/`ParamValue` — pluggable transition models |
 | `rng` | `Rng` (SplitMix64), `mix`, `cell_rand(seed, step, idx, stream)`, `STREAM_RULE`, `STREAM_FILL` — the one source of randomness |
@@ -26,7 +26,7 @@ The library is designed with a focus on:
 | `wildfire` | **Not part of the engine — a worked example of it.** Everything fire-specific lives here: `WildfireModel`, a stochastic Alexandridis-style spread model and the first `ExternalModel`; `wildfire::driver::WildfireDriver`, the worked example of a `MemberDriver`; `wildfire::wind_field::mass_consistent`, terrain wind downscaling that feeds `WildfireModel::set_wind_field` |
 | `chunking` (private) | `split_chunks` — carves the output buffers into disjoint per-worker slices |
 
-Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, `grid2d_to_json`, the `ExternalModel` seam types (`ExternalModel`, `ChunkCtx`, `GridView`, `ModelEvent`, `ModelError`, `ParamDesc`, `ParamKind`, `ParamValue`), and from `explore`: `Sim`, `Ensemble`, `EnsembleConfig`, `Evolution`, `EvolveConfig`, `GeneSpec`, `Metric`, `Objective`, `MemberDriver`.
+Re-exported at the crate root: `Grid1D`, `Grid2D`, `CellType`, `CellState`, `INACTIVE`, `Rule1D`, `Rule1DSubrule`, `Rule2D`, `Rule2DSubrule`, `CountOp`, `Neighborhood2D`, `neighborhood_contains`, `RuleError`, `GridState`, the `ExternalModel` seam types (`ExternalModel`, `ChunkCtx`, `GridView`, `ModelEvent`, `ModelError`, `ParamDesc`, `ParamKind`, `ParamValue`), and from `explore`: `Sim`, `Ensemble`, `EnsembleConfig`, `Evolution`, `EvolveConfig`, `GeneSpec`, `Metric`, `Objective`, `MemberDriver`.
 
 Nothing from `wildfire` is re-exported at the crate root. That is deliberate: `use cella_lib::*;` should give you the engine and nothing else, so a reader can tell at a glance which types are library and which belong to one example model. To use the wildfire model you name the module — `use cella_lib::wildfire::{WildfireModel, WildfireParams};` — and the same goes for `wildfire::driver::WildfireDriver` and `wildfire::wind_field::mass_consistent`. Note the split around `MemberDriver`: the *trait* is engine API and is re-exported, while `WildfireDriver`, the fire-specific implementation of it, is not.
 
@@ -36,7 +36,7 @@ Nothing from `wildfire` is re-exported at the crate root. That is deliberate: `u
 - **`CellState`**: A per-cell snapshot (current type, `age_in_state`, `history_limit`, bounded history). Used as a serialization intermediate; the live grids do not store `CellState`s. Rebuild them on demand with `grid.to_cell_states()`.
 - **`Grid1D` / `Grid2D`**: The primary simulation containers. Internally they use a struct-of-arrays layout: flat `Vec`s for current types, ages, and a per-cell circular history buffer (`history_data` + `history_heads` + `history_counts`), plus a second cell buffer for double-buffered stepping. `history_limit` must be ≤ 255 — the heads/counts arrays are `u8`, and `new()` asserts it. Each grid carries a `seed` (`with_seed`, `set_seed`; 2D forwards it to the model) that every random draw is keyed on, `cells()` for read access, and `reset_cells(Vec<CellType>)` to replace the whole picture (ages, history and counts reset; a model is re-attached).
 - **`Rule1D` / `Rule2D`**: Contain lists of subrules that define how cells transition between states.
-- **`GridState`**: A flat, serializable representation of a grid's current configuration, useful for snapshots.
+- **`GridState`**: An in-memory-only snapshot of a grid's current configuration (cells, ages, history, counts, rule, model). It is not serializable itself — [`CellaConfig`](#saving-and-resuming-a-run) is the save-file format; `GridState` is the plumbing `CellaConfig` and `explore::Sim` use to hand a live grid's state to `Grid*::from_state` and back.
 
 ### Grid API
 
@@ -167,7 +167,7 @@ impl ExternalModel for MyModel {
 }
 ```
 
-Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {"my_model": {...}}` alongside an empty rule. The model round-trips through `GridState` snapshots (derived state is rebuilt via `attach` on restore). Optional hooks: `event_applies` (gate long-range writes), `on_paint` (refresh derived state when the user paints), `declared_types` (painting palette), `work_per_cell` (parallel split sizing), `set_seed` (reseed for ensembles), and the parameter trio below.
+Attach with `grid.attach_model(Box::new(model))?`, or in a config as `"model": {"my_model": {...}}` alongside an empty rule. The model rides along in a saved config's `model` block as-is (see [Saving and resuming a run](#saving-and-resuming-a-run)); its derived state is rebuilt via `attach` when the config is loaded back, not saved. Optional hooks: `event_applies` (gate long-range writes), `on_paint` (refresh derived state when the user paints), `declared_types` (painting palette), `work_per_cell` (parallel split sizing), `set_seed` (reseed for ensembles), and the parameter trio below.
 
 ### Drivers: what a model adds to an ensemble
 
@@ -208,7 +208,7 @@ A model can describe its own tunable values so a generic UI can build controls f
 
 Three `ExternalModel` trait methods carry these around, and **all three have default implementations** — `params() -> Vec<ParamDesc>` defaults to an empty list, `get_param(&self, key) -> Option<ParamValue>` defaults to `None`, and `set_param(&mut self, key, value) -> Result<(), ModelError>` defaults to rejecting every key. A model that implements none of them keeps compiling and simply shows no controls.
 
-Two rules come with those methods, and both are easy to trip over. First, **`get_param` must return `Some` for every key `params()` lists**: the engine's rollback puts back the value `get_param` reported, so a `reattach: true` key it will not answer has no way home — and `set_model_param` refuses to write such a key at all rather than strand the model. Second, **`set_param` validates nothing and rebuilds nothing on its own**; it is the raw write, so library callers should go through `Grid2D::set_model_param`, which checks the descriptor first and re-runs `attach` when the descriptor asks for it. Calling `set_param` directly is for a model that is not attached to a grid, such as the clone inside a snapshot, which is re-attached when it is restored.
+Two rules come with those methods, and both are easy to trip over. First, **`get_param` must return `Some` for every key `params()` lists**: the engine's rollback puts back the value `get_param` reported, so a `reattach: true` key it will not answer has no way home — and `set_model_param` refuses to write such a key at all rather than strand the model. Second, **`set_param` validates nothing and rebuilds nothing on its own**; it is the raw write, so library callers should go through `Grid2D::set_model_param`, which checks the descriptor first and re-runs `attach` when the descriptor asks for it. Calling `set_param` directly is for a model that is not attached to a grid, such as the clone inside a saved config, which is re-attached when the config is loaded back.
 
 The same description covers a grid's *rule*: `tunables::rule2d_params` / `rule1d_params` list `rule.subrules[i].count`, `.limit`, `.range`, `.op`, `.neighborhood`, `.randomness` (2D) and `.wolfram_code` (1D, as `Bits`) as `ParamDesc`s, and `Grid1D::params` / `Grid2D::params` return rule and `model.*` knobs together, with `get_param` / `set_param` (a rule write rebuilds the subrule through `Rule2DSubrule::new` and runs `validate()`; a refusal leaves the rule untouched). This is the key grammar the `explore` genes use.
 
@@ -341,15 +341,48 @@ cfg.to_file_pretty("out.json")?;
 
 `build_grid1d` / `build_grid2d` return `None` on a dimension mismatch (wrong variant, or `initial.len()` not matching the declared size).
 
-### Snapshots
-`GridState` can be used to capture the current state of a running grid:
+### Saving and resuming a run
+
+A saved file **is** a `CellaConfig` — the same shape as any other config (dims, rule, model, seed, colours) — plus one optional block, `"snapshot"`, that holds only the run-time state a config can't otherwise express. `initial` always stays the scenario's *starting* cells (what Reset goes back to), never wherever the run happened to be saved.
+
 ```rust
-let state = GridState::from_grid2d(&grid);
-let json = state.to_json_pretty();
-let restored = Grid2D::from_state(&GridState::from_json(&json)?).unwrap();
+use cella_lib::config::CellaConfig;
+use cella_lib::GridState;
+
+let cfg = CellaConfig::from_file("configs/life.json")?;
+let mut grid = cfg.build_grid2d().expect("2d config with matching initial length");
+let initial = GridState::from_grid2d(&grid); // the Reset target, before stepping
+for _ in 0..50 { grid.step(); }
+
+// Save: at step 0 this writes no `snapshot` and `initial` becomes the grid's
+// own cells; past step 0, `initial` stays the scenario's start and a
+// `snapshot` of the run in progress goes in alongside it.
+let saved = CellaConfig::save_2d(&initial, &grid, Default::default());
+saved.to_file_pretty("out.json")?;
+
+// Load back: `build_grid2d`/`build_grid1d` always give the initial state and
+// ignore any `snapshot`; the `_resumed` twins give the state the snapshot
+// describes, or `None` if there isn't one, or its lengths don't match the
+// config (a hand-edited or truncated file).
+let at_start = saved.build_grid2d().unwrap();
+let mid_run = saved.build_grid2d_resumed().unwrap();
 ```
 
-`CellType` serializes as its string name, and the SoA grid internals round-trip through `CellState` vectors, so snapshots remain human-readable JSON. `GridState` carries `counts_current` / `peak_counts` as `HashMap<String, u64>`; both default to empty on read, in which case `from_state` recounts from the cells. `grid2d_to_json(&grid)` is a shorthand for the pretty snapshot.
+A file's `snapshot` block, when present, looks like:
+```json
+"snapshot": {
+  "step": 120,
+  "cells": ["Burning", "..."],
+  "ages": [3, 0, "..."],
+  "history": [["Forest"], "..."],
+  "peak_counts": {"Burning": 812}
+}
+```
+Nothing here duplicates the rest of the file: `width`/`height`/`history_limit`/`rule`/`model`/`seed` each live once, at the top level, and `cells`/`ages`/`history` are one entry per grid cell — same order, same length as `initial`. The live grid's `counts_current` isn't saved at all (it's cheap to recount from `cells`), but `peak_counts` is, since a peak from earlier in the run can't be recovered from where the cells ended up.
+
+`build_grid1d_resumed`/`build_grid2d_resumed` convert the config and its snapshot into an in-memory `GridState` and hand it to `Grid1D::from_state`/`Grid2D::from_state` — the same restore path `explore::Sim::from_state` uses — so the SoA history rebuild, count recompute, and model `attach` all happen in one place, not twice. A model's own derived state (the wildfire model's `arrival` table, for one) is never saved; `attach` rebuilds it fresh every time, whether this is the first load or a resume — see `wildfire::WildfireModel` in [explore.md](explore.md) for what that means for a model with expensive derived state.
+
+`GridState` is in-memory only, not a file format — see the note under [Core Components](#core-components). If you need a grid's raw per-cell state with no scenario context, `grid.to_cell_states()` still gives you a `Vec<CellState>`, but nothing in the library serializes it directly any more; `CellaConfig` is the one save/load path.
 
 ---
 

@@ -6,7 +6,6 @@
 use crate::demos::{ask_steps, read_line_trim};
 use cella_lib::*;
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::{self, Write};
 
 /// Build a 2D Game-of-Life grid with a blinker seed in the centre.
@@ -227,6 +226,7 @@ pub fn demo_life() {
     set_alive(7, 5, &mut init);
 
     let mut grid = Grid2D::new(width, height, hist, init, rule);
+    let initial_state = GridState::from_grid2d(&grid);
     let steps = ask_steps(5);
     println!("Initial state (step {}):", grid.step);
     print_grid_2d(&grid);
@@ -235,8 +235,9 @@ pub fn demo_life() {
         println!("\nAfter step {}:", grid.step);
         print_grid_2d(&grid);
     }
-    let json = grid2d_to_json(&grid);
-    let _ = fs::write("snapshot.json", json);
+    use cella_lib::config::CellaConfig;
+    let cfg = CellaConfig::save_2d(&initial_state, &grid, BTreeMap::new());
+    let _ = cfg.to_file_pretty("snapshot.json");
 }
 
 /// Interactive CLI demo: 2D three-state cycle.
@@ -254,6 +255,9 @@ pub fn demo_2d_three_state_cycle() {
 }
 
 /// Interactive CLI demo: load and run a JSON configuration file.
+///
+/// A file saved mid-run (its `snapshot.step > 0`) offers to resume there
+/// instead of starting over from `initial`.
 pub fn demo_from_config() {
     use cella_lib::config::CellaConfig;
     print!("Enter path to JSON config: ");
@@ -261,9 +265,21 @@ pub fn demo_from_config() {
     let path = read_line_trim();
     match CellaConfig::from_file(&path) {
         Ok(cfg) => {
+            let resume = match cfg.snapshot() {
+                Some(snap) if snap.step > 0 => {
+                    print!("Resume at step {}? [Y/n] ", snap.step);
+                    let _ = io::stdout().flush();
+                    !read_line_trim().eq_ignore_ascii_case("n")
+                }
+                _ => false,
+            };
             match cfg {
                 CellaConfig::D1(_) => {
-                    if let Some(mut g) = cfg.build_grid1d() {
+                    let built = resume
+                        .then(|| cfg.build_grid1d_resumed())
+                        .flatten()
+                        .or_else(|| cfg.build_grid1d());
+                    if let Some(mut g) = built {
                         let steps = ask_steps(10);
                         for _ in 0..steps {
                             g.step();
@@ -297,11 +313,18 @@ pub fn demo_from_config() {
                     }
                 }
                 CellaConfig::D2(_) => {
-                    if let Some(mut g) = cfg.build_grid2d() {
+                    let built = resume
+                        .then(|| cfg.build_grid2d_resumed())
+                        .flatten()
+                        .or_else(|| cfg.build_grid2d());
+                    if let Some(mut g) = built {
                         let _active = (0..g.width * g.height)
                             .map(|i| g.cell_type(i))
                             .find(|t| *t != CellType::inactive())
                             .unwrap_or(CellType::from("Alive"));
+                        // The Reset target, regardless of where this run started:
+                        // the config's own `initial`, not wherever `g` is now.
+                        let initial_state = cfg.build_grid2d().map(|ig| GridState::from_grid2d(&ig));
                         let steps = ask_steps(10);
                         print_grid_2d(&g);
                         for _ in 0..steps {
@@ -309,8 +332,10 @@ pub fn demo_from_config() {
                             println!("\nstep {}:", g.step);
                             print_grid_2d(&g);
                         }
-                        let json = grid2d_to_json(&g);
-                        let _ = fs::write("snapshot.json", json);
+                        if let Some(initial_state) = initial_state {
+                            let out = CellaConfig::save_2d(&initial_state, &g, cfg.colors().clone());
+                            let _ = out.to_file_pretty("snapshot.json");
+                        }
                     } else {
                         println!("Invalid 2D config lengths.");
                     }

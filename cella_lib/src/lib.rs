@@ -15,7 +15,10 @@
 //! Quick start:
 //! - Define rules (1D Wolfram-style or 2D threshold neighborhoods)
 //! - Create a Grid1D or Grid2D with initial CellType values
-//! - Call step() repeatedly; serialize via GridState.
+//! - Call step() repeatedly; save/load a run via [`config::CellaConfig`]
+//!   (`save_1d`/`save_2d` to write, `build_grid1d`/`build_grid2d` or their
+//!   `_resumed` twins to read back). [`state::GridState`] itself is an
+//!   in-memory snapshot only, used internally and by [`explore::Sim`].
 //!
 //! One module is not part of the engine: [`wildfire`] is a worked example of
 //! the [`external::ExternalModel`] plugin seam — a stochastic fire-spread
@@ -54,7 +57,7 @@ pub use explore::{
     Ensemble, EnsembleConfig, Evolution, EvolveConfig, GeneSpec, MemberDriver, Metric, Objective,
     Sim, StateCorrection,
 };
-pub use state::{GridState, grid2d_to_json};
+pub use state::GridState;
 pub use types::{CellState, CellType, INACTIVE};
 
 #[cfg(test)]
@@ -407,6 +410,7 @@ mod tests {
             initial,
             rule,
             model: None,
+            snapshot: None,
         });
         let json = serde_json::to_string(&cfg).unwrap();
         let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
@@ -926,11 +930,15 @@ mod more_tests {
             })
             .collect::<Vec<_>>();
         let mut g = Grid1D::new(width, hist, init, rule);
+        let initial = GridState::from_grid1d(&g);
         g.step();
-        let st = GridState::from_grid1d(&g);
-        let json = st.to_json();
-        let st2 = GridState::from_json(&json).unwrap();
-        let g2 = Grid1D::from_state(&st2).unwrap();
+        // Round-trip through a saved config (the new format) rather than raw
+        // GridState JSON, which no longer exists.
+        use crate::config::CellaConfig;
+        let cfg = CellaConfig::save_1d(&initial, &g, Default::default());
+        let json = serde_json::to_string(&cfg).unwrap();
+        let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
+        let g2 = cfg2.build_grid1d_resumed().unwrap();
         assert_eq!(g2.width, g.width);
         assert_eq!(g2.step, g.step);
         for i in 0..width {
@@ -1001,11 +1009,15 @@ mod more_tests {
             }
         }
         let mut g = Grid2D::new(w, h, hist, init, rule);
+        let initial = GridState::from_grid2d(&g);
         g.step();
-        let st = GridState::from_grid2d(&g);
-        let json = st.to_json();
-        let st2 = GridState::from_json(&json).unwrap();
-        let g2 = Grid2D::from_state(&st2).unwrap();
+        // Round-trip through a saved config (the new format) rather than raw
+        // GridState JSON, which no longer exists.
+        use crate::config::CellaConfig;
+        let cfg = CellaConfig::save_2d(&initial, &g, Default::default());
+        let json = serde_json::to_string(&cfg).unwrap();
+        let cfg2: CellaConfig = serde_json::from_str(&json).unwrap();
+        let g2 = cfg2.build_grid2d_resumed().unwrap();
         assert_eq!(g2.width, g.width);
         assert_eq!(g2.height, g.height);
         assert_eq!(g2.step, g.step);
@@ -1082,6 +1094,7 @@ mod more_tests {
             initial: init,
             rule: rule.clone(),
             model: None,
+            snapshot: None,
         });
         let s = serde_json::to_string(&cfg).unwrap();
         let c2: Config2D = serde_json::from_str(&s).unwrap();

@@ -7,8 +7,10 @@
 use std::path::Path;
 use std::time::Duration;
 
+use super::actions::SnapshotChoice;
 use super::app::{CellaApp, Dim};
 use super::render::{distinct_palette_slots, parse_hex_color};
+use super::state::PendingSnapshotLoad;
 use crate::demos::{
     build_1d_code_n, build_1d_rule30, build_2d_life, build_2d_straightline,
     build_2d_three_state_cycle,
@@ -198,7 +200,7 @@ impl CellaApp {
     }
     /// "Load Config JSON..." button: ask for a file, then load it.
     pub(in crate::gui) fn load_config_dialog(&mut self) {
-        match FileDialog::new().add_filter("json", &["json"]).pick_file() {
+        match FileDialog::new().set_directory(std::env::current_dir().unwrap_or_default()).add_filter("json", &["json"]).pick_file() {
             Some(path) => self.load_config_from_path(&path),
             None => self.report_no_file_chosen("config"),
         }
@@ -230,8 +232,14 @@ impl CellaApp {
         }
     }
 
-    /// Load a config file, replacing the grid, the Reset snapshot, and the editor
-    /// state. Reports success or failure in the status bar.
+    /// Load a config file, replacing the grid, the Reset snapshot, and the
+    /// editor state. Reports success or failure in the status bar.
+    ///
+    /// A `snapshot` at step 0, or no `snapshot` at all, loads immediately.
+    /// A `snapshot` past step 0 instead opens the "Resume at step N? / Start
+    /// from initial?" modal (`ui_snapshot_load_modal` in `panels::toolbar`)
+    /// and waits for [`Action::ResolveSnapshotLoad`] — the grid is untouched
+    /// until the user answers.
     pub(in crate::gui) fn load_config_from_path(&mut self, path: &Path) {
         let name = path
             .file_name()
@@ -239,58 +247,113 @@ impl CellaApp {
             .unwrap_or("config.json")
             .to_string();
         match config::CellaConfig::from_file(path) {
-            Ok(cfg) => {
-                match cfg {
-                    config::CellaConfig::D1(_) => {
-                        if let Some(g) = cfg.build_grid1d() {
-                            self.scenario.dim = Some(Dim::D1);
-                            self.scenario.d1 = Some(g);
-                            self.scenario.d2 = None;
-                            self.set_status(format!("Loaded config (1D): {}", name));
-                            if let Some(gr) = &self.scenario.d1 {
-                                self.scenario.initial_state = Some(GridState::from_grid1d(gr));
-                                self.inputs.grid_width = gr.width;
-                                self.inputs.grid_height = 1;
-                            }
-                            self.view.history_1d.clear();
-                            self.edit.undo_stack.clear();
-                            self.edit.rule_undo.clear();
-                            self.edit.current_paint_batch = None;
-                            self.reset_colors_for_scenario();
-                            self.update_selected_draw_type_default();
-                            self.stats_clear_and_init();
-                        }
-                    }
-                    config::CellaConfig::D2(_) => {
-                        if let Some(g) = cfg.build_grid2d() {
-                            self.scenario.dim = Some(Dim::D2);
-                            self.scenario.d2 = Some(g);
-                            self.scenario.d1 = None;
-                            self.set_status(format!("Loaded config (2D): {}", name));
-                            if let Some(gr) = &self.scenario.d2 {
-                                self.scenario.initial_state = Some(GridState::from_grid2d(gr));
-                                self.inputs.grid_width = gr.width;
-                                self.inputs.grid_height = gr.height;
-                            }
-                            self.view.history_1d.clear();
-                            self.edit.undo_stack.clear();
-                            self.edit.rule_undo.clear();
-                            self.edit.current_paint_batch = None;
-                            self.reset_colors_for_scenario();
-                            self.update_selected_draw_type_default();
-                            self.stats_clear_and_init();
-                        }
-                    }
+            Ok(cfg) => match cfg.snapshot().map(|s| s.step) {
+                Some(step) if step > 0 => {
+                    self.chrome.pending_snapshot_load = Some(PendingSnapshotLoad { cfg, name });
                 }
-                self.apply_config_colors(cfg.colors());
-            }
+                _ => self.finish_config_load(cfg, &name, false),
+            },
             Err(e) => {
                 let msg = format!("Failed to load config: {}", e);
                 eprintln!("{}", msg);
                 self.set_status(msg);
             }
         }
-        // After loading any config, sync the rule editor
+        // After loading any config (or deferring to the modal), sync the
+        // rule editor: harmless if nothing changed yet.
+        self.refresh_rule_editor_from_current();
+    }
+
+    /// The modal's answer for a config with a pending mid-run `snapshot`.
+    pub(in crate::gui) fn resolve_snapshot_load(&mut self, choice: SnapshotChoice) {
+        let Some(pending) = self.chrome.pending_snapshot_load.take() else {
+            return;
+        };
+        match choice {
+            SnapshotChoice::Cancel => {}
+            SnapshotChoice::Resume => self.finish_config_load(pending.cfg, &pending.name, true),
+            SnapshotChoice::Initial => self.finish_config_load(pending.cfg, &pending.name, false),
+        }
+    }
+
+    /// Report a config whose grid could not be built at all — every
+    /// `build_grid1d`/`build_grid2d`/`_resumed` guard returned `None` (a
+    /// wrong `initial` length, `history_limit > 255`, a `width * height`
+    /// overflow, or a model that fails to attach). These guards turn what
+    /// used to be a panic into a silent no-op, so without this the user
+    /// would see nothing happen at all.
+    fn report_invalid_config(&mut self, name: &str) {
+        let msg = format!(
+            "Failed to load config: {name} does not describe a valid grid \
+             (check `initial` length, history_limit <= 255, width/height, model)"
+        );
+        eprintln!("{}", msg);
+        self.set_status(msg);
+    }
+
+    /// Build the grid a loaded config describes — resumed mid-run when
+    /// `resume` is set and the snapshot is usable, its `initial` cells
+    /// otherwise — and swap it into the scenario. The Reset target is always
+    /// `initial`, regardless of `resume`, so Reset returns to step 0 either
+    /// way.
+    fn finish_config_load(&mut self, cfg: config::CellaConfig, name: &str, resume: bool) {
+        match cfg {
+            config::CellaConfig::D1(_) => {
+                let resumed = resume.then(|| cfg.build_grid1d_resumed()).flatten();
+                let resumed_ok = resumed.is_some();
+                let Some(g) = resumed.or_else(|| cfg.build_grid1d()) else {
+                    self.report_invalid_config(name);
+                    return;
+                };
+                let initial_state = cfg.build_grid1d().map(|ig| GridState::from_grid1d(&ig));
+                let (w, h) = (g.width, 1);
+                self.scenario.dim = Some(Dim::D1);
+                self.scenario.d1 = Some(g);
+                self.scenario.d2 = None;
+                self.scenario.initial_state = initial_state;
+                self.set_status(load_status_message("1D", name, resume, resumed_ok));
+                self.finish_scenario_load(w, h, cfg.colors());
+            }
+            config::CellaConfig::D2(_) => {
+                let resumed = resume.then(|| cfg.build_grid2d_resumed()).flatten();
+                let resumed_ok = resumed.is_some();
+                let Some(g) = resumed.or_else(|| cfg.build_grid2d()) else {
+                    self.report_invalid_config(name);
+                    return;
+                };
+                let initial_state = cfg.build_grid2d().map(|ig| GridState::from_grid2d(&ig));
+                let (w, h) = (g.width, g.height);
+                self.scenario.dim = Some(Dim::D2);
+                self.scenario.d2 = Some(g);
+                self.scenario.d1 = None;
+                self.scenario.initial_state = initial_state;
+                self.set_status(load_status_message("2D", name, resume, resumed_ok));
+                self.finish_scenario_load(w, h, cfg.colors());
+            }
+        }
+    }
+
+    /// Common tail of a successful scenario swap, shared by every "Load
+    /// scenario" path (demos, config loads, both snapshot-load choices):
+    /// resize inputs, clear transient edit/view state, put the config's
+    /// colours back on top of the automatic ones, and resync the draw-type
+    /// default, stats and rule editor. `h` is 1 for a 1D grid.
+    fn finish_scenario_load(
+        &mut self,
+        w: usize,
+        h: usize,
+        colors: &std::collections::BTreeMap<String, String>,
+    ) {
+        self.inputs.grid_width = w;
+        self.inputs.grid_height = h;
+        self.view.history_1d.clear();
+        self.edit.undo_stack.clear();
+        self.edit.rule_undo.clear();
+        self.edit.current_paint_batch = None;
+        self.reset_colors_for_scenario();
+        self.apply_config_colors(colors);
+        self.update_selected_draw_type_default();
+        self.stats_clear_and_init();
         self.refresh_rule_editor_from_current();
     }
 
@@ -371,14 +434,222 @@ impl CellaApp {
     }
 }
 
+/// Status message for `CellaApp::finish_config_load`: names the file, the
+/// dimension, and whether it resumed mid-run. `resume` is what the user
+/// asked for; `resumed_ok` is whether that actually happened (a resume
+/// request can fall back to `initial` if the snapshot doesn't build, e.g. a
+/// hand-edited file with mismatched lengths).
+fn load_status_message(dim: &str, name: &str, resume: bool, resumed_ok: bool) -> String {
+    if resumed_ok {
+        format!("Loaded config ({dim}, resumed): {name}")
+    } else if resume {
+        format!("Loaded config ({dim}): {name} (snapshot invalid, started from initial)")
+    } else {
+        format!("Loaded config ({dim}): {name}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::actions::Action;
     use crate::gui::sim::tests::test_app;
     use std::path::Path;
 
     fn status(app: &CellaApp) -> String {
         app.chrome.status_message.clone().unwrap_or_default()
+    }
+
+    /// A tiny 2D config file whose `snapshot.step` is `step` (no `snapshot`
+    /// at all when `step == 0`), with a custom colour on "A", for testing
+    /// the "resume or start over" load flow and colour round-trip.
+    fn write_snapshot_config_2d(step: u64) -> std::path::PathBuf {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let rule = Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                a,
+                b,
+                0,
+                CountOp::Gt,
+                1,
+                Neighborhood2D::Moore,
+                b,
+                None,
+                None,
+            )],
+        };
+        let mut init = vec![a; 4];
+        init[0] = b;
+        let mut g = Grid2D::new(2, 2, 2, init, rule);
+        let initial = GridState::from_grid2d(&g);
+        for _ in 0..step {
+            g.step();
+        }
+        let mut colors = std::collections::BTreeMap::new();
+        colors.insert("A".to_string(), "#112233".to_string());
+        let cfg = config::CellaConfig::save_2d(&initial, &g, colors);
+        // Tests run in parallel within one process, so `process::id()` alone
+        // collides between the several tests that both use `step == 3`; a
+        // nanosecond timestamp keeps every call's file distinct.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "cella_snapshot_load_test_{}_{}_{}.json",
+            std::process::id(),
+            step,
+            stamp
+        ));
+        cfg.to_file_pretty(&path).expect("write test config");
+        path
+    }
+
+    /// Like `write_snapshot_config_2d`, but with cell 0's saved history one
+    /// entry longer than `history_limit` (2) — a hand-edited-looking file
+    /// that `build_grid2d_resumed` must refuse rather than overrun the SoA
+    /// history buffer for.
+    fn write_snapshot_config_2d_with_oversized_history() -> std::path::PathBuf {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let rule = Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                a,
+                b,
+                0,
+                CountOp::Gt,
+                1,
+                Neighborhood2D::Moore,
+                b,
+                None,
+                None,
+            )],
+        };
+        let mut init = vec![a; 4];
+        init[0] = b;
+        let mut g = Grid2D::new(2, 2, 2, init, rule);
+        let initial = GridState::from_grid2d(&g);
+        for _ in 0..3 {
+            g.step();
+        }
+        let mut cfg = config::CellaConfig::save_2d(&initial, &g, Default::default());
+        let config::CellaConfig::D2(c) = &mut cfg else {
+            panic!("expected D2");
+        };
+        let snap = c.snapshot.as_mut().expect("saved past step 0 has a snapshot");
+        snap.history[0].push("A".to_string());
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "cella_snapshot_oversized_history_test_{}_{}.json",
+            std::process::id(),
+            stamp
+        ));
+        cfg.to_file_pretty(&path).expect("write test config");
+        path
+    }
+
+    #[test]
+    fn resolving_resume_falls_back_to_initial_when_the_snapshot_history_is_oversized() {
+        let mut app = test_app();
+        let path = write_snapshot_config_2d_with_oversized_history();
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            app.chrome.pending_snapshot_load.is_some(),
+            "step > 0 still prompts even though the snapshot is unusable"
+        );
+        app.apply_action(Action::ResolveSnapshotLoad(SnapshotChoice::Resume));
+        assert!(app.chrome.pending_snapshot_load.is_none());
+        assert_eq!(
+            app.current_step(),
+            0,
+            "build_grid2d_resumed refuses the oversized history, so this falls back to initial"
+        );
+        assert!(
+            status(&app).contains("snapshot invalid"),
+            "status should explain the fallback, got {:?}",
+            status(&app)
+        );
+    }
+
+    #[test]
+    fn loading_a_step_n_config_sets_the_pending_prompt_without_swapping_the_grid() {
+        let mut app = test_app();
+        app.load_demo_life();
+        let path = write_snapshot_config_2d(3);
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            app.chrome.pending_snapshot_load.is_some(),
+            "a step > 0 snapshot should prompt"
+        );
+        assert_eq!(
+            app.current_step(),
+            0,
+            "the Life demo is untouched until the user answers"
+        );
+    }
+
+    #[test]
+    fn a_step_0_config_loads_immediately_with_no_prompt() {
+        let mut app = test_app();
+        let path = write_snapshot_config_2d(0);
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(app.chrome.pending_snapshot_load.is_none());
+        assert_eq!(app.current_step(), 0);
+        assert!(matches!(app.scenario.dim, Some(Dim::D2)));
+    }
+
+    #[test]
+    fn resolving_resume_gives_step_n_and_the_config_colours() {
+        let mut app = test_app();
+        let path = write_snapshot_config_2d(3);
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        app.apply_action(Action::ResolveSnapshotLoad(SnapshotChoice::Resume));
+        assert!(app.chrome.pending_snapshot_load.is_none());
+        assert_eq!(app.current_step(), 3);
+        assert_eq!(
+            app.color_of(&CellType::from("A")),
+            egui::Color32::from_rgb(0x11, 0x22, 0x33)
+        );
+        // Reset still returns to the scenario's step 0, not step 3.
+        app.reset_to_initial();
+        assert_eq!(app.current_step(), 0);
+    }
+
+    #[test]
+    fn resolving_initial_gives_step_0_and_the_config_colours() {
+        let mut app = test_app();
+        let path = write_snapshot_config_2d(3);
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        app.apply_action(Action::ResolveSnapshotLoad(SnapshotChoice::Initial));
+        assert!(app.chrome.pending_snapshot_load.is_none());
+        assert_eq!(app.current_step(), 0);
+        assert_eq!(
+            app.color_of(&CellType::from("A")),
+            egui::Color32::from_rgb(0x11, 0x22, 0x33)
+        );
+    }
+
+    #[test]
+    fn cancel_leaves_the_current_scenario_untouched() {
+        let mut app = test_app();
+        app.load_demo_life();
+        let before_dim = app.scenario.dim;
+        let path = write_snapshot_config_2d(3);
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        app.apply_action(Action::ResolveSnapshotLoad(SnapshotChoice::Cancel));
+        assert!(app.chrome.pending_snapshot_load.is_none());
+        assert_eq!(before_dim, app.scenario.dim, "the Life demo is still loaded");
+        assert_eq!(app.current_step(), 0);
     }
 
     #[test]
@@ -403,6 +674,57 @@ mod tests {
             status(&app).starts_with("Failed to load config"),
             "got {:?}",
             status(&app)
+        );
+    }
+
+    /// A config that parses fine but can't build a grid at all — every
+    /// `build_grid1d`/`build_grid2d`/`_resumed` guard rejects it, so this is
+    /// a silent case unless `finish_config_load` reports it: it used to
+    /// return with nothing but the previous scenario left in place and no
+    /// hint why. `history_limit: 300` is one way to trip it (the SoA
+    /// head/count arrays are `u8`); a bad `initial` length, a `width *
+    /// height` overflow, or a model that fails to attach are the others.
+    #[test]
+    fn a_config_with_an_invalid_grid_reports_failure_without_touching_the_scenario() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "cella_bad_history_limit_test_{}_{}.json",
+            std::process::id(),
+            stamp
+        ));
+        std::fs::write(
+            &path,
+            r#"{"dim":"2d","width":2,"height":2,"history_limit":300,
+                "initial":["A","A","A","A"],
+                "rule":{"subrules":[]}}"#,
+        )
+        .unwrap();
+
+        let mut app = test_app();
+        app.load_demo_life();
+        let before_dim = app.scenario.dim;
+        let before_step = app.current_step();
+        let before_inputs = (app.inputs.grid_width, app.inputs.grid_height);
+
+        app.load_config_from_path(&path); // must not panic
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            status(&app).starts_with("Failed to load config"),
+            "got {:?}",
+            status(&app)
+        );
+        assert_eq!(
+            app.scenario.dim, before_dim,
+            "the previous scenario (the Life demo) is untouched"
+        );
+        assert_eq!(app.current_step(), before_step);
+        assert_eq!(
+            (app.inputs.grid_width, app.inputs.grid_height),
+            before_inputs
         );
     }
 

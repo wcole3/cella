@@ -39,6 +39,18 @@ pub(in crate::gui) enum Demo {
     StraightLine2D,
 }
 
+/// The user's answer to "this file was saved mid-run — resume, or start
+/// over?", from the modal `ui_snapshot_load_modal` draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::gui) enum SnapshotChoice {
+    /// Load the grid as it was at `snapshot.step`.
+    Resume,
+    /// Load `initial` instead, at step 0.
+    Initial,
+    /// Leave the current scenario untouched.
+    Cancel,
+}
+
 /// Something the user asked for. Cheap to clone; carries its own data.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::gui) enum Action {
@@ -114,6 +126,8 @@ pub(in crate::gui) enum Action {
     // ── scenario / rule / model ──
     LoadDemo(Demo),
     LoadConfigDialog,
+    /// The modal's answer to a config loaded with a mid-run `snapshot`.
+    ResolveSnapshotLoad(SnapshotChoice),
     /// Rebuild the grid at a new size, keeping the cells that overlap.
     Resize {
         w: usize,
@@ -324,6 +338,7 @@ impl CellaApp {
                 Demo::StraightLine2D => self.load_demo_2d_straightline(),
             },
             Action::LoadConfigDialog => self.load_config_dialog(),
+            Action::ResolveSnapshotLoad(choice) => self.resolve_snapshot_load(choice),
             Action::Resize { w, h } => {
                 self.inputs.grid_width = w.max(1);
                 self.inputs.grid_height = h.max(1);

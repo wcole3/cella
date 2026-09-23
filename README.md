@@ -87,6 +87,9 @@ fn main() {
     // Load a pre-made config
     let cfg = CellaConfig::from_file("configs/life.json").unwrap();
     let mut grid = cfg.build_grid2d().unwrap();
+    // Capture the Reset target before stepping: the grid's own starting
+    // cells, at step 0.
+    let initial = GridState::from_grid2d(&grid);
 
     for _ in 0..50 {
         grid.step();
@@ -97,9 +100,12 @@ fn main() {
         grid.step,
         grid.counts_current.get(&alive.0).unwrap_or(&0));
 
-    // Serialise to JSON for later
-    let state = GridState::from_grid2d(&grid);
-    std::fs::write("snapshot.json", state.to_json_pretty()).unwrap();
+    // Save for later: the file is a config again (same shape as life.json),
+    // plus a `snapshot` block holding the run in progress since we're past
+    // step 0. Reset still works after loading this back, because `initial`
+    // is the cells captured above, not wherever `grid` ended up.
+    let out = CellaConfig::save_2d(&initial, &grid, Default::default());
+    out.to_file_pretty("snapshot.json").unwrap();
 }
 ```
 
@@ -237,7 +243,7 @@ The egui GUI (launched with `--gui`) provides:
 - **Resize & reset** — change grid dimensions on the fly
 - **Color customisation** — per-type color picker plus configurable Inactive/background color
 - **Statistics panel** — live population counts and line charts (via `egui_plot`)
-- **Import / Export** — load/save JSON configs, save snapshots, export animated GIFs
+- **Import / Export** — load/save JSON configs, resuming a run mid-simulation on load if it was saved past step 0; export animated GIFs
 - **Font scaling** — adjustable UI text size
 
 ---
@@ -302,8 +308,8 @@ cella/
 │   │   ├── rules.rs         # Rule1D, Rule2D, subrules, neighborhoods
 │   │   ├── grid1d.rs        # Grid1D
 │   │   ├── grid2d.rs        # Grid2D
-│   │   ├── state.rs         # GridState serialisation
-│   │   ├── config.rs        # JSON config loading/building
+│   │   ├── state.rs         # GridState: in-memory grid snapshot (not a file format)
+│   │   ├── config.rs        # JSON config: loading, building, save/resume
 │   │   ├── threads.rs       # Thread configuration
 │   │   ├── chunking.rs      # (private) per-worker output slices
 │   │   ├── rng.rs           # cell_rand: the one source of randomness

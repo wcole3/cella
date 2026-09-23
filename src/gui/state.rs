@@ -313,6 +313,19 @@ pub(in crate::gui) struct Chrome {
     pub(in crate::gui) workbench_tab: WorkbenchTab,
     /// Whether the keyboard-shortcut overlay is showing.
     pub(in crate::gui) show_shortcuts: bool,
+    /// A loaded config whose `snapshot` is mid-run, waiting on the user to
+    /// pick "Resume" or "Start from initial". `Some` is what tells
+    /// `ui_snapshot_load_modal` (in `panels::toolbar`) to draw that modal;
+    /// it clears itself once a choice is made.
+    pub(in crate::gui) pending_snapshot_load: Option<PendingSnapshotLoad>,
+}
+
+/// A config loaded from disk whose run is mid-simulation, waiting for the
+/// user to choose "Resume at step N" or "Start from initial" in the modal.
+pub(in crate::gui) struct PendingSnapshotLoad {
+    pub(in crate::gui) cfg: cella_lib::config::CellaConfig,
+    /// File name, for the status message once resolved.
+    pub(in crate::gui) name: String,
 }
 
 impl Chrome {
@@ -331,6 +344,7 @@ impl Chrome {
             control_tab: ControlTab::default(),
             workbench_tab: WorkbenchTab::default(),
             show_shortcuts: false,
+            pending_snapshot_load: None,
         }
     }
 }

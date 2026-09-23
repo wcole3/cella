@@ -274,23 +274,54 @@ pub fn export_gif_1d(
 }
 
 use crate::gui::app::{CellaApp, Dim};
+use crate::gui::render::color_to_hex;
+use cella_lib::config::CellaConfig;
+use cella_lib::types::interner;
 use rfd::FileDialog;
 
 impl CellaApp {
+    /// Every explicit colour override plus the Inactive background colour,
+    /// as `#rrggbb` strings — what a save file's `colors` block holds.
+    fn color_map_for_save(&self) -> BTreeMap<String, String> {
+        let mut colors: BTreeMap<String, String> = self
+            .view
+            .colors
+            .iter()
+            .map(|(&spur, &c)| (interner().resolve(&spur).to_string(), color_to_hex(c)))
+            .collect();
+        colors.insert(INACTIVE.to_string(), color_to_hex(self.view.inactive_color));
+        colors
+    }
+
+    /// Save the current scenario as a config: dims, rule, model, seed and
+    /// colours, plus a `snapshot` of the run in progress if it has stepped
+    /// past 0. The same file loads back through "Load scenario".
     pub(in crate::gui) fn save_final_state(&mut self) {
-        let state = match self.scenario.dim {
-            Some(Dim::D1) => self.scenario.d1.as_ref().map(GridState::from_grid1d),
-            Some(Dim::D2) => self.scenario.d2.as_ref().map(GridState::from_grid2d),
-            None => None,
-        };
-        let Some(st) = state else {
+        let Some(initial) = self.scenario.initial_state.clone() else {
             return;
         };
-        match FileDialog::new().set_file_name("snapshot.json").save_file() {
-            Some(path) => {
-                let json = serde_json::to_string_pretty(&st).unwrap();
-                let _ = std::fs::write(path, json);
-            }
+        let colors = self.color_map_for_save();
+        let cfg = match self.scenario.dim {
+            Some(Dim::D1) => self
+                .scenario
+                .d1
+                .as_ref()
+                .map(|g| CellaConfig::save_1d(&initial, g, colors)),
+            Some(Dim::D2) => self
+                .scenario
+                .d2
+                .as_ref()
+                .map(|g| CellaConfig::save_2d(&initial, g, colors)),
+            None => None,
+        };
+        let Some(cfg) = cfg else {
+            return;
+        };
+        match FileDialog::new().set_directory(std::env::current_dir().unwrap_or_default()).set_file_name("snapshot.json").save_file() {
+            Some(path) => match cfg.to_file_pretty(&path) {
+                Ok(()) => self.set_status(format!("Saved {}", path.display())),
+                Err(e) => self.set_status(format!("Failed to save: {e}")),
+            },
             None => self.report_no_file_chosen("save path"),
         }
     }
@@ -370,5 +401,49 @@ impl CellaApp {
                 None => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::actions::Action;
+    use crate::gui::sim::tests::test_app;
+
+    #[test]
+    fn color_map_for_save_includes_overrides_and_inactive_as_hex() {
+        let mut app = test_app();
+        app.load_demo_life();
+        app.apply_action(Action::SetTypeColor(
+            CellType::from("Alive"),
+            Color32::from_rgb(0xaa, 0xbb, 0xcc),
+        ));
+        app.apply_action(Action::SetInactiveColor(Color32::from_rgb(1, 2, 3)));
+        let colors = app.color_map_for_save();
+        assert_eq!(colors.get("Alive").map(String::as_str), Some("#aabbcc"));
+        assert_eq!(colors.get(INACTIVE).map(String::as_str), Some("#010203"));
+    }
+
+    /// Build a save file the way the Save button does (`color_map_for_save` +
+    /// `CellaConfig::save_2d`), then load it back through the ordinary
+    /// scenario loader: the custom colour must survive the round trip.
+    #[test]
+    fn save_then_load_keeps_the_custom_colours() {
+        let mut app = test_app();
+        app.load_demo_life();
+        let red = Color32::from_rgb(0x11, 0x22, 0x33);
+        app.apply_action(Action::SetTypeColor(CellType::from("Alive"), red));
+        let colors = app.color_map_for_save();
+        let initial = app.scenario.initial_state.clone().expect("reset target");
+        let g = app.scenario.d2.as_ref().expect("2D grid loaded");
+        let cfg = CellaConfig::save_2d(&initial, g, colors);
+        let path = std::env::temp_dir().join(format!(
+            "cella_save_load_test_{}.json",
+            std::process::id()
+        ));
+        cfg.to_file_pretty(&path).expect("write test config");
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(app.color_of(&CellType::from("Alive")), red);
     }
 }
