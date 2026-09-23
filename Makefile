@@ -31,9 +31,13 @@ run-gui:
 check:
 	cargo check --workspace
 
-## Run Clippy lints across the workspace
+## Run Clippy lints across the workspace, plus cella_lib's own examples
+## (cella_lib is a path dependency, not a workspace member of the root
+## Cargo.toml, so `--workspace` above never reaches its examples; that
+## needs a second invocation with cella_lib itself as the build root).
 clippy:
 	cargo clippy --workspace -- -D warnings
+	cd cella_lib && cargo clippy --examples -- -D warnings
 
 ## Format all source files
 fmt:

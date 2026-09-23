@@ -481,6 +481,10 @@ impl Grid2D {
     /// Evaluate subrules for a cell near a border, treating out-of-bounds
     /// neighbors as `inactive`.
     ///
+    // Every argument is a distinct piece of per-step state the hot loop
+    // already has in hand; bundling them into a struct would just move the
+    // field list to a constructor call at every call site.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     fn next_type_edge(
         cells: &[CellType],
@@ -540,6 +544,10 @@ impl Grid2D {
     /// variants was measured at +30–46 % across every 2D bench (the doubled
     /// body blows the inliner budget for `next_type_interior`) — see
     /// performance.md §8 E5. The branch itself is perfectly predicted.
+    // Every argument is a distinct piece of per-chunk state the caller
+    // already has in hand; bundling them into a struct would just move the
+    // field list to a constructor call at every call site.
+    #[allow(clippy::too_many_arguments)]
     fn step_chunk(
         cells: &[CellType],
         out: &mut OutChunk<'_>,
@@ -813,21 +821,20 @@ impl Grid2D {
         // single-pass whole-grid stepper and deterministic by construction.
         // When it declines (foreign cell type on the grid), the scalar path
         // below picks up with the already-built plan.
-        if total > 0 {
-            if let Some(pt) = plan.packed {
-                if let Some(count_map) = self.step_packed(pt) {
-                    std::mem::swap(&mut self.cells, &mut self.next_cells);
-                    apply_counts(
-                        &mut self.counts_current,
-                        &mut self.peak_counts,
-                        &mut self.dominant_type,
-                        total as u64,
-                        &count_map,
-                    );
-                    self.step = self.step.saturating_add(1);
-                    return;
-                }
-            }
+        if total > 0
+            && let Some(pt) = plan.packed
+            && let Some(count_map) = self.step_packed(pt)
+        {
+            std::mem::swap(&mut self.cells, &mut self.next_cells);
+            apply_counts(
+                &mut self.counts_current,
+                &mut self.peak_counts,
+                &mut self.dominant_type,
+                total as u64,
+                &count_map,
+            );
+            self.step = self.step.saturating_add(1);
+            return;
         }
 
         let nchunks = chunks_for_work(total.saturating_mul(plan.work_per_cell));

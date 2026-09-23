@@ -1511,13 +1511,13 @@ impl WildfireModel {
                         })
                     };
                     next[local] = new_type;
-                    if cur == d.burning {
-                        if let Some(target) = self.spot_target(ctx, idx, x, y) {
-                            events.push(ModelEvent {
-                                target,
-                                new_type: d.burning,
-                            });
-                        }
+                    if cur == d.burning
+                        && let Some(target) = self.spot_target(ctx, idx, x, y)
+                    {
+                        events.push(ModelEvent {
+                            target,
+                            new_type: d.burning,
+                        });
                     }
                 }
             }

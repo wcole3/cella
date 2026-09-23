@@ -757,15 +757,15 @@ impl Ensemble {
             };
             if let Some(d) = &self.config.driver {
                 d.apply(&mut sim, &genome, &self.space, &self.forcing, &mut state)?;
-                if corrected {
-                    if let Some(observed) = &self.last_observed {
-                        d.seed_from_observation(&mut sim, observed)?;
-                    }
-                    // No observation yet (a bare `assimilate_scores` call,
-                    // or correction set before the first `assimilate`): no
-                    // evidence to seed from, so the grid is left as the
-                    // parent's, exactly like `None` — the same "no evidence
-                    // yet" fallback `immigrant_reset_gate` uses.
+                // No observation yet (a bare `assimilate_scores` call, or
+                // correction set before the first `assimilate`): no
+                // evidence to seed from, so the grid is left as the
+                // parent's, exactly like `None` — the same "no evidence
+                // yet" fallback `immigrant_reset_gate` uses.
+                if corrected
+                    && let Some(observed) = &self.last_observed
+                {
+                    d.seed_from_observation(&mut sim, observed)?;
                 }
             }
             children.push(Member {

@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for Grid1D {
             .iter()
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
-            .unwrap_or_else(|| im.inactive.clone());
+            .unwrap_or_else(|| im.inactive);
         Ok(Grid1D {
             width: im.width,
             history_limit: im.history_limit,
@@ -193,7 +193,7 @@ impl Grid1D {
             .iter()
             .max_by_key(|entry| entry.1)
             .map(|(spur, _)| CellType(*spur))
-            .unwrap_or_else(|| CellType::inactive());
+            .unwrap_or_else(CellType::inactive);
         let peak_counts = counts_current.clone();
         let inactive = CellType::inactive();
         Self {
@@ -422,6 +422,10 @@ impl Grid1D {
     /// Evaluate subrules for a cell near either end, treating out-of-bounds
     /// window slots as `inactive`.
     ///
+    // Every argument is a distinct piece of per-step state the hot loop
+    // already has in hand; bundling them into a struct would just move the
+    // field list to a constructor call at every call site.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     fn next_type_edge(
         cells: &[CellType],
@@ -648,21 +652,21 @@ impl Grid1D {
         // rule), so it is built once here and reused by whichever path runs.
         let plan = Rule1DPlan::new(&self.rule, self.inactive);
 
-        if nchunks <= 1 && width > 0 {
-            if let Some(pw) = plan.packed {
-                if let Some(count_map) = self.step_packed(pw) {
-                    std::mem::swap(&mut self.cells, &mut self.next_cells);
-                    apply_counts(
-                        &mut self.counts_current,
-                        &mut self.peak_counts,
-                        &mut self.dominant_type,
-                        width as u64,
-                        &count_map,
-                    );
-                    self.step = self.step.saturating_add(1);
-                    return;
-                }
-            }
+        if nchunks <= 1
+            && width > 0
+            && let Some(pw) = plan.packed
+            && let Some(count_map) = self.step_packed(pw)
+        {
+            std::mem::swap(&mut self.cells, &mut self.next_cells);
+            apply_counts(
+                &mut self.counts_current,
+                &mut self.peak_counts,
+                &mut self.dominant_type,
+                width as u64,
+                &count_map,
+            );
+            self.step = self.step.saturating_add(1);
+            return;
         }
 
         let plan = &plan;

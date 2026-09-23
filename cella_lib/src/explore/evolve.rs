@@ -894,7 +894,7 @@ impl Evolution {
     }
 
     fn update_hall_of_fame(&mut self) {
-        let mut all: Vec<Individual> = self.hall_of_fame.drain(..).collect();
+        let mut all: Vec<Individual> = std::mem::take(&mut self.hall_of_fame);
         all.extend(self.population.iter().filter(|i| !i.invalid).cloned());
         all.sort_by(|a, b| {
             b.score

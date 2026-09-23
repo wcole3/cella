@@ -54,12 +54,11 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
             let (k, v) = line.split_at(eq);
             let key = k.trim();
             let val = v.trim_start_matches('=').trim();
-            if key.eq_ignore_ascii_case("threads") {
-                if let Ok(n) = val.parse::<usize>() {
-                    if n >= 1 {
-                        return Some(n);
-                    }
-                }
+            if key.eq_ignore_ascii_case("threads")
+                && let Ok(n) = val.parse::<usize>()
+                && n >= 1
+            {
+                return Some(n);
             }
         }
     }
@@ -67,10 +66,10 @@ fn parse_threads_from_props(path: &Path) -> Option<usize> {
 }
 
 fn resolve_thread_count_uncached() -> usize {
-    if let Some(path) = find_properties_file() {
-        if let Some(n) = parse_threads_from_props(&path) {
-            return n;
-        }
+    if let Some(path) = find_properties_file()
+        && let Some(n) = parse_threads_from_props(&path)
+    {
+        return n;
     }
     std::thread::available_parallelism()
         .map(|n| n.get())
