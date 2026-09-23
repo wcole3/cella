@@ -19,13 +19,20 @@ HOLDOUT = ("Ferguson_2018", "Pier_2017")
 BASE_ENV = {"SMC_BETA": "10", "SMC_SIGMA": "0.2", "SMC_IMMIGRANTS": "0.2", "SMC_CONTAIN": "1", "SMC_TAU_OFF": "1"}
 
 
-def run(out_dir, fire, label, env, members=32, mode="assim"):
-    """One wildfire_smc run; the report lands in out_dir/<fire>_<label>.json."""
+def run(out_dir, fire, label, env, members=32, mode="assim", argv_prefix=()):
+    """One wildfire_smc run; the report lands in out_dir/<fire>_<label>.json.
+
+    `argv_prefix` (default empty) is prepended to the argv verbatim --
+    e.g. `["nice", "-n", "10"]` for a caller that needs the child niced
+    (r7_common.run(), for the shared-machine rule). No Round 5/6 script
+    passes it, so their behaviour is exactly what it was before this
+    parameter existed.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     rep = out_dir / f"{fire}_{label}.json"
     full_env = {**os.environ, **BASE_ENV, **env}
-    subprocess.run([str(BIN), str(VAL / "data" / "scenarios" / fire), str(members), mode, str(rep)],
-                   check=True, capture_output=True, env=full_env)
+    argv = [*argv_prefix, str(BIN), str(VAL / "data" / "scenarios" / fire), str(members), mode, str(rep)]
+    subprocess.run(argv, check=True, capture_output=True, env=full_env)
     r = json.loads(rep.read_text())
     last = r["scores"][-1]
     row = {"fire": fire, "config": label, "members": members, "seed": int(full_env.get("SMC_SEED", "0")),

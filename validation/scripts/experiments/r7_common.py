@@ -15,15 +15,18 @@ binds on every task:
   plan says not to; it's provenance, not a benchmark).
 - **binary_git check.** `wildfire_smc` has no `--version` flag; the
   cheapest way to read its provenance stamp is to run it once in `nulls`
-  mode on Bear (`r6_common.run_nulls`, no ensemble members) and read the
-  `binary_git` field the report already carries (see
+  mode on Bear (`r6_common.run_nulls`, no ensemble members, niced like
+  every other child, landed in a real OS temp directory rather than
+  `validation/results/experiments/`) and read the `binary_git` field the
+  report already carries (see
   `cella_lib/examples/wildfire_smc/report.rs::provenance`, baked in at
   compile time from `git rev-parse --short HEAD`, suffixed `-dirty` if
-  the tree was dirty at build time). `run_all` refuses to start a batch
-  if that stamp doesn't match the *current* `git rev-parse --short HEAD`,
-  if it carries the `-dirty` suffix, or if `git status --porcelain` shows
-  *tracked* changes (untracked paths -- e.g. `docs/superpowers/`,
-  `.superpowers/` -- are fine and ignored).
+  the tree was dirty at build time). `run_all` checks the load gate
+  first, then refuses to start a batch if that stamp doesn't match the
+  *current* `git rev-parse --short HEAD`, if it carries the `-dirty`
+  suffix, or if `git status --porcelain` shows *tracked* changes
+  (untracked paths -- e.g. `docs/superpowers/`, `.superpowers/` -- are
+  fine and ignored).
 - **ARM_B preset** -- the E30b Arm B configuration (validated as a
   one-seed pilot in `exp_r6_arrival_x4_pilot.py` /
   `48-e30b-uncapped-clock-direction-gene-pilot.md`): arrival kernel,
@@ -40,9 +43,9 @@ thing that touches the network^H^H^H^H^H the binary).
 """
 import argparse
 import json
-import os
 import statistics
 import subprocess
+import tempfile
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -53,7 +56,7 @@ import r6_common as _r6
 from r5_common import BIN, EXP, FIRES, HOLDOUT, VAL
 
 __all__ = [
-    "BIN", "EXP", "FIRES", "HOLDOUT", "VAL", "REPO", "PRIOR", "ARM_B",
+    "BIN", "EXP", "FIRES", "HOLDOUT", "VAL", "REPO", "PRIOR", "ARM_B", "NICE_PREFIX",
     "arg_parser", "command_for", "dry_run", "run", "run_all",
     "check_binary_git", "load_1min", "wait_for_load",
     "fire_stats", "verdict", "summary_table", "e33_baseline",
@@ -61,6 +64,11 @@ __all__ = [
 
 REPO = Path(__file__).resolve().parents[3]
 PRIOR = VAL / "scripts" / "experiments" / "priors" / "arrival_x4.json"
+
+# Prepended to every child's argv (r5_common.run()'s / r6_common.run_nulls()'s
+# argv_prefix) so every wildfire_smc process this module launches -- batch
+# runs and the binary_git diagnostic alike -- is niced. Shared-machine rule.
+NICE_PREFIX = ["nice", "-n", "10"]
 
 # The E30b Arm B preset (E30b, exp_r6_arrival_x4_pilot.py's ARM_B_ENV),
 # named per the Round 7 plan's Task 2 spec: arrival kernel, rear-focus
@@ -107,11 +115,13 @@ def arg_parser(description):
 
 
 def command_for(out_dir, fire, label, env, members, mode):
-    """The exact argv `run()` launches for one job, under `nice -n 10` --
-    printed by dry_run() and executed unchanged by run(), so a dry run's
-    output is never a lie about what the real run would do."""
+    """The exact argv `run()` launches for one job, under `nice -n 10`
+    (`NICE_PREFIX`) -- printed by dry_run() for display only; run() itself
+    gets its niceness from r5_common.run()'s own argv_prefix, not from
+    this function, but the two are the same prefix so a dry run's output
+    is never a lie about what the real run would do."""
     rep = out_dir / f"{fire}_{label}.json"
-    return ["nice", "-n", "10", str(BIN), str(VAL / "data" / "scenarios" / fire), str(members), mode, str(rep)]
+    return [*NICE_PREFIX, str(BIN), str(VAL / "data" / "scenarios" / fire), str(members), mode, str(rep)]
 
 
 def dry_run(jobs, out_json):
@@ -139,10 +149,13 @@ def _git(*args):
 def check_binary_git():
     """Refuse to run if the binary wasn't built from the current, clean
     HEAD. Reads `binary_git` off a one-run `nulls`-mode report on Bear
-    (cheapest fire, no ensemble members -- there is no `--version` flag)
-    and compares it against `git rev-parse --short HEAD`; also refuses if
-    `git status --porcelain` shows *tracked* changes (untracked paths are
-    fine -- e.g. this campaign's own doc scratch space)."""
+    (cheapest fire, no ensemble members -- there is no `--version` flag),
+    niced like every other child (`NICE_PREFIX`) and landed in a real OS
+    temp directory (never under `validation/results/experiments/` -- this
+    is a provenance probe, not a batch result), and compares it against
+    `git rev-parse --short HEAD`; also refuses if `git status --porcelain`
+    shows *tracked* changes (untracked paths are fine -- e.g. this
+    campaign's own doc scratch space)."""
     head = _git("rev-parse", "--short", "HEAD").strip()
     dirty_tracked = [
         line for line in _git("status", "--porcelain").splitlines()
@@ -152,8 +165,8 @@ def check_binary_git():
         raise RuntimeError(
             "refusing to run: tracked working-tree changes present:\n" + "\n".join(dirty_tracked)
         )
-    tmp_dir = EXP / "_r7_binary_check"
-    report = _r6.run_nulls(tmp_dir, "Bear_2020")
+    with tempfile.TemporaryDirectory(prefix="r7_binary_check_") as tmp:
+        report = _r6.run_nulls(Path(tmp), "Bear_2020", argv_prefix=NICE_PREFIX)
     stamp = report.get("binary_git", "unknown")
     stamp_sha = stamp[: -len("-dirty")] if stamp.endswith("-dirty") else stamp
     if stamp == "unknown" or stamp.endswith("-dirty") or stamp_sha != head:
@@ -188,54 +201,27 @@ def wait_for_load(threshold=8.0, sleep_s=600):
 # --------------------------------------------------------------------------
 
 def run(out_dir, fire, label, env, members=32, mode="assim"):
-    """`r5_common.run()`, launched under `nice -n 10` so batches share the
-    box politely (argv identical to what `dry_run()` prints). Same row
-    shape as `r5_common.run` -- see there for field meanings -- so the
-    summariser and every downstream table work unchanged."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rep = out_dir / f"{fire}_{label}.json"
-    full_env = {**os.environ, **_r5.BASE_ENV, **env}
-    argv = command_for(out_dir, fire, label, env, members, mode)
-    subprocess.run(argv, check=True, capture_output=True, env=full_env)
-    r = json.loads(rep.read_text())
-    last = r["scores"][-1]
-    row = {
-        "fire": fire, "config": label, "members": members, "seed": int(full_env.get("SMC_SEED", "0")),
-        "holdout": fire in HOLDOUT,
-        "binary_git": r.get("binary_git", "unknown"), "binary_built_utc": r.get("binary_built_utc", "unknown"),
-        "mean_consensus_iou": r["mean_consensus_iou"], "mean_best_threshold_iou": r["mean_best_threshold_iou"],
-        "mean_member_iou": r["mean_member_iou"], "mean_radial_iou": r["mean_radial_iou"],
-        "final_consensus_iou": r["final_consensus_iou"], "final_radial_iou": r["final_radial_iou"],
-        "mean_brier_ensemble": r["mean_brier_ensemble"], "mean_brier_radial": r["mean_brier_radial"],
-        "mean_lagged_persistence_iou": r.get("mean_lagged_persistence_iou"),
-        "mean_brier_lagged_persistence": r.get("mean_brier_lagged_persistence"),
-        "mean_lagged_circle_iou": r.get("mean_lagged_circle_iou"),
-        "mean_brier_lagged_circle": r.get("mean_brier_lagged_circle"),
-        "mean_ess": sum(s["ess"] for s in r["scores"]) / len(r["scores"]),
-        "final_p0_mean": last["p0_mean"], "final_dur_mean": last["dur_mean"],
-        "final_wind_scale_mean": last["wind_scale_mean"], "final_contained": last["contained_fraction"],
-        "per_day_consensus": [s["consensus_iou"] for s in r["scores"]],
-        "per_day_brier": [s["brier_ensemble"] for s in r["scores"]],
-        "per_day_ess": [s["ess"] for s in r["scores"]],
-    }
-    print(f"{fire:14s} {label:22s} M={members:3d} consensus {row['mean_consensus_iou']:.3f} "
-          f"member {row['mean_member_iou']:.3f} (circle {row['mean_radial_iou']:.3f}) "
-          f"Brier {row['mean_brier_ensemble']:.4f} vs {row['mean_brier_radial']:.4f} ESS {row['mean_ess']:.1f} "
-          f"| p0 {row['final_p0_mean']:.2f} wind {row['final_wind_scale_mean']:.2f}", flush=True)
-    return row
+    """`r5_common.run()`, launched under `nice -n 10` (`NICE_PREFIX`) so
+    batches share the box politely -- everything else (row shape, JSON
+    field meanings, the printed one-line summary) is `r5_common.run()`
+    itself; this is a thin wrapper, not a copy, so the two never drift
+    apart."""
+    return _r5.run(out_dir, fire, label, env, members, mode, argv_prefix=NICE_PREFIX)
 
 
 def run_all(jobs, out_json, workers=2, load_gate=8.0, gate_sleep=600, skip_binary_check=False):
     """jobs: list of (fire, label, env, members, mode). Runs the shared-
-    machine gates (binary_git + dirty tree, then the load gate) before
-    launching anything, then the batch itself at `workers` parallelism
-    (default 2). Writes rows to `out_json` and a `<out_json>` sibling
-    `..._summary.json` carrying `binary_git`, `workers`, wall time and the
-    1-minute load average logged at batch start and finish."""
-    if not skip_binary_check:
-        check_binary_git()
+    machine gates in order -- the load gate first (so the box isn't
+    touched at all, not even by the binary_git diagnostic, while it's
+    over threshold), then binary_git + dirty tree -- before launching
+    anything, then the batch itself at `workers` parallelism (default 2).
+    Writes rows to `out_json` and a `<out_json>` sibling `..._summary.json`
+    carrying `binary_git`, `workers`, wall time and the 1-minute load
+    average logged at batch start and finish."""
     out_dir = EXP / out_json.replace(".json", "")
     load_start = wait_for_load(load_gate, gate_sleep)
+    if not skip_binary_check:
+        check_binary_git()
     print(f"[r7] batch start: {len(jobs)} job(s), workers={workers}, load(1m)={load_start:.2f}", flush=True)
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -319,7 +305,15 @@ def summary_table(arm_stats_by_label, baseline, fires=FIRES):
         for label in labels:
             mean, sd, _n = arm_stats_by_label[label].get(fire, (float("nan"), float("nan"), 0))
             delta = mean - b_mean
-            delta_sd = delta / b_sd if b_sd else float("inf")
-            cells += [f"{mean:.3f}", f"{sd:.3f}", f"{delta:+.3f} ({delta_sd:+.2f} sd)", verdict(delta_sd)]
+            if b_sd:
+                delta_str = f"{delta:+.3f} ({delta / b_sd:+.2f} sd)"
+                v = verdict(delta / b_sd)
+            else:
+                # A zero baseline sd makes "sd units" meaningless -- say so
+                # rather than reporting a false "beyond 2 sd" from a delta
+                # divided by zero read as +-inf.
+                delta_str = f"{delta:+.3f} (sd=0)"
+                v = "undefined (zero sd)"
+            cells += [f"{mean:.3f}", f"{sd:.3f}", delta_str, v]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)

@@ -15,16 +15,23 @@ from r5_common import BIN, EXP, FIRES, HOLDOUT, VAL
 __all__ = ["BIN", "EXP", "FIRES", "HOLDOUT", "VAL", "run_nulls"]
 
 
-def run_nulls(out_dir, fire, env=None):
+def run_nulls(out_dir, fire, env=None, argv_prefix=()):
     """One `wildfire_smc <fire> 0 nulls <out.json>` run. Returns the parsed
     report (all of persistence/Circle/Ellipse-×3, every observation) plus
     the wall time the binary itself measured.
+
+    `argv_prefix` (default empty) is prepended to the argv verbatim --
+    e.g. `["nice", "-n", "10"]` for a caller that needs the child niced
+    (r7_common.check_binary_git()'s diagnostic run). No Round 6 script
+    passes it, so their behaviour is exactly what it was before this
+    parameter existed.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     rep = out_dir / f"{fire}_nulls.json"
     full_env = {**os.environ, **(env or {})}
+    argv = [*argv_prefix, str(BIN), str(VAL / "data" / "scenarios" / fire), "0", "nulls", str(rep)]
     subprocess.run(
-        [str(BIN), str(VAL / "data" / "scenarios" / fire), "0", "nulls", str(rep)],
+        argv,
         check=True,
         capture_output=True,
         env=full_env,
