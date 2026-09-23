@@ -199,6 +199,18 @@ a bug in this page.
   kernel. ×0 = wind off.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
   The weather-report convention, used everywhere since Round 2.
+- **Wind source (`SMC_WIND_SOURCE`).** Which weather log the driver reads
+  its per-window wind vector from: `era5` (the default — the scenario's
+  daily-average reanalysis wind, unchanged behaviour) or `station` — the
+  hourly NOAA ISD log's vector mean over the same window
+  (`station_vector_mean`, already computed for the Ellipse null's
+  station variant, but not fed to the driver until this knob). A window
+  whose station log has a gap falls back to ERA5 for that window; the
+  report counts how many windows fell back. Distinct from the
+  wind-direction offset gene below, which *corrects* whichever source is
+  in use per member — this knob only changes which log is read. E46:
+  separates "the input is coarse" from "the filter can't use the input
+  it has."
 - **Wind-direction offset gene (`wind_rot_deg`).** A free, per-member gene
   (`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`) added to the forcing's
   wind from-bearing before the driver writes it into the model, mod 360.
@@ -289,6 +301,18 @@ a bug in this page.
 - **Genome / gene.** A member's full set of knob values / one knob. GA
   vocabulary, used because the learning operators come from genetic
   algorithms.
+- **Angular diversity.** A spread of *different* values a gene holds
+  across the ensemble's members at once, as opposed to the whole
+  population converging on one learned value. E30b's `wind_rot_deg`
+  gene is the test case: each member draws its own rotation and, left
+  to mutate normally, different members can keep different rotations
+  through the run — so the ensemble as a whole is not betting on one
+  corrected wind bearing but covering a *range* of bearings, which helps
+  when the true direction itself varies day to day (sub-daily, or
+  window to window) in a way one fixed correction cannot. `SMC_WIND_ROT_
+  SIGMA=0` (E45) removes the *learning* half of the gene (no mutation
+  after birth) while keeping diversity, isolating whether diversity
+  alone — not a correct learned angle — is doing the work.
 - **Open mode.** Members run independently start to finish. Pure Monte
   Carlo. E24.
 - **Assim mode (particle filter).** At each observation day, score every

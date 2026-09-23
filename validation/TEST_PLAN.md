@@ -226,6 +226,173 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
+- v1.9 (2026-09-23, before the E48 run): Round 7
+  (`docs/superpowers/plans/round-7-experiments.md`) pre-registers six
+  experiments, E44–E49, that ask one question — does the E30b Arm B
+  configuration (arrival kernel, rear-focus wind law, 4× clock, the
+  widened `arrival_x4` prior, a learned per-member `wind_rot_deg` gene
+  at ±90°) deserve to replace the Bernoulli recommendation, and why does
+  it work? Arm B is validated so far only as a one-seed pilot (E30b);
+  none of it is a production default yet. Shared-machine rules bind
+  every one of these batches: 2 workers max, `nice -n 10`, one batch at
+  a time, `uptime` checked before launch (wait and re-check every 10
+  minutes above a 1-minute load of 8), load reported at launch and
+  finish; gate/reset/state-correction stay off; every report carries
+  `binary_git`/`binary_built_utc` and the runner refuses to start a
+  batch on a dirty or stale binary. Runner: `validation/scripts/
+  experiments/r7_common.py` (the `ARM_B` preset, the shared `run`/
+  `run_all`, the binary_git and load gates, and the per-fire mean/sd
+  summariser with the delta-in-sd verdict column worded exactly as
+  `48-e30b-uncapped-clock-direction-gene-pilot.md`'s tables: "tie" /
+  "beyond 1 sd (gain|loss)" / "**beyond 2 sd (gain|loss)**", tie = within
+  1 sd, beyond 2 sd = the bar for a claimed gain or loss) plus one
+  `exp_r7_e44.py` … `exp_r7_e49.py` per experiment. **Noise floor for all
+  six:** the E33 five-seed sd (Bear 0.015, Brattain 0.004, Buck 0.039,
+  Chimney 0.012, Ferguson 0.007, Pier 0.003) until E44 produces Arm B's
+  own five-seed sd, from which point every arrival-kernel arm (E45, E46,
+  E47, E49) is judged against Arm B's own sd instead. Honest-validation
+  rules apply throughout: all six fires, nothing chosen per fire;
+  Ferguson and Pier holdout; every report carries persistence, Circle,
+  Ellipse and lagged nulls; five-seed (or fewer, where pre-registered
+  below) mean and sd reported, never the best seed; every prediction
+  below is written before its run and checked clause by clause after.
+
+  **E44 — five-seed E30b Arm B and E37b at the 4× clock (the promotion
+  test).** *Question:* does the full, multi-seed Arm B configuration
+  beat E33, and does it reach shapes E37/E37b's illumination said were
+  previously unreachable? *Design:* forecast — `ARM_B` preset, seeds
+  0–4, six fires, `assim` mode, 30 runs at 2 workers (≈10 h, one batch,
+  nothing else launched alongside it); plus E37b re-run at the 4× clock
+  — `map` mode (MAP-Elites illumination, 960 evaluations per fire:
+  `SMC_GENERATIONS=30` × `SMC_POP=32`, identical to E37/E37b), Arm B
+  preset, six fires, one batch, run only after the forecast batch.
+  *Arms:* Arm B only (no Arm A re-run — E30b already scored it). *Seeds:*
+  0–4 (forecast); illumination has no seed axis. *Fires:* all six.
+  *Score family:* one-window-ahead consensus IoU (forecast); reachable-
+  wedge coverage over growth × elongation (illumination). *Noise floor:*
+  E33 five-seed sd (above). *Prediction, written before the run:*
+  five-seed mean beats E33 beyond 2 sd on Brattain, Chimney, Ferguson;
+  ties Bear and Pier; Buck within its own sd. *Stop rule:* if the
+  five-seed mean loses to E33 beyond 1 sd on any fire, Arm B is not
+  promoted — E45 and E46 still run (they explain the pilot regardless of
+  whether it is promoted), E47 does not run. Runner: `exp_r7_e44.py` →
+  `exp44_arm_b_5seed.json` (forecast), `exp44_e37b_4x_illuminate.json`
+  (illumination). Write-up: `validation/experiments/
+  50-e44-full-e30b-arm-b.md`.
+
+  **E45 — mechanism ablations on the `wind_rot_deg` gene.** *Question:*
+  does the gene work because per-member angular diversity helps the
+  ensemble fit each day's actual wind, or because the filter learns one
+  correct bearing? *Design:* two arms, same seeds as E44. Arm B-σ0: Arm
+  B preset with `SMC_WIND_ROT_SIGMA=0` — mutation sigma 0 on
+  `wind_rot_deg`, so each member keeps its birth rotation (diversity,
+  no learning); `SMC_WIND_ROT_SIGMA` is a new knob (default = current
+  behaviour) if the gene spec cannot already take a per-gene sigma. Arm
+  B-20: Arm B preset with `SMC_WIND_ROT_GENE=20` (±20° instead of ±90° —
+  learned-correction-only test). *Seeds (both branches pre-registered;
+  E44's own result selects one):* seeds 0–4 **if** E44's Arm B five-seed
+  sd is ≤ the E33 sd on ≥ 4 fires; **otherwise** seeds 0–2, and the
+  write-up must say which branch applied. *Fires:* all six, 2 workers,
+  one arm per batch. *Score family:* one-window-ahead consensus IoU,
+  plus the per-window posterior spread (IQR) of `wind_rot_deg` for Arm
+  B, Arm B-σ0 and Arm B-20 (new field in the `assim` report if absent).
+  *Noise floor:* Arm B's own five-seed sd from E44 (E33's sd if E44 used
+  the 3-seed branch and its own sd is not yet meaningful at that seed
+  count). *Prediction, written before the run:* diversity wins — Arm
+  B-σ0 within 1 sd of Arm B on ≥ 4 fires; Arm B-20 loses to Arm B beyond
+  1 sd on Bear and Pier (Arm B's own learned medians there are ±43°).
+  *Stop rule:* none — this experiment runs regardless of E44's stop
+  rule; its write-up must name the mechanism in one sentence or say it
+  cannot. Runner: `exp_r7_e45.py` → `exp45_wind_rot_mechanism.json`.
+  Write-up: `validation/experiments/51-e45-wind-rot-mechanism.md`.
+
+  **E46 — station hourly wind as the driver input.** *Question:* is the
+  coarse ERA5 daily-mean wind the real problem, or does the gene do more
+  than repair a bad input? *Design:* new knob `SMC_WIND_SOURCE=era5|
+  station` (default `era5`, unchanged behaviour) — under `station` the
+  driver receives the station vector mean over each window instead of
+  the ERA5 daily vector, same daily cadence, falling back to ERA5 for
+  any window with a station log gap (fallbacks counted in the report);
+  unit test with a synthetic log of known mean. Three arms, 3 seeds
+  (0–2), six fires, 2 workers, one arm per batch: (a) E33's recommended
+  config (no arrival kernel) + station wind; (b) Arm B preset with
+  `SMC_WIND_ROT_GENE` unset (no gene) + station wind; (c) Arm B preset
+  (gene on) + station wind. *Score family:* one-window-ahead consensus
+  IoU. *Noise floor:* Arm B's own sd from E44 for arms (b)/(c); E33's sd
+  for arm (a). *Prediction, written before the run:* (a) ties E33
+  everywhere (a round Bernoulli blob only cares about wind speed); (b)
+  recovers most of the gene's gain on Ferguson and Chimney (E41: ERA5
+  direction is wrong there and direction carries signal on those two);
+  (c) beats (b) by less than 1 sd on ≥ 4 fires. If (c) beats (b) beyond
+  2 sd on ≥ 3 fires, the gene does more than repair the input. *Stop
+  rule:* none. Runner: `exp_r7_e46.py` → `exp46_station_wind_input.json`.
+  Write-up: `validation/experiments/52-e46-station-wind-input.md`.
+
+  **E47 — arrival + rear_focus + spotting genes.** *Question:* does
+  spotting (E43: widens the reachable wedge under Bernoulli) still add
+  reach once combined with the arrival kernel, or is it redundant with
+  what the arrival kernel already reaches? *Runs only if E44 did not
+  trip its stop rule.* *Design:* two batches — illumination (`map` mode,
+  Arm B preset + `SMC_SPOT=1`, six fires, one batch, compared against
+  E44's own E37b-at-4× table, not re-run) and forecast (Arm B preset +
+  `SMC_SPOT=1`, seeds 0–2, six fires, 2 workers). *Score family:*
+  reachable-wedge coverage (illumination); one-window-ahead consensus
+  IoU (forecast). *Noise floor:* Arm B's own sd from E44. *Prediction,
+  written before the run:* Ferguson coverage rises above Arm B alone;
+  forecast IoU ties Arm B on all six (spotting adds reach the filter
+  rarely needs). *Stop rule:* a forecast loss beyond 1 sd on any fire
+  means the wider prior costs more than reach buys (reported, not a
+  gate on anything downstream — E47 is the last experiment in this
+  round). Runner: `exp_r7_e47.py` →
+  `exp47_arrival_spotting_illuminate.json`,
+  `exp47_arrival_spotting_forecast.json`. Write-up:
+  `validation/experiments/54-e47-arrival-plus-spotting.md`.
+
+  **E48 — why Brattain fails under arrival without the gene.**
+  *Question:* E30b Arm A lost −13 sd on Brattain, the fire predicted to
+  need the least help — why? *Design:* read-mostly. Re-run seed 0 on
+  Brattain only, Arm A and Arm B (2 runs, 2 workers), with per-window
+  diagnostics enabled via a new opt-in knob `SMC_DIAG=1` (added fields
+  only; no existing field changes): consensus perimeter vs truth per
+  window, learned p0 and `wind_scale` (and `wind_rot_deg` for B)
+  trajectories, the ERA5 wind vector per window, the station vector
+  mean per window (`station_vector_mean` already exists), and a
+  head-vs-flank decomposition of the miss (cells missed downwind of the
+  ignition centroid vs cross-wind). Compared against the E41 Ellipse
+  null's per-window series on Brattain (not re-run). *Score family:*
+  none — this is a finding, not a scored comparison. *Noise floor:* not
+  applicable. *Prediction, written before the run:* ERA5 direction is
+  right on the daily mean but wrong on the two or three windows that
+  carry most of the burned area, and Arm B's gene diversity covers
+  exactly those windows. *Stop rule:* none. Runner: `exp_r7_e48.py` →
+  `exp48_brattain_arrival_diagnosis.json`. Write-up: `validation/
+  experiments/49-e48-brattain-arrival-diagnosis.md`.
+
+  **E49 — the containment operator under the 4× clock.** *Question:*
+  Chimney's contained fraction fell to 0.56–0.59 under both E30b arms
+  (E33: 0.94) while IoU rose — is the containment operator's period,
+  growth-rate window, or per-tick rate constant failing to scale with
+  `SMC_STEPS_SCALE`? *Design:* first, read the operator and
+  `SMC_STEPS_SCALE` handling and write down each constant and whether it
+  scales. If something does not scale that should: fix it (opt-in via
+  the preset, so E44's own reports stay reproducible) and re-run
+  Chimney seeds 0–4 on Arm B (5 runs, 2 workers) — the branch this
+  task's skeleton (`exp_r7_e49.py`) declares. If everything scales:
+  instead sweep the containment threshold on the four calibration fires
+  only (Bear, Brattain, Buck, Chimney), one seed, three values, holdout
+  untouched — threshold values are Task 7's own choice and are not
+  pre-registered here. *Score family:* contained fraction and
+  one-window-ahead consensus IoU, before/after (fix branch) or across
+  threshold values (sweep branch). *Noise floor:* Arm B's own sd from
+  E44 (fix branch only; the sweep branch is a calibration-fire
+  comparison, not judged against the six-fire noise floor). *Prediction,
+  written before the run:* the fraction is correct, not a bug — the
+  fire really grows for longer under the faster clock, and the ICS-209
+  lead E42 measured (13–21 days) shrinks toward the real 5–10 days.
+  *Stop rule:* none. Runner: `exp_r7_e49.py` →
+  `exp49_containment_4x_clock.json`. Write-up: `validation/experiments/
+  53-e49-containment-under-4x-clock.md`.
+
 - v1.8 (2026-09-11, before the E41 run): a third dummy forecaster, the
   **Ellipse null**, declared alongside persistence and the Circle. The
   Circle grows a chamfer distance field from the ignition and thresholds
