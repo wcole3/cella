@@ -186,6 +186,15 @@ wildfire scenario under `spread: "arrival"` recomputes its arrival-time table
 from the resumed cells rather than restoring the original one, since that
 table was never saved in the first place — see the same doc section.
 
+Save also keeps your Explore settings. If the file you loaded had `ensemble`
+or `evolve` settings, or you changed or ran Monte Carlo or Evolve this
+session, those settings go into the file too. A short popup says what was
+saved. Loading such a file fills the Explore tab with its settings and pops
+up a note, which lists anything the tab cannot edit (for example a driver,
+or genes that are not grid knobs). Those are kept exactly as loaded, and
+saved back unchanged unless you edit the matching control. When a file has
+both blocks, the tab opens on Monte Carlo.
+
 **Edit.**
 - *Tool*: **Cycle** (click a cell to step it to the next type), **Paint**
   (drag to paint the chosen type), **Stamp** (2D: place a Glider,

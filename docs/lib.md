@@ -330,7 +330,7 @@ it on load. It never influences a simulation.
 
 `initial` is a flat array of type *names* with length `width` (1D) or `width * height` (2D).
 
-Both variants also take `"seed"` (default 0, the grid's random seed), and two optional blocks, `"ensemble"` and `"evolve"`, whose fields are documented in [explore.md](explore.md) §7–8. `build_sim()` returns the grid as an `explore::Sim`; `build_ensemble()` / `build_evolution()` return `Option<Result<_, ModelError>>` — `None` when the block is absent, `Err` when it does not fit the grid (an unknown gene key, a `track` type nothing declares). Blocks reject unknown fields, so the pre-September-2026 `prior` form fails with a message pointing at the migration table in explore.md §15.
+Both variants also take `"seed"` (default 0, the grid's random seed), and two optional blocks, `"ensemble"` and `"evolve"`, whose fields are documented in [explore.md](explore.md) §7–8. `build_sim()` returns the grid as an `explore::Sim`; `build_ensemble()` / `build_evolution()` return `Option<Result<_, ModelError>>` — `None` when the block is absent, `Err` when it does not fit the grid (an unknown gene key, a `track` type nothing declares). Blocks reject unknown fields, so the pre-September-2026 `prior` form fails with a message pointing at the migration table in explore.md §16.
 
 ```rust
 use cella_lib::config::CellaConfig;

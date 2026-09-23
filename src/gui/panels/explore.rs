@@ -259,7 +259,7 @@ impl CellaApp {
                     ui.end_row();
                     ui.label("Sigma")
                         .on_hover_text("how far children's knobs move from their parent's");
-                    ui.add(egui::Slider::new(&mut mc.sigma, 0.0..=1.0));
+                    ui.add(egui::Slider::new(&mut mc.sigma, 0.01..=1.0));
                     ui.end_row();
                     ui.label("Immigrants")
                         .on_hover_text("share of fresh random members after each learning step");

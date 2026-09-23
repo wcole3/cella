@@ -10,6 +10,7 @@ egui = "0.35.0"
 egui_plot = "0.36.0"
 rfd = "0.17"
 gif = "0.14"
+serde = "1"
 serde_json = "1"
 env_logger = "0.11"
 lasso2 = { version = "0.8.2", features = ["multi-threaded", "serialize"] }

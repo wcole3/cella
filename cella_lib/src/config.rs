@@ -289,6 +289,25 @@ impl CellaConfig {
         }
     }
 
+    /// Set (or clear) the `ensemble` and `evolve` blocks, e.g. to carry a GUI
+    /// session's Explore settings into a save file.
+    pub fn set_explore_blocks(
+        &mut self,
+        ensemble: Option<EnsembleConfig>,
+        evolve: Option<EvolveConfig>,
+    ) {
+        match self {
+            CellaConfig::D1(c) => {
+                c.ensemble = ensemble;
+                c.evolve = evolve;
+            }
+            CellaConfig::D2(c) => {
+                c.ensemble = ensemble;
+                c.evolve = evolve;
+            }
+        }
+    }
+
     /// Build the ensemble this config describes: the grid is built (and its
     /// model attached) once, then cloned per member with genes drawn from the
     /// `ensemble.genes` ranges. `None` when the config has no `ensemble`
@@ -434,8 +453,8 @@ impl CellaConfig {
     /// cells painted before the first step), so `initial` is skipped in
     /// favour of the grid's own cells and no `snapshot` is written.
     /// Otherwise `initial` supplies the Reset target and the grid's run goes
-    /// into `snapshot`. `ensemble`/`evolve` are always `None` — a GUI session
-    /// doesn't keep either.
+    /// into `snapshot`. `ensemble`/`evolve` start as `None`; set them with
+    /// [`CellaConfig::set_explore_blocks`].
     pub fn save_1d(
         initial: &GridState,
         current: &Grid1D,
@@ -1333,5 +1352,25 @@ mod tests {
             assert_eq!(resumed.cell_age(i), r.cell_age(0), "cell {i} age");
             assert_eq!(resumed.cell_history(i), r.cell_history(0), "cell {i} history");
         }
+    }
+
+    #[test]
+    fn set_explore_blocks_sets_and_clears_both_variants() {
+        let mut cfg2 = CellaConfig::D2(Config2D {
+            width: 1,
+            height: 2,
+            initial: vec!["A".to_string(), "B".to_string()],
+            ..Config2D::default()
+        });
+        cfg2.set_explore_blocks(Some(EnsembleConfig::default()), None);
+        assert!(cfg2.ensemble().is_some() && cfg2.evolve().is_none());
+
+        let mut cfg1 = CellaConfig::D1(Config1D {
+            width: 2,
+            initial: vec!["A".to_string(), "B".to_string()],
+            ..Config1D::default()
+        });
+        cfg1.set_explore_blocks(Some(EnsembleConfig::default()), None);
+        assert!(cfg1.ensemble().is_some() && cfg1.evolve().is_none());
     }
 }

@@ -625,7 +625,34 @@ Reset → Apply → Play works. A resize drops the worker and its map the same
 way, but the grid itself now keeps its run — step, rule, seed and model all
 carry on at the new size.
 
-## 15. Migrating from the September 2026 `ensemble` block
+## 15. Saving Explore settings
+
+Save (see [app.md](app.md)) can write your Monte Carlo or Evolve settings
+into the config file, alongside the grid. Only the *settings* are saved —
+members, seed, genes, tracked types, and so on. It never saves the members
+themselves, ensemble results, or the MAP-Elites archive; those live only in
+the running session, and Save simply doesn't touch that. A block is written
+when the loaded file already had one, when you started a run of that mode
+this session, or when you changed one of its settings.
+
+When a block is written, it starts from what was loaded (or from the panel
+as it stood right after load, if nothing was loaded) and then takes just the
+settings you actually changed since then. Anything the tab can't show or
+edit — a driver, a free gene, a per-gene `sigma`, an unsupported metric — is
+left exactly as it was, so a file with those extras keeps them on save
+instead of losing them. This is why editing one field, say the member count,
+only changes that field in the saved file; everything else you didn't touch
+carries over untouched.
+
+A couple of things to know:
+- "Run +N" (stepping an ensemble or a generation count) is not itself a
+  change worth saving — it doesn't count as editing a setting.
+- The gene table and tracked-type list are shared by both modes. An edit to
+  either counts as a change to whichever mode is selected when you save, so
+  tick genes for the mode you actually want the edit to land in before
+  saving.
+
+## 16. Migrating from the September 2026 `ensemble` block
 
 The first ensemble block (`prior`, wildfire only) is gone. Old files fail
 with an unknown-field error pointing here. Translate the prior into genes:
@@ -641,7 +668,7 @@ with an unknown-field error pointing here. Translate the prior into genes:
 
 `configs/2d_wildfire_ensemble.json` is the translated demo.
 
-## 16. Limits (September 2026)
+## 17. Limits (September 2026)
 
 - Members are full grid clones (the wildfire slope table is shared). A
   shared-landscape member type would cut memory further.

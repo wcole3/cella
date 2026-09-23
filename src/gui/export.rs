@@ -275,6 +275,7 @@ pub fn export_gif_1d(
 
 use crate::gui::app::{CellaApp, Dim};
 use crate::gui::render::color_to_hex;
+use crate::gui::state::Notice;
 use cella_lib::config::CellaConfig;
 use cella_lib::types::interner;
 use rfd::FileDialog;
@@ -293,33 +294,57 @@ impl CellaApp {
         colors
     }
 
+    /// What Save writes: the grid as a config (with its snapshot past step
+    /// 0), the colours, and any Explore blocks the session used; plus the
+    /// notice to show when an Explore block was written.
+    pub(in crate::gui) fn config_for_save(&self) -> Option<(CellaConfig, Option<Notice>)> {
+        let initial = self.scenario.initial_state.as_ref()?;
+        let colors = self.color_map_for_save();
+        let mut cfg = match self.scenario.dim? {
+            Dim::D1 => CellaConfig::save_1d(initial, self.scenario.d1.as_ref()?, colors),
+            Dim::D2 => CellaConfig::save_2d(initial, self.scenario.d2.as_ref()?, colors),
+        };
+        let ensemble = self.ensemble_block_for_save();
+        let evolve = self.evolve_block_for_save();
+        let mut lines = Vec::new();
+        if let Some(e) = &ensemble {
+            lines.push(format!("Ensemble settings: {} members, {} genes.", e.members, e.genes.len()));
+            if self.explore.base_ensemble.is_some() && !self.explore.kept_ensemble.is_empty() {
+                lines.push(format!("Kept from the loaded file: {}.", self.explore.kept_ensemble.join("; ")));
+            }
+        }
+        if let Some(e) = &evolve {
+            lines.push(format!(
+                "Evolve settings: population {}, {} generations, {} genes.",
+                e.population, e.generations, e.genes.len()
+            ));
+            if self.explore.base_evolve.is_some() && !self.explore.kept_evolve.is_empty() {
+                lines.push(format!("Kept from the loaded file: {}.", self.explore.kept_evolve.join("; ")));
+            }
+        }
+        cfg.set_explore_blocks(ensemble, evolve);
+        let notice = (!lines.is_empty()).then(|| Notice { title: "Explore settings saved".into(), lines });
+        Some((cfg, notice))
+    }
+
     /// Save the current scenario as a config: dims, rule, model, seed and
     /// colours, plus a `snapshot` of the run in progress if it has stepped
-    /// past 0. The same file loads back through "Load scenario".
+    /// past 0, plus any Explore blocks the session used. The same file loads
+    /// back through "Load scenario".
     pub(in crate::gui) fn save_final_state(&mut self) {
-        let Some(initial) = self.scenario.initial_state.clone() else {
+        let Some((cfg, notice)) = self.config_for_save() else {
             return;
         };
-        let colors = self.color_map_for_save();
-        let cfg = match self.scenario.dim {
-            Some(Dim::D1) => self
-                .scenario
-                .d1
-                .as_ref()
-                .map(|g| CellaConfig::save_1d(&initial, g, colors)),
-            Some(Dim::D2) => self
-                .scenario
-                .d2
-                .as_ref()
-                .map(|g| CellaConfig::save_2d(&initial, g, colors)),
-            None => None,
-        };
-        let Some(cfg) = cfg else {
-            return;
-        };
-        match FileDialog::new().set_directory(std::env::current_dir().unwrap_or_default()).set_file_name("snapshot.json").save_file() {
+        match FileDialog::new()
+            .set_directory(std::env::current_dir().unwrap_or_default())
+            .set_file_name("snapshot.json")
+            .save_file()
+        {
             Some(path) => match cfg.to_file_pretty(&path) {
-                Ok(()) => self.set_status(format!("Saved {}", path.display())),
+                Ok(()) => {
+                    self.set_status(format!("Saved {}", path.display()));
+                    self.chrome.notice = notice;
+                }
                 Err(e) => self.set_status(format!("Failed to save: {e}")),
             },
             None => self.report_no_file_chosen("save path"),

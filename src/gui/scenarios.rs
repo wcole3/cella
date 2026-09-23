@@ -1066,4 +1066,100 @@ mod tests {
         assert!(app.explore.panel_at_load.is_some(), "a baseline is taken on every load");
         assert!(app.chrome.notice.is_none());
     }
+
+    fn block_json<T: serde::Serialize>(b: &T) -> serde_json::Value {
+        serde_json::to_value(b).unwrap()
+    }
+
+    #[test]
+    fn saving_an_untouched_loaded_ensemble_writes_it_back_unchanged() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        let file = CellaConfig::from_file("configs/2d_wildfire_ensemble.json").unwrap();
+        let saved = app.ensemble_block_for_save().expect("a loaded block is always written");
+        assert_eq!(block_json(&saved), block_json(file.ensemble().unwrap()));
+        assert!(app.current_ensemble_config().driver.is_some(), "Run uses the driver too");
+    }
+
+    #[test]
+    fn untouched_evolve_configs_round_trip() {
+        for path in [
+            "configs/2d_map_elites_life_classes.json",
+            "configs/1d_novelty_rule_space.json",
+            "configs/1d_evolve_density_classification.json",
+            "configs/2d_evolve_life_density.json",
+        ] {
+            let mut app = test_app();
+            app.load_config_from_path(Path::new(path));
+            let file = CellaConfig::from_file(path).unwrap();
+            let saved = app.evolve_block_for_save().expect(path);
+            assert_eq!(block_json(&saved), block_json(file.evolve().unwrap()), "{path}");
+        }
+    }
+
+    #[test]
+    fn an_edit_overrides_only_its_field_and_unticking_drops_a_gene() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        app.explore.mc.members = 7;
+        let first_row_key = app
+            .explore
+            .genes
+            .iter()
+            .find(|r| r.vary)
+            .map(|r| r.desc.key.clone())
+            .expect("at least one gene has a panel row");
+        app.explore.genes.iter_mut().find(|r| r.desc.key == first_row_key).unwrap().vary = false;
+        let saved = app.ensemble_block_for_save().unwrap();
+        assert_eq!(saved.members, 7);
+        assert!(saved.driver.is_some());
+        assert!(saved.genes.iter().all(|g| g.key != first_row_key), "unticked gene dropped");
+        let file = CellaConfig::from_file("configs/2d_wildfire_ensemble.json").unwrap();
+        let free: Vec<_> = file
+            .ensemble()
+            .unwrap()
+            .genes
+            .iter()
+            .filter(|g| !app.explore.genes.iter().any(|r| r.desc.key == g.key))
+            .map(|g| g.key.clone())
+            .collect();
+        for k in free {
+            assert!(saved.genes.iter().any(|g| g.key == k), "free gene {k} kept");
+        }
+    }
+
+    #[test]
+    fn a_plain_scenario_writes_a_block_only_once_touched() {
+        let mut app = test_app();
+        app.load_demo_life();
+        assert!(app.ensemble_block_for_save().is_none());
+        assert!(app.evolve_block_for_save().is_none());
+        app.explore.mc.members = 9;
+        assert_eq!(app.ensemble_block_for_save().unwrap().members, 9);
+        assert!(app.evolve_block_for_save().is_none(), "an ensemble edit doesn't touch evolve");
+        // Shared gene edits count for the mode selected at save time.
+        app.explore.mode = ExploreMode::Evolve;
+        app.explore.genes[0].vary = true;
+        assert!(app.evolve_block_for_save().is_some());
+    }
+
+    #[test]
+    fn save_writes_the_blocks_and_a_notice_and_load_reads_them_back() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        app.apply_action(Action::DismissNotice);
+        let (cfg, notice) = app.config_for_save().unwrap();
+        let notice = notice.expect("a block was written, so a notice");
+        assert!(notice.lines.iter().any(|l| l.contains("members")), "{notice:?}");
+        let path = unique_temp_path("explore_blocks");
+        cfg.to_file_pretty(&path).unwrap();
+        let mut again = test_app();
+        again.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        let file = CellaConfig::from_file("configs/2d_wildfire_ensemble.json").unwrap();
+        assert_eq!(
+            block_json(again.explore.base_ensemble.as_ref().unwrap()),
+            block_json(file.ensemble().unwrap())
+        );
+    }
 }

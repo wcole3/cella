@@ -10,7 +10,7 @@ model-agnostic engine that works on any rule or model. Everything is now in
 - configuring an `"ensemble"` block, learning from an observation — §7
 - the wildfire driver (weather schedule, containment) as the worked example
   of a `MemberDriver` — §13
-- translating an old `prior` block into `genes` — §15
+- translating an old `prior` block into `genes` — §16
 
 The validation results that motivated ensembles (E24, E25, E28, and the E31
 replication through the generic engine) are unchanged and live in

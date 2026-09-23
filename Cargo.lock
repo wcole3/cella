@@ -660,6 +660,7 @@ dependencies = [
  "gif",
  "lasso2",
  "rfd",
+ "serde",
  "serde_json",
 ]
 

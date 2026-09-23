@@ -530,14 +530,11 @@ pub(in crate::gui) struct ExploreState {
     pub evolve_ran: bool,
 }
 
-/// A copy of the Explore panel taken right after a scenario load.
-///
-/// Nothing in this task reads the fields back; they are written by
-/// [`CellaApp::explore_scenario_loaded`] so a later task's Save and Run can
-/// diff the panel's current settings against them. `#[allow(dead_code)]`
-/// silences the warning that would otherwise fire until that reader lands.
+/// A copy of the Explore panel taken right after a scenario load. Written by
+/// [`CellaApp::explore_scenario_loaded`]; Save and Run diff the panel's
+/// current settings against it (see [`CellaApp::current_ensemble_config`],
+/// [`CellaApp::ensemble_block_for_save`]).
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(in crate::gui) struct PanelBaseline {
     /// What the ensemble builder produced, as JSON.
     pub ensemble: serde_json::Value,
@@ -1275,13 +1272,77 @@ impl CellaApp {
         }
     }
 
-    /// The ensemble block Run and Save use. (Task 5 merges the loaded base in.)
+    /// The ensemble block Run and Save use: the panel's edits since the last
+    /// load, merged over the loaded block (see [`overlay_json`]). With no
+    /// loaded block, the base is the panel as it was at load.
     pub(in crate::gui) fn current_ensemble_config(&self) -> EnsembleConfig {
-        self.panel_ensemble_config()
+        let now = self.panel_ensemble_config();
+        let Some(at_load) = self.explore.panel_at_load.as_ref().map(|b| &b.ensemble) else {
+            return now;
+        };
+        let Ok(now_v) = serde_json::to_value(&now) else {
+            return now;
+        };
+        let base_v = match &self.explore.base_ensemble {
+            Some(b) => serde_json::to_value(b).unwrap_or_else(|_| at_load.clone()),
+            None => at_load.clone(),
+        };
+        // Deserializing can only fail on a value the panel itself produced
+        // wrongly; fall back to the panel's own config rather than lose Run.
+        serde_json::from_value(overlay_json(&base_v, at_load, &now_v)).unwrap_or(now)
     }
-    /// The evolve block Run and Save use. (Task 5 merges the loaded base in.)
+
+    /// The evolve block Run and Save use; see [`Self::current_ensemble_config`].
     pub(in crate::gui) fn current_evolve_config(&self) -> Option<EvolveConfig> {
-        self.panel_evolve_config()
+        let now = self.panel_evolve_config()?;
+        let Some(at_load) = self.explore.panel_at_load.as_ref().and_then(|b| b.evolve.as_ref()) else {
+            return Some(now);
+        };
+        let Ok(now_v) = serde_json::to_value(&now) else {
+            return Some(now);
+        };
+        let base_v = match &self.explore.base_evolve {
+            Some(b) => serde_json::to_value(b).unwrap_or_else(|_| at_load.clone()),
+            None => at_load.clone(),
+        };
+        Some(serde_json::from_value(overlay_json(&base_v, at_load, &now_v)).unwrap_or(now))
+    }
+
+    /// Whether the gene table or tracked set changed since the last load.
+    /// Both modes share them, so an edit counts for the mode selected now.
+    fn shared_edited(&self) -> bool {
+        let Some(b) = &self.explore.panel_at_load else {
+            return false;
+        };
+        serde_json::to_value(gene_specs(&self.explore.genes)).unwrap_or_default() != b.genes
+            || self.explore.tracked != b.tracked
+    }
+
+    /// The ensemble block to save, or `None` for a session that never used
+    /// it: written when the file had one, a run started, or the user changed
+    /// an ensemble setting since the load. ("Run +N" steps don't count.)
+    pub(in crate::gui) fn ensemble_block_for_save(&self) -> Option<EnsembleConfig> {
+        let x = &self.explore;
+        let edited = x.panel_at_load.as_ref().is_some_and(|b| {
+            McConfig { steps: 0, ..x.mc.clone() } != McConfig { steps: 0, ..b.mc.clone() }
+                || (x.mode == ExploreMode::MonteCarlo && self.shared_edited())
+        });
+        (x.base_ensemble.is_some() || x.ensemble_ran || edited).then(|| self.current_ensemble_config())
+    }
+
+    /// The evolve block to save; see [`Self::ensemble_block_for_save`].
+    pub(in crate::gui) fn evolve_block_for_save(&self) -> Option<EvolveConfig> {
+        let x = &self.explore;
+        let edited = x.panel_at_load.as_ref().is_some_and(|b| {
+            x.evo != b.evo
+                || x.objective != b.objective
+                || (x.mode == ExploreMode::Evolve && self.shared_edited())
+        });
+        if x.base_evolve.is_some() || x.evolve_ran || edited {
+            self.current_evolve_config()
+        } else {
+            None
+        }
     }
 
     /// The Explore side of a scenario load: show the file's blocks in the
@@ -1733,6 +1794,7 @@ impl CellaApp {
         self.explore.template_step = self.current_step();
         self.explore.ensemble_steps = 0;
         self.explore.worker = Some(spawn_monte_carlo(template, cfg, tracked, ctx, sig));
+        self.explore.ensemble_ran = true;
         self.view.layers.probability = true;
         self.set_status(format!(
             "Started {} members; probability layer on",
@@ -1765,6 +1827,7 @@ impl CellaApp {
         self.explore.gens_requested = 0;
         let ctx = self.explore.ctx.clone();
         self.explore.worker = Some(spawn_evolve(template, cfg, ctx, sig));
+        self.explore.evolve_ran = true;
         self.set_status(format!(
             "Started evolution: population {}, {} varying genes",
             self.explore.evo.population,
@@ -1773,16 +1836,153 @@ impl CellaApp {
     }
 }
 
+/// Merge the panel's config over a loaded base, one top-level field at a
+/// time. A field takes the panel's value only if the user changed it since
+/// the load (`now` differs from `at_load`); every other field keeps the
+/// base's value. That protects what the panel can show only approximately:
+/// a loaded driver, an objective metric with no picker entry, a gene's
+/// `sigma`. `genes` merge by key (see [`merge_genes`]). Mask arrays are
+/// ignored when comparing (see [`without_masks`]).
+pub(in crate::gui) fn overlay_json(
+    base: &serde_json::Value,
+    at_load: &serde_json::Value,
+    now: &serde_json::Value,
+) -> serde_json::Value {
+    let mut out = base.clone();
+    let (Some(map), Some(now_map)) = (out.as_object_mut(), now.as_object()) else {
+        return now.clone();
+    };
+    for (k, v) in now_map {
+        if k == "genes" {
+            continue;
+        }
+        let changed = at_load.get(k).map(without_masks) != Some(without_masks(v));
+        if changed {
+            map.insert(k.clone(), v.clone());
+        }
+    }
+    map.insert(
+        "genes".into(),
+        merge_genes(base.get("genes"), at_load.get("genes"), now.get("genes")),
+    );
+    out
+}
+
+/// Merge gene lists by `key`. B = base genes, L = panel genes at load,
+/// N = panel genes now:
+/// - a base gene whose key is in N takes N's version if it changed since
+///   load, otherwise stays as loaded;
+/// - a base gene missing from N but present in L was unticked, so it is
+///   dropped;
+/// - a base gene in neither (a gene with no panel row) is kept;
+/// - a gene in N that is not in B, and is new or changed since load, is
+///   appended.
+fn merge_genes(
+    base: Option<&serde_json::Value>,
+    at_load: Option<&serde_json::Value>,
+    now: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    use serde_json::Value;
+    let list = |v: Option<&Value>| v.and_then(Value::as_array).cloned().unwrap_or_default();
+    let key = |g: &Value| g.get("key").and_then(Value::as_str).map(str::to_string);
+    let find = |gs: &[Value], k: &str| gs.iter().find(|g| key(g).as_deref() == Some(k)).cloned();
+    let (b, l, n) = (list(base), list(at_load), list(now));
+    let mut out = Vec::new();
+    for g in &b {
+        let Some(k) = key(g) else {
+            out.push(g.clone());
+            continue;
+        };
+        match (find(&n, &k), find(&l, &k)) {
+            (Some(now_g), Some(load_g)) if now_g != load_g => out.push(now_g),
+            (Some(_), Some(_)) => out.push(g.clone()),
+            (Some(now_g), None) => out.push(now_g),
+            (None, Some(_)) => {}
+            (None, None) => out.push(g.clone()),
+        }
+    }
+    for g in &n {
+        if let Some(k) = key(g)
+            && find(&b, &k).is_none()
+            && find(&l, &k).as_ref() != Some(g)
+        {
+            out.push(g.clone());
+        }
+    }
+    Value::Array(out)
+}
+
+/// A copy of `v` with every `"mask"` field removed, at any depth. The
+/// "match the current grid" objective bakes the live grid's mask into the
+/// config, and that changes on every step; comparing without it stops a
+/// step from counting as an edit.
+fn without_masks(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .filter(|(k, _)| k.as_str() != "mask")
+                .map(|(k, x)| (k.clone(), without_masks(x)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(without_masks).collect()),
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gui::sim::tests::test_app;
+    use serde_json::json;
 
     fn life_app() -> CellaApp {
         let mut app = test_app();
         app.load_demo_life();
         app.reconcile_explore_state();
         app
+    }
+
+    #[test]
+    fn overlay_keeps_unchanged_fields_from_the_base_and_takes_edited_ones() {
+        let base = json!({"members": 64, "beta": 5.0, "driver": {"d": 1}, "genes": []});
+        let at_load = json!({"members": 64, "beta": 5.0, "genes": []});
+        let now = json!({"members": 64, "beta": 7.0, "genes": []});
+        let out = overlay_json(&base, &at_load, &now);
+        assert_eq!(out["members"], 64);
+        assert_eq!(out["beta"], 7.0);
+        assert_eq!(out["driver"], json!({"d": 1}), "a field the panel lacks survives");
+    }
+
+    #[test]
+    fn overlay_ignores_a_baked_in_mask_that_only_moved_with_the_grid() {
+        let base = json!({"objective": {"metric": "density_classification"}, "genes": []});
+        let at_load = json!({"objective": {"metric": "target_mask", "mask": [true, false]}, "genes": []});
+        let now = json!({"objective": {"metric": "target_mask", "mask": [false, false]}, "genes": []});
+        let out = overlay_json(&base, &at_load, &now);
+        assert_eq!(out["objective"]["metric"], "density_classification");
+    }
+
+    #[test]
+    fn genes_merge_by_key() {
+        let g = |k: &str, lo: f64| json!({"key": k, "range": [lo, 1.0]});
+        let base = json!({"genes": [g("p0", 0.1), g("free", 0.0), g("gone", 0.2), g("kept", 0.3)]});
+        let at_load = json!({"genes": [g("p0", 0.1), g("gone", 0.2), g("kept", 0.3)]});
+        let now = json!({"genes": [g("p0", 0.5), g("kept", 0.3), g("new", 0.4)]});
+        let out = overlay_json(&base, &at_load, &now);
+        assert_eq!(
+            out["genes"],
+            json!([g("p0", 0.5), g("free", 0.0), g("kept", 0.3), g("new", 0.4)])
+        );
+    }
+
+    #[test]
+    fn an_unchanged_base_gene_keeps_fields_the_panel_cannot_show() {
+        let base = json!({"genes": [{"key": "p0", "range": [0.1, 1.0], "sigma": 0.01}]});
+        let at_load = json!({"genes": [{"key": "p0", "range": [0.1, 1.0]}]});
+        let now = at_load.clone();
+        let out = overlay_json(&base, &at_load, &now);
+        assert_eq!(out["genes"][0]["sigma"], 0.01);
     }
 
     #[test]
