@@ -1,6 +1,7 @@
 //! 2D grid implementation.
 
 use crate::chunking::{OutChunk, split_chunks};
+use crate::resize::{ResizeError, checked_cells, recount, remap_blocks};
 use crate::rules::{Rule2D, Rule2DPlan, TypeCounter, apply_counts};
 use crate::threads::{chunks_for_work, pool};
 use crate::types::{CellState, CellType};
@@ -306,6 +307,62 @@ impl Grid2D {
         self.counts_current = counts_current;
         self.dominant_type = dominant.0;
         self.model = model;
+        Ok(())
+    }
+
+    /// Change the grid to `width` x `height` mid-run, anchored top-left.
+    ///
+    /// Every cell in the overlap keeps its type, age and history. New cells
+    /// are Inactive, with age 0 and no history. `step`, `seed`, `rule` and
+    /// `peak_counts` carry on; the current counts are recomputed. An attached
+    /// model re-fits itself through [`crate::external::ExternalModel::resize`].
+    ///
+    /// All or nothing: the model is resized on a clone first, and on any
+    /// error the grid is left exactly as it was. Resizing to the current size
+    /// is a no-op.
+    ///
+    /// Randomness is keyed by the flat index `y * width + x`, so a *width*
+    /// change gives surviving cells below the first row new random streams
+    /// from now on (see "Resizing a grid" in docs/lib.md).
+    pub fn resize(&mut self, width: usize, height: usize) -> Result<(), ResizeError> {
+        let total = checked_cells(width, height, self.history_limit)?;
+        if (width, height) == (self.width, self.height) {
+            return Ok(());
+        }
+        let old = (self.width, self.height);
+        let new = (width, height);
+        let cells = remap_blocks(&self.cells, 1, old, new, self.inactive);
+        let model = match &self.model {
+            Some(m) => {
+                let mut fresh = m.boxed_clone();
+                fresh.resize(
+                    old,
+                    &crate::external::GridView {
+                        width,
+                        height,
+                        cells: &cells,
+                        inactive: self.inactive,
+                    },
+                )?;
+                Some(fresh)
+            }
+            None => None,
+        };
+        let hl = self.history_limit;
+        self.ages = remap_blocks(&self.ages, 1, old, new, 0);
+        if hl > 0 {
+            self.history_data = remap_blocks(&self.history_data, hl, old, new, self.inactive);
+            self.history_heads = remap_blocks(&self.history_heads, 1, old, new, 0);
+            self.history_counts = remap_blocks(&self.history_counts, 1, old, new, 0);
+        }
+        self.next_cells = vec![self.inactive; total];
+        self.cells = cells;
+        self.width = width;
+        self.height = height;
+        self.model = model;
+        let (counts, dominant) = recount(&self.cells, self.inactive, &mut self.peak_counts);
+        self.counts_current = counts;
+        self.dominant_type = dominant;
         Ok(())
     }
 
@@ -1151,5 +1208,186 @@ mod tests {
         g_parallel.step();
         clear_min_work_per_chunk_override();
         clear_thread_override();
+    }
+
+    /// A <-> B coin flip that ignores neighbours: A becomes B (and B becomes
+    /// A) with probability 0.5 each step, otherwise it stays. Anything else,
+    /// including Inactive, matches no subrule and stays Inactive.
+    fn coin_flip_rule() -> Rule2D {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        Rule2D {
+            subrules: vec![
+                Rule2DSubrule::new(a, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, Some(0.5), None),
+                Rule2DSubrule::new(a, a, 0, CountOp::Gt, 1, Neighborhood2D::Moore, a, None, None),
+                Rule2DSubrule::new(b, b, 0, CountOp::Gt, 1, Neighborhood2D::Moore, a, Some(0.5), None),
+                Rule2DSubrule::new(b, b, 0, CountOp::Gt, 1, Neighborhood2D::Moore, b, None, None),
+            ],
+        }
+    }
+
+    fn coin_grid(w: usize, h: usize, steps: u64) -> Grid2D {
+        let a = CellType::from("A");
+        let mut g = Grid2D::new(w, h, 3, vec![a; w * h], coin_flip_rule()).with_seed(7);
+        for _ in 0..steps {
+            g.step();
+        }
+        g
+    }
+
+    #[test]
+    fn resize_grow_keeps_the_overlap_and_pads_with_fresh_inactive_cells() {
+        let before = coin_grid(3, 2, 5);
+        let mut g = before.clone();
+        g.resize(5, 4).unwrap();
+        assert_eq!((g.width, g.height, g.step, g.seed), (5, 4, 5, 7));
+        for y in 0..4 {
+            for x in 0..5 {
+                let i = y * 5 + x;
+                if x < 3 && y < 2 {
+                    let o = y * 3 + x;
+                    assert_eq!(g.cell_type(i), before.cell_type(o), "type ({x},{y})");
+                    assert_eq!(g.cell_age(i), before.cell_age(o), "age ({x},{y})");
+                    assert_eq!(g.cell_history(i), before.cell_history(o), "history ({x},{y})");
+                } else {
+                    assert_eq!(g.cell_type(i), g.inactive, "new cell ({x},{y})");
+                    assert_eq!(g.cell_age(i), 0);
+                    assert!(g.cell_history(i).is_empty());
+                }
+            }
+        }
+        let total: u64 = g.counts_current.values().sum();
+        assert_eq!(total, 20);
+        assert_eq!(g.counts_current[&g.inactive.0], 14);
+        assert_eq!(g.next_cells.len(), 20);
+    }
+
+    #[test]
+    fn resize_shrink_crops_right_and_bottom() {
+        let before = coin_grid(6, 4, 5);
+        let mut g = before.clone();
+        g.resize(2, 3).unwrap();
+        assert_eq!((g.width, g.height), (2, 3));
+        for y in 0..3 {
+            for x in 0..2 {
+                assert_eq!(g.cell_type(y * 2 + x), before.cell_type(y * 6 + x));
+                assert_eq!(g.cell_history(y * 2 + x), before.cell_history(y * 6 + x));
+            }
+        }
+        // A peak that happened stays a peak, even though fewer cells remain.
+        for (k, v) in &before.peak_counts {
+            assert!(g.peak_counts[k] >= *v);
+        }
+    }
+
+    #[test]
+    fn resize_to_the_same_size_changes_nothing() {
+        let before = coin_grid(4, 4, 3);
+        let mut g = before.clone();
+        g.resize(4, 4).unwrap();
+        for i in 0..16 {
+            assert_eq!(g.cell_type(i), before.cell_type(i));
+            assert_eq!(g.cell_history(i), before.cell_history(i));
+        }
+        assert_eq!(g.step, before.step);
+    }
+
+    #[test]
+    fn resize_to_zero_is_refused_and_leaves_the_grid_unchanged() {
+        let mut g = coin_grid(4, 4, 3);
+        let err = g.resize(0, 4).unwrap_err();
+        assert!(matches!(err, crate::resize::ResizeError::ZeroSize { .. }));
+        assert_eq!((g.width, g.height, g.step), (4, 4, 3));
+        assert_eq!(g.cells().len(), 16);
+    }
+
+    #[test]
+    fn resize_with_no_history_grows_and_shrinks_and_steps_without_panicking() {
+        // history_limit 0 takes the `if hl > 0` false branch inside resize:
+        // the history buffers stay empty instead of being remapped.
+        let a = CellType::from("A");
+        let mut before = Grid2D::new(3, 2, 0, vec![a; 6], coin_flip_rule()).with_seed(7);
+        for _ in 0..5 {
+            before.step();
+        }
+        assert!(before.history_data.is_empty());
+
+        let mut grown = before.clone();
+        grown.resize(5, 4).unwrap();
+        assert_eq!((grown.width, grown.height), (5, 4));
+        for y in 0..2 {
+            for x in 0..3 {
+                let i = y * 5 + x;
+                let o = y * 3 + x;
+                assert_eq!(grown.cell_type(i), before.cell_type(o), "type ({x},{y})");
+                assert_eq!(grown.cell_age(i), before.cell_age(o), "age ({x},{y})");
+            }
+        }
+        assert!(grown.history_data.is_empty());
+        grown.step(); // must not panic
+
+        let mut shrunk = before.clone();
+        shrunk.resize(2, 1).unwrap();
+        assert_eq!((shrunk.width, shrunk.height), (2, 1));
+        for x in 0..2 {
+            assert_eq!(shrunk.cell_type(x), before.cell_type(x));
+            assert_eq!(shrunk.cell_age(x), before.cell_age(x));
+        }
+        assert!(shrunk.history_data.is_empty());
+        shrunk.step(); // must not panic
+    }
+
+    #[test]
+    fn a_height_only_resize_keeps_every_surviving_cells_random_stream() {
+        let mut reference = coin_grid(4, 4, 4);
+        let mut g = coin_grid(4, 4, 4);
+        g.resize(4, 6).unwrap(); // rows added below: flat indices 0..16 unchanged
+        for _ in 0..6 {
+            reference.step();
+            g.step();
+        }
+        for i in 0..16 {
+            assert_eq!(g.cell_type(i), reference.cell_type(i), "cell {i}");
+            assert_eq!(g.cell_age(i), reference.cell_age(i), "age {i}");
+        }
+    }
+
+    #[test]
+    fn a_width_resize_is_still_deterministic() {
+        let mut g1 = coin_grid(4, 4, 4);
+        let mut g2 = coin_grid(4, 4, 4);
+        g1.resize(6, 4).unwrap();
+        g2.resize(6, 4).unwrap();
+        for _ in 0..6 {
+            g1.step();
+            g2.step();
+        }
+        assert_eq!(g1.cells(), g2.cells());
+    }
+
+    #[test]
+    fn resize_runs_the_default_model_hook() {
+        let mut g = coin_grid(4, 4, 0);
+        g.attach_model(Box::new(crate::external::tests::ConstModel {
+            out_name: "A".into(),
+            event_target: None,
+            attached: false,
+            threshold: 1.0,
+        }))
+        .unwrap();
+        g.resize(5, 5).unwrap();
+        assert!(g.model.is_some());
+    }
+
+    #[test]
+    fn a_model_that_refuses_leaves_the_grid_unchanged() {
+        let mut g = coin_grid(4, 4, 2);
+        g.attach_model(Box::new(crate::external::tests::NoResizeModel)).unwrap();
+        let cells_before = g.cells().to_vec();
+        let err = g.resize(5, 5).unwrap_err();
+        assert!(matches!(err, crate::resize::ResizeError::Model(_)));
+        assert_eq!((g.width, g.height, g.step), (4, 4, 2));
+        assert_eq!(g.cells(), &cells_before[..]);
+        assert!(g.model.is_some());
     }
 }

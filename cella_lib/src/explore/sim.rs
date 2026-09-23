@@ -204,6 +204,15 @@ impl Sim {
         }
     }
 
+    /// Change the grid's size mid-run; see [`Grid2D::resize`] and
+    /// [`Grid1D::resize`]. A 1D grid ignores `height`.
+    pub fn resize(&mut self, width: usize, height: usize) -> Result<(), crate::resize::ResizeError> {
+        match self {
+            Sim::D1(g) => g.resize(width),
+            Sim::D2(g) => g.resize(width, height),
+        }
+    }
+
     /// Set one cell's type in place — the same move a live paint tool makes
     /// (see [`Grid2D::transition_state_and_buffer`]): its age resets to 0 if
     /// the type actually changed, an attached model is told via
@@ -462,5 +471,16 @@ mod tests {
         r.paint(0, x).unwrap();
         assert_eq!(r.cells()[0], x);
         assert!(r.paint(999, x).is_err());
+    }
+
+    #[test]
+    fn resize_forwards_to_the_grid_inside_and_1d_ignores_height() {
+        let mut r = row();
+        r.resize(5, 99).unwrap();
+        assert_eq!(r.dims(), (5, 1));
+
+        let mut s = blinker();
+        s.resize(3, 4).unwrap();
+        assert_eq!(s.dims(), (3, 4));
     }
 }

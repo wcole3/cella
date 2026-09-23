@@ -175,6 +175,17 @@ pub trait ExternalModel: Send + Sync {
     /// [`crate::Grid2D::attach_model`].
     fn attach(&mut self, view: &GridView<'_>) -> Result<(), ModelError>;
 
+    /// The grid changed size, anchored top-left (see [`crate::resize`]).
+    /// Re-fit any per-cell data from the `old` `(width, height)` to the new
+    /// `view`, and leave the model attached to `view`.
+    ///
+    /// Default: re-run [`Self::attach`]. That is right for a model that keeps
+    /// no per-cell data of its own. A model with per-cell layers must
+    /// override it, or `attach` will reject the old layer lengths.
+    fn resize(&mut self, _old: (usize, usize), view: &GridView<'_>) -> Result<(), ModelError> {
+        self.attach(view)
+    }
+
     /// Estimated work per cell in nominal neighbor visits, feeding the
     /// engine's parallel chunk sizing. Defaults to a Moore-1 weight plus the
     /// bookkeeping pass.
@@ -614,7 +625,7 @@ impl Grid2D {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::types::CellType;
     use serde::{Deserialize, Serialize};
@@ -711,6 +722,38 @@ mod tests {
                 }],
                 None => Vec::new(),
             }
+        }
+
+        fn boxed_clone(&self) -> Box<dyn ExternalModel> {
+            Box::new(self.clone())
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    /// Attaches to any grid but refuses every resize, to test that a refused
+    /// resize leaves the grid untouched.
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct NoResizeModel;
+
+    #[typetag::serde(name = "test_no_resize")]
+    impl ExternalModel for NoResizeModel {
+        fn attach(&mut self, _view: &GridView<'_>) -> Result<(), ModelError> {
+            Ok(())
+        }
+
+        fn resize(&mut self, _old: (usize, usize), _view: &GridView<'_>) -> Result<(), ModelError> {
+            Err(ModelError::InvalidParam("this model has a fixed size".into()))
+        }
+
+        fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+            // Keep every cell as it is, so a grid this model steps stays put.
+            for (local, out) in next.iter_mut().enumerate() {
+                *out = ctx.cells[ctx.start + local];
+            }
+            Vec::new()
         }
 
         fn boxed_clone(&self) -> Box<dyn ExternalModel> {

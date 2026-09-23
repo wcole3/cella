@@ -41,6 +41,10 @@ pub fn mix(mut z: u64) -> u64 {
 /// count, or chunk layout — the property that makes stochastic runs
 /// snapshot-testable. Distinct `stream` values give independent draws for the
 /// same cell and step.
+///
+/// `idx` is the cell's flat index (`y * width + x` in 2D). Changing a grid's
+/// width therefore gives most surviving cells a new stream; see "Resizing a
+/// grid" in docs/lib.md.
 #[inline]
 pub fn cell_rand(seed: u64, step: u64, idx: u64, stream: u64) -> f32 {
     let z = mix(seed

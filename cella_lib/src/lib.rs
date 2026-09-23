@@ -33,6 +33,7 @@ pub mod explore;
 pub mod external;
 pub mod grid1d;
 pub mod grid2d;
+pub mod resize;
 pub mod rng;
 pub mod rules;
 pub mod state;
@@ -49,6 +50,7 @@ pub use external::{
 };
 pub use grid1d::Grid1D;
 pub use grid2d::Grid2D;
+pub use resize::ResizeError;
 pub use rules::{
     CountOp, Neighborhood2D, Rule1D, Rule1DSubrule, Rule2D, Rule2DSubrule, RuleError,
     neighborhood_contains,

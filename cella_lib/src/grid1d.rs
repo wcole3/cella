@@ -1,6 +1,7 @@
 //! 1D grid implementation.
 
 use crate::chunking::{OutChunk, split_chunks};
+use crate::resize::{ResizeError, checked_cells, recount, remap_blocks};
 use crate::rules::{
     PackedWolfram, Rule1D, Rule1DPlan, Rule1DSubrule, Sub1DPlan, TypeCounter, apply_counts,
 };
@@ -265,6 +266,35 @@ impl Grid1D {
         self.peak_counts = counts_current.clone();
         self.counts_current = counts_current;
         self.dominant_type = dominant_type;
+        Ok(())
+    }
+
+    /// Change the row to `width` cells mid-run, anchored at the left end.
+    /// Every cell in the overlap keeps its type, age and history; new cells
+    /// are Inactive, with age 0 and no history. `step`, `seed`, `rule` and
+    /// `peak_counts` carry on. In 1D a cell's flat index is its x, so every
+    /// surviving cell keeps its random stream. Resizing to the current width
+    /// is a no-op; a width of 0 is refused and nothing changes.
+    pub fn resize(&mut self, width: usize) -> Result<(), ResizeError> {
+        let total = checked_cells(width, 1, self.history_limit)?;
+        if width == self.width {
+            return Ok(());
+        }
+        let old = (self.width, 1);
+        let new = (width, 1);
+        let hl = self.history_limit;
+        self.cells = remap_blocks(&self.cells, 1, old, new, self.inactive);
+        self.ages = remap_blocks(&self.ages, 1, old, new, 0);
+        if hl > 0 {
+            self.history_data = remap_blocks(&self.history_data, hl, old, new, self.inactive);
+            self.history_heads = remap_blocks(&self.history_heads, 1, old, new, 0);
+            self.history_counts = remap_blocks(&self.history_counts, 1, old, new, 0);
+        }
+        self.next_cells = vec![self.inactive; total];
+        self.width = width;
+        let (counts, dominant) = recount(&self.cells, self.inactive, &mut self.peak_counts);
+        self.counts_current = counts;
+        self.dominant_type = dominant;
         Ok(())
     }
 
@@ -1081,5 +1111,164 @@ mod tests {
             0,
         );
         assert_eq!(out2, CellType::inactive());
+    }
+
+    /// A <-> B coin flip that ignores neighbours, mirroring `Grid2D`'s
+    /// `coin_flip_rule`. `wolfram_code: u128::MAX` matches every possible
+    /// window (see the tests above), so whether a subrule fires depends only
+    /// on `current_type`, not on any neighbour's value — exactly like the 2D
+    /// rule's "count > 0 of its own type" trick.
+    fn coin_flip_rule_1d() -> Rule1D {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        Rule1D {
+            subrules: vec![
+                Rule1DSubrule {
+                    current_type: a,
+                    criteria_type: a,
+                    wolfram_code: u128::MAX,
+                    n: 1,
+                    randomness: Some(0.5),
+                    output_type: b,
+                },
+                Rule1DSubrule {
+                    current_type: a,
+                    criteria_type: a,
+                    wolfram_code: u128::MAX,
+                    n: 1,
+                    randomness: None,
+                    output_type: a,
+                },
+                Rule1DSubrule {
+                    current_type: b,
+                    criteria_type: b,
+                    wolfram_code: u128::MAX,
+                    n: 1,
+                    randomness: Some(0.5),
+                    output_type: a,
+                },
+                Rule1DSubrule {
+                    current_type: b,
+                    criteria_type: b,
+                    wolfram_code: u128::MAX,
+                    n: 1,
+                    randomness: None,
+                    output_type: b,
+                },
+            ],
+        }
+    }
+
+    fn coin_grid_1d(width: usize, steps: u64) -> Grid1D {
+        let a = CellType::from("A");
+        let mut g = Grid1D::new(width, 3, vec![a; width], coin_flip_rule_1d()).with_seed(7);
+        for _ in 0..steps {
+            g.step();
+        }
+        g
+    }
+
+    #[test]
+    fn grid1d_resize_grow_and_shrink_keep_the_overlap() {
+        let before = coin_grid_1d(4, 5);
+
+        let mut grown = before.clone();
+        grown.resize(7).unwrap();
+        assert_eq!(grown.width, 7);
+        for x in 0..4 {
+            assert_eq!(grown.cell_type(x), before.cell_type(x), "type {x}");
+            assert_eq!(grown.cell_age(x), before.cell_age(x), "age {x}");
+            assert_eq!(grown.cell_history(x), before.cell_history(x), "history {x}");
+        }
+        for x in 4..7 {
+            assert_eq!(grown.cell_type(x), grown.inactive, "new cell {x}");
+            assert_eq!(grown.cell_age(x), 0);
+            assert!(grown.cell_history(x).is_empty());
+        }
+        assert_eq!(grown.next_cells.len(), 7);
+
+        let mut shrunk = before.clone();
+        shrunk.resize(2).unwrap();
+        assert_eq!(shrunk.width, 2);
+        for x in 0..2 {
+            assert_eq!(shrunk.cell_type(x), before.cell_type(x));
+            assert_eq!(shrunk.cell_history(x), before.cell_history(x));
+        }
+        for (k, v) in &before.peak_counts {
+            assert!(shrunk.peak_counts[k] >= *v);
+        }
+    }
+
+    #[test]
+    fn grid1d_resize_with_no_history_grows_and_shrinks_and_steps_without_panicking() {
+        // history_limit 0 takes the `if hl > 0` false branch inside resize:
+        // the history buffers stay empty instead of being remapped.
+        let a = CellType::from("A");
+        let mut before = Grid1D::new(4, 0, vec![a; 4], coin_flip_rule_1d()).with_seed(7);
+        for _ in 0..5 {
+            before.step();
+        }
+        assert!(before.history_data.is_empty());
+
+        let mut grown = before.clone();
+        grown.resize(7).unwrap();
+        assert_eq!(grown.width, 7);
+        for x in 0..4 {
+            assert_eq!(grown.cell_type(x), before.cell_type(x), "type {x}");
+            assert_eq!(grown.cell_age(x), before.cell_age(x), "age {x}");
+        }
+        assert!(grown.history_data.is_empty());
+        grown.step(); // must not panic
+
+        let mut shrunk = before.clone();
+        shrunk.resize(2).unwrap();
+        assert_eq!(shrunk.width, 2);
+        for x in 0..2 {
+            assert_eq!(shrunk.cell_type(x), before.cell_type(x));
+            assert_eq!(shrunk.cell_age(x), before.cell_age(x));
+        }
+        assert!(shrunk.history_data.is_empty());
+        shrunk.step(); // must not panic
+    }
+
+    #[test]
+    fn grid1d_resize_to_zero_is_refused() {
+        let mut g = coin_grid_1d(4, 3);
+        let err = g.resize(0).unwrap_err();
+        assert!(matches!(err, crate::resize::ResizeError::ZeroSize { .. }));
+        assert_eq!(g.width, 4);
+        assert_eq!(g.step, 3);
+        assert_eq!(g.cells().len(), 4);
+    }
+
+    #[test]
+    fn grid1d_resize_to_the_same_width_changes_nothing() {
+        let before = coin_grid_1d(5, 3);
+        let mut g = before.clone();
+        g.resize(5).unwrap();
+        for i in 0..5 {
+            assert_eq!(g.cell_type(i), before.cell_type(i));
+            assert_eq!(g.cell_history(i), before.cell_history(i));
+        }
+        assert_eq!(g.step, before.step);
+    }
+
+    #[test]
+    fn grid1d_resize_keeps_random_streams() {
+        let mut reference = coin_grid_1d(8, 4);
+        let mut g = coin_grid_1d(8, 4);
+        g.resize(12).unwrap();
+        for _ in 0..6 {
+            reference.step();
+            g.step();
+        }
+        // Compare only cells whose whole window (range 1 either side) was
+        // already inside the old width, so an edge-vs-interior path switch
+        // near the old right edge can't be mistaken for a broken stream.
+        let range = 1;
+        for i in 0..(8 - range) {
+            assert_eq!(g.cell_type(i), reference.cell_type(i), "cell {i}");
+            assert_eq!(g.cell_age(i), reference.cell_age(i), "age {i}");
+        }
     }
 }
