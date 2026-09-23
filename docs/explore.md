@@ -635,9 +635,12 @@ the running session, and Save simply doesn't touch that. A block is written
 when the loaded file already had one, when you started a run of that mode
 this session, or when you changed one of its settings.
 
-When a block is written, it starts from what was loaded (or from the panel
-as it stood right after load, if nothing was loaded) and then takes just the
-settings you actually changed since then. Anything the tab can't show or
+When a block is written, it starts from what was loaded and then takes just
+the settings you actually changed since then; with nothing loaded, there is
+no starting point to protect, so the block is simply the panel's settings as
+they stand right now — for example, a "match the current grid" objective
+always uses the grid's current mask, never one frozen from an earlier step
+or an earlier grid size. Anything the tab can't show or
 edit — a driver, a free gene, a per-gene `sigma`, an unsupported metric — is
 left exactly as it was, so a file with those extras keeps them on save
 instead of losing them. This is why editing one field, say the member count,

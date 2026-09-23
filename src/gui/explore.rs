@@ -1272,38 +1272,42 @@ impl CellaApp {
         }
     }
 
-    /// The ensemble block Run and Save use: the panel's edits since the last
-    /// load, merged over the loaded block (see [`overlay_json`]). With no
-    /// loaded block, the base is the panel as it was at load.
+    /// The ensemble block Run and Save use. With **no** loaded block, this is
+    /// simply [`Self::panel_ensemble_config`] as it is right now — there is
+    /// nothing to merge over, so nothing from load time is frozen into it (a
+    /// "match the current grid" mask, for instance, always reflects the live
+    /// grid). With a loaded block, it is the panel's edits since the last
+    /// load, merged over that block (see [`overlay_json`]).
     pub(in crate::gui) fn current_ensemble_config(&self) -> EnsembleConfig {
         let now = self.panel_ensemble_config();
+        let Some(base) = self.explore.base_ensemble.as_ref() else {
+            return now;
+        };
         let Some(at_load) = self.explore.panel_at_load.as_ref().map(|b| &b.ensemble) else {
             return now;
         };
-        let Ok(now_v) = serde_json::to_value(&now) else {
-            return now;
-        };
-        let base_v = match &self.explore.base_ensemble {
-            Some(b) => serde_json::to_value(b).unwrap_or_else(|_| at_load.clone()),
-            None => at_load.clone(),
-        };
         // Deserializing can only fail on a value the panel itself produced
         // wrongly; fall back to the panel's own config rather than lose Run.
+        let (Ok(now_v), Ok(base_v)) = (serde_json::to_value(&now), serde_json::to_value(base))
+        else {
+            return now;
+        };
         serde_json::from_value(overlay_json(&base_v, at_load, &now_v)).unwrap_or(now)
     }
 
     /// The evolve block Run and Save use; see [`Self::current_ensemble_config`].
     pub(in crate::gui) fn current_evolve_config(&self) -> Option<EvolveConfig> {
         let now = self.panel_evolve_config()?;
-        let Some(at_load) = self.explore.panel_at_load.as_ref().and_then(|b| b.evolve.as_ref()) else {
+        let Some(base) = self.explore.base_evolve.as_ref() else {
             return Some(now);
         };
-        let Ok(now_v) = serde_json::to_value(&now) else {
+        let Some(at_load) = self.explore.panel_at_load.as_ref().and_then(|b| b.evolve.as_ref())
+        else {
             return Some(now);
         };
-        let base_v = match &self.explore.base_evolve {
-            Some(b) => serde_json::to_value(b).unwrap_or_else(|_| at_load.clone()),
-            None => at_load.clone(),
+        let (Ok(now_v), Ok(base_v)) = (serde_json::to_value(&now), serde_json::to_value(base))
+        else {
+            return Some(now);
         };
         Some(serde_json::from_value(overlay_json(&base_v, at_load, &now_v)).unwrap_or(now))
     }
@@ -1927,6 +1931,53 @@ fn without_masks(v: &serde_json::Value) -> serde_json::Value {
         ),
         Value::Array(a) => Value::Array(a.iter().map(without_masks).collect()),
         other => other.clone(),
+    }
+}
+
+/// Crop or pad top-left with `false`, in place, every `"mask"` array in `v`
+/// (at any depth) whose length equals `old`'s cell count (`old.0 * old.1`),
+/// to `new`'s — the same rule a grid itself resizes by
+/// ([`cella_lib::resize::remap_blocks`]).
+///
+/// A loaded evolve block's "match the current grid" objective carries one
+/// flag per cell of the grid it was saved against (a user's target, not
+/// something read off the live grid — see [`CellaApp::current_evolve_config`]
+/// for the case with no loaded block, which always uses the live grid's
+/// mask instead). After the grid is resized in the GUI, that stale-length
+/// mask must move with it: left alone, a run refuses it ("target mask: wrong
+/// length") and a save writes a file whose mask disagrees with its own width
+/// and height. Recurses like [`without_masks`], but rewrites a mask instead
+/// of stripping it.
+pub(in crate::gui) fn resize_masks(
+    v: &mut serde_json::Value,
+    old: (usize, usize),
+    new: (usize, usize),
+) {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            let remapped = match m.get("mask") {
+                Some(Value::Array(arr)) if arr.len() == old.0 * old.1 => arr
+                    .iter()
+                    .map(Value::as_bool)
+                    .collect::<Option<Vec<bool>>>()
+                    .map(|bools| cella_lib::resize::remap_blocks(&bools, 1, old, new, false)),
+                _ => None,
+            };
+            if let Some(bools) = remapped {
+                m.insert(
+                    "mask".to_string(),
+                    Value::Array(bools.into_iter().map(Value::Bool).collect()),
+                );
+            }
+            for (k, x) in m.iter_mut() {
+                if k != "mask" {
+                    resize_masks(x, old, new);
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| resize_masks(x, old, new)),
+        _ => {}
     }
 }
 
@@ -2566,5 +2617,219 @@ mod tests {
             "nothing applied"
         );
         assert!(test_app().apply_genome(&ok).is_err());
+    }
+
+    #[test]
+    fn resize_masks_remaps_nested_masks_and_leaves_wrong_length_arrays_alone() {
+        let old_mask = vec![true, false, true, false];
+        let mut v = json!({
+            "objective": {
+                "metric": "target_mask",
+                "types": ["A"],
+                "mask": old_mask,
+            },
+            "descriptors": [{"metric": "activity"}],
+            // Named "mask" but the wrong length for the old grid: left as-is.
+            "genes": [{"key": "p0", "mask": [true, true]}],
+        });
+        resize_masks(&mut v, (2, 2), (3, 2));
+        let expected = cella_lib::resize::remap_blocks(&old_mask, 1, (2, 2), (3, 2), false);
+        assert_eq!(v["objective"]["mask"], serde_json::to_value(&expected).unwrap());
+        assert_eq!(v["objective"]["types"], json!(["A"]), "other fields untouched");
+        assert_eq!(v["descriptors"][0]["metric"], "activity", "recursed into arrays");
+        assert_eq!(
+            v["genes"][0]["mask"],
+            json!([true, true]),
+            "a mask of a different length than the old grid is left alone"
+        );
+    }
+
+    /// With no loaded ensemble/evolve block, `current_evolve_config` must
+    /// build the "match the current grid" mask from the grid as it is right
+    /// now, never from a value frozen at scenario load (FI1(a)): the base
+    /// case is simply the panel's own config, unmerged.
+    ///
+    /// The scenario is reloaded *after* picking `MatchGrid` (as the final
+    /// reviewer's repro did): that makes the objective genuinely "untouched"
+    /// afterwards — its `metric` tag already matches `panel_at_load`'s, so
+    /// only the mask differs. Before this fix, `without_masks` made the
+    /// overlay's "did this field change?" check ignore exactly that
+    /// difference, so it kept the load-time mask.
+    #[test]
+    fn current_evolve_config_with_no_base_uses_the_live_grids_mask_not_the_load_time_one() {
+        let mut app = life_app();
+        assert!(app.explore.base_evolve.is_none(), "life_app never loads a file");
+        app.explore.objective.metric = MetricChoice::MatchGrid;
+        app.load_demo_life(); // re-load with MatchGrid already selected
+        app.reconcile_explore_state();
+        let load_time_mask = observation_mask(&app.template_sim().unwrap().0, &app.explore.tracked);
+        app.step_once(); // the Life demo's blinker rotates, moving its Alive cells
+        let live_mask = observation_mask(&app.template_sim().unwrap().0, &app.explore.tracked);
+        assert_ne!(
+            load_time_mask, live_mask,
+            "test setup: the step must actually move the blinker"
+        );
+        let cfg = app.current_evolve_config().unwrap();
+        let Metric::TargetMask { mask, .. } = cfg.objective.unwrap().metric else {
+            panic!("expected a target-mask objective");
+        };
+        assert_eq!(
+            mask, live_mask,
+            "a no-base config must read the CURRENT grid, not the load-time one"
+        );
+    }
+
+    /// FI1(a): after a resize with no loaded block, both `current_evolve_config`
+    /// and (once touched, here by an unrelated field) the saved block carry a
+    /// mask sized for the new grid — reproducing the final reviewer's exact
+    /// repro ("load a scenario, set the objective to MatchGrid, re-load,
+    /// Resize"), where `mask.len()` used to stay at the old grid's cell count.
+    #[test]
+    fn current_evolve_config_mask_length_matches_the_grid_after_a_resize_with_no_base() {
+        use crate::gui::actions::Action;
+        let mut app = life_app();
+        app.explore.objective.metric = MetricChoice::MatchGrid;
+        app.load_demo_life(); // re-load with MatchGrid already selected
+        app.reconcile_explore_state();
+        app.apply_action(Action::Resize { w: 20, h: 12 });
+
+        let cfg = app.current_evolve_config().unwrap();
+        let Metric::TargetMask { mask, .. } = cfg.objective.clone().unwrap().metric else {
+            panic!("expected a target-mask objective");
+        };
+        assert_eq!(
+            mask.len(),
+            20 * 12,
+            "current_evolve_config's mask must fit the resized grid"
+        );
+
+        // Touch evolve on an unrelated field so the block is written, and
+        // check the saved block's mask is sized for the new grid too (the
+        // objective itself is still untouched, same as above).
+        app.explore.evo.generations += 1;
+        let saved = app.evolve_block_for_save().expect("the generations edit touched evolve");
+        let Metric::TargetMask { mask, .. } = saved.objective.unwrap().metric else {
+            panic!("expected a target-mask objective");
+        };
+        assert_eq!(
+            mask.len(),
+            20 * 12,
+            "evolve_block_for_save's mask must fit the resized grid too"
+        );
+    }
+
+    /// A small 2D config whose `evolve.objective` is a `target_mask` of
+    /// `old_w`×`old_h`, for FI1(b): a loaded base's mask is a user's target,
+    /// not the live grid's, and must survive a resize by being remapped, not
+    /// replaced. The rule references "Alive" without ever changing anything,
+    /// just so the type counts as declared (the GUI's tracked-type picker
+    /// only offers declared types).
+    fn write_target_mask_config(old_w: usize, old_h: usize, mask: &[bool]) -> std::path::PathBuf {
+        let initial = vec!["Alive"; old_w * old_h];
+        let cfg = json!({
+            "dim": "2d",
+            "width": old_w,
+            "height": old_h,
+            "history_limit": 0,
+            "initial": initial,
+            "rule": {"subrules": [{
+                "current_type": "Alive",
+                "criteria_type": "Alive",
+                "count": 99,
+                "op": "gt",
+                "range": 1,
+                "neighborhood": "Moore",
+                "randomness": null,
+                "output_type": "Alive",
+            }]},
+            "evolve": {
+                "objective": {
+                    "metric": "target_mask",
+                    "types": ["Alive"],
+                    "mask": mask,
+                },
+            },
+        });
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "cella_gui_target_mask_base_{}_{stamp}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_string(&cfg).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_loaded_target_mask_base_is_resized_top_left_not_replaced_by_the_live_grid() {
+        use crate::gui::actions::Action;
+        let (old_w, old_h) = (5, 4);
+        // Every cell in the actual grid is "Alive", so a mask that matched
+        // the live grid would be all-true; this checkerboard is not, which
+        // lets the last assertion tell "resized" apart from "replaced".
+        let old_mask: Vec<bool> = (0..old_w * old_h).map(|i| i % 2 == 0).collect();
+        let path = write_target_mask_config(old_w, old_h, &old_mask);
+        let mut app = test_app();
+        app.load_config_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(app.explore.base_evolve.is_some(), "the file's evolve block should load");
+
+        let (new_w, new_h) = (8, 6); // grow
+        app.apply_action(Action::Resize { w: new_w, h: new_h });
+
+        let base = app.explore.base_evolve.as_ref().expect("still present after resize");
+        let Metric::TargetMask { mask: base_mask, .. } = base.objective.as_ref().unwrap().metric.clone()
+        else {
+            panic!("expected a target-mask objective");
+        };
+        assert_eq!(base_mask.len(), new_w * new_h, "new length");
+        let expected = cella_lib::resize::remap_blocks(&old_mask, 1, (old_w, old_h), (new_w, new_h), false);
+        assert_eq!(
+            base_mask, expected,
+            "top-left overlap keeps the old values, new cells are false"
+        );
+        for y in 0..old_h {
+            for x in 0..old_w {
+                assert_eq!(
+                    base_mask[y * new_w + x],
+                    old_mask[y * old_w + x],
+                    "({x},{y}) in the overlap"
+                );
+            }
+        }
+        for y in 0..new_h {
+            for x in old_w..new_w {
+                assert!(!base_mask[y * new_w + x], "new column ({x},{y}) is false");
+            }
+        }
+        for y in old_h..new_h {
+            for x in 0..new_w {
+                assert!(!base_mask[y * new_w + x], "new row ({x},{y}) is false");
+            }
+        }
+
+        // Prove it was resized, not replaced: it must still differ from the
+        // live grid's own mask of the same tracked type (every live cell is
+        // "Alive", so its mask is all-true in the old area and all-false in
+        // the new one — nothing like the checkerboard above).
+        let live_mask = observation_mask(&app.template_sim().unwrap().0, &app.explore.tracked);
+        assert_ne!(base_mask, live_mask);
+
+        // The load-time baseline's evolve JSON is remapped the same way. Its
+        // mask started as the panel's own approximation of "match the
+        // current grid" (the live grid's mask at load time, all-true here —
+        // every cell starts "Alive"), not the file's checkerboard, so its
+        // remapped shape matches the resized live grid's mask, not `base_mask`.
+        let baseline_mask = app
+            .explore
+            .panel_at_load
+            .as_ref()
+            .and_then(|b| b.evolve.as_ref())
+            .and_then(|v| v["objective"]["mask"].as_array())
+            .map(|a| a.iter().map(|b| b.as_bool().unwrap()).collect::<Vec<_>>())
+            .expect("the baseline's evolve JSON has an objective mask");
+        assert_eq!(baseline_mask, live_mask);
     }
 }

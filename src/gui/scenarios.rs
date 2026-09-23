@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::actions::SnapshotChoice;
 use super::app::{CellaApp, Dim};
+use super::explore::resize_masks;
 use super::render::{distinct_palette_slots, parse_hex_color};
 use super::state::PendingSnapshotLoad;
 use crate::demos::{
@@ -25,10 +26,17 @@ impl CellaApp {
     /// target is resized the same way, so Reset returns to the resized start
     /// and a save's `initial` matches the new size. All or nothing: if the
     /// live grid or the Reset target refuses, nothing changes and the status
-    /// bar says why.
+    /// bar says why. On success, a loaded evolve block's target mask is
+    /// resized to match, see [`Self::remap_loaded_target_masks`].
     pub(in crate::gui) fn resize_grid(&mut self) {
         let (w, h) = (self.inputs.grid_width.max(1), self.inputs.grid_height.max(1));
-        let result = match self.scenario.dim {
+        let dim = self.scenario.dim;
+        let old = match dim {
+            Some(Dim::D1) => self.scenario.d1.as_ref().map(|g| (g.width, 1)),
+            Some(Dim::D2) => self.scenario.d2.as_ref().map(|g| (g.width, g.height)),
+            None => None,
+        };
+        let result = match dim {
             Some(Dim::D1) => self.resized_1d(w),
             Some(Dim::D2) => self.resized_2d(w, h),
             None => return,
@@ -40,9 +48,36 @@ impl CellaApp {
                 self.edit.undo_stack.clear();
                 self.edit.current_paint_batch = None;
                 self.explore_on_grid_replaced();
+                if let Some(old) = old {
+                    let new = if dim == Some(Dim::D1) { (w, 1) } else { (w, h) };
+                    self.remap_loaded_target_masks(old, new);
+                }
                 self.set_status(format!("Resized grid to {size}"));
             }
             Err(why) => self.set_status(format!("Resize failed: {why}")),
+        }
+    }
+
+    /// After a successful resize, keep a loaded evolve block's target mask
+    /// (see [`resize_masks`]) matching the grid: remap every `"mask"` array
+    /// of the old cell count in the loaded base and in the load-time
+    /// baseline, so a Run doesn't refuse it and a Save doesn't write a file
+    /// whose mask disagrees with its own width and height. A no-base session
+    /// needs nothing here — [`CellaApp::current_evolve_config`] always uses
+    /// the live grid's mask in that case.
+    fn remap_loaded_target_masks(&mut self, old: (usize, usize), new: (usize, usize)) {
+        let remapped_base = self.explore.base_evolve.as_ref().and_then(|base| {
+            let mut v = serde_json::to_value(base).ok()?;
+            resize_masks(&mut v, old, new);
+            serde_json::from_value(v).ok()
+        });
+        if let Some(remapped_base) = remapped_base {
+            self.explore.base_evolve = Some(remapped_base);
+        }
+        if let Some(baseline) = &mut self.explore.panel_at_load
+            && let Some(evolve) = &mut baseline.evolve
+        {
+            resize_masks(evolve, old, new);
         }
     }
 
@@ -478,9 +513,10 @@ mod tests {
     use super::*;
     use crate::gui::actions::Action;
     use crate::gui::actions::SnapshotChoice;
-    use crate::gui::explore::{ExploreMode, SearchChoice};
+    use crate::gui::explore::{ExploreMode, SearchChoice, WorkerCmd, WorkerMsg, spawn_monte_carlo};
     use crate::gui::sim::tests::test_app;
     use cella_lib::config::CellaConfig;
+    use cella_lib::wildfire::WildfireModel;
     use std::path::Path;
 
     fn status(app: &CellaApp) -> String {
@@ -1161,5 +1197,97 @@ mod tests {
             block_json(again.explore.base_ensemble.as_ref().unwrap()),
             block_json(file.ensemble().unwrap())
         );
+    }
+
+    /// FM1: a resize → save → load round trip for a stepped wildfire grid,
+    /// which no test exercised end to end before. Builds the save file the
+    /// same way `save_then_load_after_a_resize_round_trips` does, but through
+    /// `config_for_save` (which also carries any Explore blocks — none here).
+    #[test]
+    fn wildfire_resize_then_save_then_load_round_trips_a_stepped_grid() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_demo.json"));
+        app.step_once();
+        app.step_once();
+        let step_before = app.scenario.d2.as_ref().unwrap().step;
+        app.apply_action(Action::Resize { w: 70, h: 44 });
+        assert!(
+            status(&app).starts_with("Resized"),
+            "the resize should have succeeded, got {:?}",
+            status(&app)
+        );
+
+        let (cfg, _notice) = app.config_for_save().expect("a grid is loaded");
+        let path = unique_temp_path("wildfire_resize_round_trip");
+        cfg.to_file_pretty(&path).expect("write test config");
+
+        let mut again = test_app();
+        again.load_config_from_path(&path);
+        again.resolve_snapshot_load(SnapshotChoice::Resume);
+        let _ = std::fs::remove_file(&path);
+
+        let g = again.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (70, 44, step_before));
+        assert!(g.model.is_some(), "the wildfire model survives the round trip");
+        let elevation_len = again
+            .scenario
+            .d2
+            .as_mut()
+            .unwrap()
+            .model_mut()
+            .unwrap()
+            .as_any_mut()
+            .downcast_mut::<WildfireModel>()
+            .unwrap()
+            .env
+            .elevation
+            .len();
+        assert_eq!(elevation_len, 70 * 44);
+
+        again.reset_to_initial();
+        let g = again.scenario.d2.as_ref().unwrap();
+        assert_eq!((g.width, g.height, g.step), (70, 44, 0));
+        assert!(g.model.is_some(), "the model is present after Reset too");
+    }
+
+    /// FM2: a loaded, driver-bearing ensemble actually runs through the real
+    /// Monte Carlo worker (mirrors `a_real_ensemble_worker_round_trips_and_stops`
+    /// in `src/gui/explore.rs`, which never exercises a config with a driver).
+    #[test]
+    fn a_loaded_driver_bearing_ensemble_runs_through_the_monte_carlo_worker() {
+        let mut app = test_app();
+        app.load_config_from_path(Path::new("configs/2d_wildfire_ensemble.json"));
+        app.apply_action(Action::DismissNotice);
+        // Keep the test fast; setting it also marks the ensemble "edited".
+        app.explore.mc.members = 4;
+        let cfg = app.current_ensemble_config();
+        assert_eq!(cfg.members, 4);
+        assert!(cfg.driver.is_some(), "the loaded driver must still drive the ensemble");
+
+        let (template, sig) = app.template_sim().unwrap();
+        let worker = spawn_monte_carlo(template, cfg, app.tracked_types(), None, sig);
+        let first = worker.rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(matches!(first, WorkerMsg::Probability { steps: 0, .. }));
+        assert!(matches!(
+            worker.rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            WorkerMsg::Done
+        ));
+
+        worker.tx.send(WorkerCmd::RunSteps(3)).unwrap();
+        let mut saw_probability = false;
+        loop {
+            match worker.rx.recv_timeout(Duration::from_secs(30)).unwrap() {
+                WorkerMsg::Probability { cells, .. } => {
+                    saw_probability = true;
+                    assert!(!cells.is_empty());
+                }
+                WorkerMsg::Error(e) => panic!("worker reported an error: {e}"),
+                WorkerMsg::Done => break,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(saw_probability, "the probability map should appear");
+        worker.tx.send(WorkerCmd::Stop).unwrap();
+        worker.join.unwrap().join().unwrap();
     }
 }
