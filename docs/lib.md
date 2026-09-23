@@ -384,6 +384,37 @@ Nothing here duplicates the rest of the file: `width`/`height`/`history_limit`/`
 
 `GridState` is in-memory only, not a file format — see the note under [Core Components](#core-components). If you need a grid's raw per-cell state with no scenario context, `grid.to_cell_states()` still gives you a `Vec<CellState>`, but nothing in the library serializes it directly any more; `CellaConfig` is the one save/load path.
 
+### Resizing a grid
+
+You can change a grid's size in the middle of a run:
+
+```rust
+grid.resize(80, 50)?;            // Grid2D: new width, new height
+row.resize(120)?;                // Grid1D: new width
+sim.resize(80, 50)?;             // Sim: height is ignored for 1D
+```
+
+The top-left corner stays put. Any cell that exists in both the old and the
+new size keeps its type, its age and its history. New cells start Inactive,
+with age 0. The step count, seed, rule and peak counts carry on, so the run
+continues rather than restarting.
+
+If the grid has a model, the model is asked to fit itself to the new size
+(`ExternalModel::resize`). The wildfire model crops or pads its terrain,
+wind and density layers; a new cell copies the nearest old edge cell, so
+the terrain continues instead of dropping off a cliff. It also keeps the
+arrival times it has already worked out. If the model refuses, `resize`
+returns an error and the grid is left exactly as it was.
+
+**Watch out: resizing the width changes the random numbers.** Every random
+draw is keyed by the cell's flat index, `y * width + x`. When the width
+changes, every cell below the first row gets a new index, so from then on it
+draws different random numbers than it would have. The run is still
+repeatable (the same resize at the same step gives the same result), but it
+is no longer the run you would have got without the resize. Changing only
+the height, or resizing a 1D grid, keeps every surviving cell's index and
+therefore its random numbers.
+
 ---
 
 ## Building and Testing

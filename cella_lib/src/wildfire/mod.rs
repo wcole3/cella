@@ -1199,6 +1199,45 @@ impl ExternalModel for WildfireModel {
         Ok(())
     }
 
+    /// Re-fit the per-cell layers to the new size and keep the relaxed
+    /// arrival times. A non-empty layer (`density`, `elevation`, `wind_u`,
+    /// `wind_v`) is cropped, or padded by copying the nearest old cell so
+    /// terrain continues past the old edge; an empty (uniform) layer stays
+    /// empty. Then `attach` rebuilds everything derived (slope, wind
+    /// factors, fuel bases, neighbour offsets). Because `attach` resets the
+    /// arrival table from the cells, the old arrival times are read first
+    /// and written back afterwards, rearranged the same way; new cells get
+    /// +infinity (no path to them yet).
+    fn resize(&mut self, old: (usize, usize), view: &GridView<'_>) -> Result<(), ModelError> {
+        let new = (view.width, view.height);
+        let old_n = old.0 * old.1;
+        for layer in [
+            &mut self.env.density,
+            &mut self.env.elevation,
+            &mut self.env.wind_u,
+            &mut self.env.wind_v,
+        ] {
+            if layer.len() == old_n && old_n > 0 {
+                *layer = crate::resize::remap_edge(layer, old, new);
+            }
+        }
+        let old_arrival: Vec<f32> = self
+            .derived
+            .arrival
+            .iter()
+            .map(|a| f32::from_bits(a.load(Ordering::Relaxed)))
+            .collect();
+        self.attach(view)?;
+        if old_arrival.len() == old_n {
+            self.derived.arrival =
+                crate::resize::remap_blocks(&old_arrival, 1, old, new, f32::INFINITY)
+                    .into_iter()
+                    .map(|v| AtomicU32::new(v.to_bits()))
+                    .collect();
+        }
+        Ok(())
+    }
+
     fn work_per_cell(&self) -> usize {
         // Eight neighbor reads plus the RNG hash, float math, and the engine's
         // separate bookkeeping pass: heavier than a plain threshold visit.
@@ -3448,5 +3487,81 @@ mod tests {
             inactive: CellType::inactive(),
         };
         assert!(m.attach(&view).is_err());
+    }
+
+    // -------- Resize --------
+
+    /// The 64x40 demo scenario, with `edit` applied to its JSON first.
+    fn demo_grid(edit: impl FnOnce(&mut serde_json::Value)) -> crate::Grid2D {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../configs/2d_wildfire_demo.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        edit(&mut v);
+        let cfg: crate::config::CellaConfig = serde_json::from_value(v).unwrap();
+        cfg.build_grid2d().expect("demo builds")
+    }
+
+    fn wildfire(g: &mut crate::Grid2D) -> &mut WildfireModel {
+        g.model_mut().unwrap().as_any_mut().downcast_mut::<WildfireModel>().unwrap()
+    }
+
+    #[test]
+    fn resize_pads_layers_from_the_nearest_edge_and_crops_them() {
+        let mut g = demo_grid(|v| {
+            v["model"]["wildfire"]["env"]["density"] =
+                serde_json::json!((0..2560).map(|i| i as f32 / 2560.0).collect::<Vec<_>>());
+        });
+        let old_elev = wildfire(&mut g).env.elevation.clone();
+        let old_dens = wildfire(&mut g).env.density.clone();
+        g.resize(70, 44).unwrap();
+        let m = wildfire(&mut g);
+        assert_eq!(m.env.elevation.len(), 70 * 44);
+        assert_eq!(m.env.density.len(), 70 * 44);
+        assert!(m.env.wind_u.is_empty() && m.env.wind_v.is_empty(), "uniform stays uniform");
+        // Inside the old area: unchanged.
+        assert_eq!(m.env.elevation[3 * 70 + 5], old_elev[3 * 64 + 5]);
+        // Right pad copies the last old column; bottom pad copies the last old row.
+        assert_eq!(m.env.elevation[3 * 70 + 69], old_elev[3 * 64 + 63]);
+        assert_eq!(m.env.density[43 * 70 + 5], old_dens[39 * 64 + 5]);
+        // Corner copies the old corner.
+        assert_eq!(m.env.elevation[43 * 70 + 69], old_elev[39 * 64 + 63]);
+
+        g.resize(32, 20).unwrap();
+        let m = wildfire(&mut g);
+        assert_eq!(m.env.elevation.len(), 640);
+        assert_eq!(m.env.elevation[19 * 32 + 31], old_elev[19 * 64 + 31]);
+    }
+
+    #[test]
+    fn resize_keeps_arrival_times_under_the_arrival_rule() {
+        let mut g = demo_grid(|v| {
+            v["model"]["wildfire"]["params"]["spread"] = serde_json::json!("arrival");
+        });
+        for _ in 0..10 {
+            g.step();
+        }
+        let before: Vec<u32> = wildfire(&mut g)
+            .derived
+            .arrival
+            .iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .collect();
+        g.resize(70, 44).unwrap();
+        let after: Vec<u32> = wildfire(&mut g)
+            .derived
+            .arrival
+            .iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .collect();
+        assert_eq!(after.len(), 70 * 44);
+        for y in 0..40 {
+            for x in 0..64 {
+                assert_eq!(after[y * 70 + x], before[y * 64 + x], "arrival ({x},{y})");
+            }
+        }
+        assert_eq!(f32::from_bits(after[43 * 70 + 69]), f32::INFINITY);
+        for _ in 0..5 {
+            g.step(); // no panic; slope/wind tables fit the new size
+        }
     }
 }
