@@ -239,6 +239,19 @@ a bug in this page.
   is `SMC_WIND_ROT_GENE`'s half-width. E30b: tests whether the filter can
   learn its way out of a wrong ERA5 daily direction (E41) rather than
   needing the input fixed by hand.
+- **Arm B (the E30b/E44 configuration).** The bundle of five knobs E30b's
+  pilot found beat or tied E33 on every fire (`r7_common.ARM_B` in
+  Round 7's code): `SMC_SPREAD=arrival` (the arrival-time spread rule,
+  above), `SMC_WIND_LAW=rear_focus` (the rear-focus wind law, above),
+  `SMC_STEPS_SCALE=4` (the 4× clock, raising the front-speed cap to
+  6 km/day — see Clock cap, below), `SMC_PRIOR=arrival_x4.json` (a `p0`
+  prior re-derived for that faster clock, log-uniform 0.02–0.6), and
+  `SMC_WIND_ROT_GENE=90` (the wind-direction offset gene, above, at its
+  ±90° half-width). "Arm A" is the same four non-gene knobs without the
+  last one — E30b tested both, to isolate what the clock/prior fix alone
+  bought from what the learned gene added on top. E44 re-ran Arm B at
+  five seeds plus an E37b illumination re-run; the stop rule tripped on
+  Pier, so Arm B is not promoted as of E44.
 - **SMC_DIAG (per-window diagnostics).** Opt-in knob; off (default) adds
   nothing to the report. On, it adds one extra field, `diag`, to every
   scored window's report row in `open`/`assim`/`evolve` mode (all three

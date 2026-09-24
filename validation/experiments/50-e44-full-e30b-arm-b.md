@@ -194,9 +194,10 @@ is `r7_common.verdict()`'s, unedited. Pier's own five seeds, plainly:
 0.534, 0.524, 0.526, 0.538, 0.481 (seeds 0–4) — four of the five sit
 close together (0.524–0.538); seed 4 (0.481) pulls the mean down and
 alone accounts for most of the loss, but even without it the other four
-average 0.5305, still 1.42 E33-sd below E33's 0.535 — beyond the stop
-rule's own 1 sd bar on its own, just not beyond 2 sd. This is not one
-bad seed rescuing an otherwise-tied result.
+average 0.5306 (full-precision per-seed values, not the 3-decimal
+figures just quoted), still 1.39 E33-sd below E33's 0.535 — beyond the
+stop rule's own 1 sd bar on its own, just not beyond 2 sd. This is not
+one bad seed rescuing an otherwise-tied result.
 
 Brier, the four nulls (persistence, Circle, Ellipse, lagged), and final
 contained fraction. Circle, Ellipse, plain persistence and both lagged
@@ -341,9 +342,11 @@ elongation (1.61) by 0.01 — the same margin E37's own "borderline" call
 for Buck used, so this is read the same way: a real but fragile pass,
 not a decisive one. **Brattain** recovers the *size* (no longer an
 em-dash) but not the *shape*: its at-size elongation ceiling is 1.34,
-barely changed from the 1× number, still less than half its observed
-1.83. **Pier** barely moves at all (any-size max 1.31 at 4× vs 1.22 at
-1×, at-size 1.31 vs 1.16) and stays well short of its observed 1.45.
+barely changed from the 1× number, still less than half the stretch the
+observed fire shows beyond circular (0.34 vs 0.83, both measured above
+the axis's own floor of 1.0). **Pier** barely moves at all (any-size
+max 1.31 at 4× vs 1.22 at 1×, at-size 1.31 vs 1.16) and stays well
+short of its observed 1.45.
 Answering the brief's question directly: **of Brattain, Ferguson and
 Pier, only Ferguson now sits inside the reachable wedge — and that pass
 is a 0.01 margin at the exact size threshold, not a comfortable clear.**
@@ -367,8 +370,10 @@ recovering *reach* is not the same as recovering the *right shape at the
 right size*, and only one of the three excluded fires (Ferguson) crosses
 that second, harder bar, narrowly. Brattain's own case is the clearest
 illustration: it has the *widest* elongation range of any fire in the
-whole table (any-size max 4.02, nearly a third of the full 1–4 axis) —
-the model can draw very stretched shapes somewhere in its gene space —
+whole table (any-size max 4.02, already past the top of the archive's
+own [1.0, 4.0] elongation axis — the raw metric, unclamped, same way
+E37's own Brattain "any" figure of 5.52 also exceeds it) — the model can
+draw very stretched shapes somewhere in its gene space —
 but not at the specific size Brattain's own fire reached by day 5. The
 forecast side tells a related but not identical story: Brattain's
 five-seed forecast is a strong win (+5.73 sd), so the filter can fit

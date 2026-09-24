@@ -220,7 +220,7 @@ def run(out_dir, fire, label, env, members=32, mode="assim"):
 
 def _run_map(out_dir, fire, label, env, members=32):
     """One `wildfire_smc map` run (MAP-Elites illumination), niced like
-    every other Round 7 child. Report land in
+    every other Round 7 child. Reports land in
     `out_dir/<fire>_<label>.json`. Row shape mirrors what the Round 6
     illuminate scripts pulled out of a `MapReport` by hand: elite count
     and coverage off `archive.stats`, `labels`/`ranges` off the archive,
