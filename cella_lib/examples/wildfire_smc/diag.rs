@@ -77,7 +77,10 @@ pub(crate) fn median_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -
     if v.is_empty() {
         return None;
     }
-    v.sort_by(|a, b| a.partial_cmp(b).expect("gene values are finite"));
+    // total_cmp (not partial_cmp) so a stray NaN gene value sorts to one
+    // end instead of aborting the whole run -- diag is a read-only
+    // diagnostic, it should never be why a batch panics.
+    v.sort_by(f64::total_cmp);
     let n = v.len();
     Some(if n % 2 == 1 {
         v[n / 2]
@@ -111,21 +114,25 @@ pub(crate) struct HeadFlankCounts {
 }
 
 /// Classifies every cell where `consensus` and `truth` disagree by whether
-/// its displacement from `centroid` has a positive dot product with the
+/// its displacement from `origin` has a positive dot product with the
 /// unit vector at `toward_rad` (the window's ERA5 "toward" bearing,
 /// radians, grid convention: 0 = +x turning toward +y — see
 /// [`cella_lib::wildfire::wind_toward_grid_deg`]): "downwind" if positive,
 /// "cross-wind" otherwise (this bucket also holds ties at exactly zero and
 /// anything upwind — the brief only asks for two buckets, not three).
-/// `consensus`/`truth` and `w` (grid width) must agree with `centroid`'s.
+/// `consensus`/`truth` and `w` (grid width) must agree with `origin`'s.
+/// `origin` is the ignition centroid in every caller ([`centroid`] above,
+/// computed once for the whole run) but this function itself doesn't care
+/// where the point comes from, hence the more generic parameter name (it
+/// used to be called `centroid`, shadowing the function of that name).
 pub(crate) fn head_flank_decompose(
     consensus: &[bool],
     truth: &[bool],
     w: usize,
-    centroid: (f64, f64),
+    origin: (f64, f64),
     toward_rad: f64,
 ) -> HeadFlankCounts {
-    let (cx, cy) = centroid;
+    let (cx, cy) = origin;
     let (tx, ty) = (toward_rad.cos(), toward_rad.sin());
     let mut counts = HeadFlankCounts {
         downwind_miss: 0,

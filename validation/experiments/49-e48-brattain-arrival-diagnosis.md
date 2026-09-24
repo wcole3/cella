@@ -24,8 +24,9 @@ reading, far more than on any other high-growth day. Arm A (no gene)
 misses catastrophically downwind of the ignition centroid at exactly the
 two biggest of those three (days 5 and 6: 52,147 and 86,673 missed
 cells), then spends the rest of the run over-growing in every direction
-instead of catching up on the front (mean member area balloons to 1.3–1.6×
-the observed burned area by day 14–16) — a structural failure, not just a
+instead of catching up on the front (mean member area balloons to
+1.57–1.58× the observed burned area by days 14–16) — a structural
+failure, not just a
 bad day's forecast. Arm B's `wind_rot_deg` gene cuts that downwind miss by
 42–45% on exactly those two windows, and also avoids the late-run
 over-growth (its own area ratio settles at a contained 0.61× instead of
@@ -34,7 +35,7 @@ climbing past 1.5×) — but it helps by a similar or larger margin on day 7
 *exactly* those windows" is too strong a claim for what the data shows.
 And on day 4 (hour 96, the third of the three big-disagreement windows)
 the gene barely helps at all (5% miss reduction) despite that window also
-having the second-largest ERA5/station disagreement in the whole series.
+having the second-worst ERA5/station disagreement of the three.
 
 **Question.** E30b's pilot (`48-e30b-uncapped-clock-direction-gene-pilot.md`)
 found that Arm A (the arrival kernel, rear-focus wind law, 4x clock and
@@ -143,7 +144,7 @@ Days 4, 5 and 6 (hours 96/120/144) are the three windows that carry the
 most burned area (50.6% of the season's total between them) — and they
 are also the three windows, among every window with meaningful growth,
 with by far the largest disagreement between the ERA5 "toward" bearing
-and the station vector mean (83°–139°, vs. 12°–55° on every other
+and the station vector mean (83°–139°, vs. 14.1°–54.6° on every other
 window with ≥ 3,000 cells of growth). Two windows later in the run (hours
 552, 576) show even larger disagreement (144°, 125°) but essentially no
 growth left to get wrong (34 and 24 cells). **This is the strongest, most
@@ -222,7 +223,8 @@ read.
   Ellipse null's per-fire mean Ellipse IoU on Brattain (0.47 pooled over
   the full series, the number E41 called "right" and this campaign's best
   or near-best of the six fires) is consistent with "right on average" —
-  most windows (11 of 21) sit within 12°–55° of the station reading. But
+  most windows (14 of 21) disagree with the station reading by 55° or
+  less. But
   the three windows that carry the most burned area (days 4/5/6, 50.6% of
   the season's total between them) are precisely the three worst-agreeing
   windows among every window with meaningful growth (83°–139°, more than
@@ -253,8 +255,9 @@ read.
   effect flips — Arm B's downwind miss becomes *worse* than Arm A's on
   most of the remaining, near-zero-growth windows, which does not bear on
   the prediction (nothing is left to miss by then) but is worth flagging
-  as a real reversal, not noise: from day 11 on, `Δburn` is under 150
-  cells for 15 of the last 17 windows.
+  as a real reversal, not noise: of the 11 scored windows from day 11 on,
+  `Δburn` is under 150 cells for 10 of them (every one but day 11
+  itself).
 
 **What it means.** The causal chain E30b's pilot couldn't see is visible
 here. Arm A's arrival kernel, driven only by the fixed ERA5 daily-mean
@@ -280,7 +283,7 @@ supports one of them as "targeted." It substantially recovers the
 downwind miss specifically on the two catastrophic days (−42%/−45% on
 days 5/6), which is real, large, and lines up with the prediction. But it
 also avoids Arm A's late-run over-growth altogether — Arm B's area ratio
-*falls* from ~1.0–1.2× (days 3–9) to a flat 0.61× for the entire back
+*falls* from ~0.93–1.17× (days 3–9) to a flat 0.61× for the entire back
 half of the run (days 13–24), rather than climbing past 1.5× the way Arm
 A's does. That second effect looks less like "the gene corrected the
 wind on the bad days" and more like "a population that isn't dragged
@@ -313,8 +316,9 @@ Brattain run (this ran at 2 workers, not 4, so faster than the pilot on
 its own is expected and is not a wall-time comparison across batches).
 The `area_ratio_mean` trajectory above gives a concrete, numbers-backed
 reason for the gap rather than a guess: Arm A's mean member burned area
-climbs to 1.3–1.58× the observed area for days 14–17 of a 24-window run
-(more burning/burned cells for the cellular-automaton step to update
+climbs to 1.52–1.58× the observed area for days 14–17 (already 1.34–1.41×
+on days 12–13, just before) of a 24-window run (more burning/burned
+cells for the cellular-automaton step to update
 every tick, for a large fraction of the run), while Arm B's settles at a
 much smaller, flat 0.61× for the same stretch (days 13–24). A larger,
 still-growing burning set costs more compute per tick under this driver,

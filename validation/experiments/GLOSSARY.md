@@ -58,6 +58,16 @@ a bug in this page.
 - **Miss rate / false-alarm rate.** Of what really burned, the share the
   model missed; of what the model burned, the share that never did. The
   two failure directions that IoU folds into one number.
+- **Head/flank miss decomposition.** Splits the consensus forecast's miss
+  and false-alarm cells (the same two failure directions as above) each
+  into two further counts by where they sit relative to the ignition
+  centroid and the window's wind: `downwind_miss`/`crosswind_miss`
+  (really burned, model didn't say so) and `downwind_false_positive`/
+  `crosswind_false_positive` (model said so, didn't really burn) — see
+  **Ignition centroid** below for what "downwind" is measured from.
+  Answers a narrower question than a plain miss rate: is the model wrong
+  about *how much* burned, or about *which way* it went? `SMC_DIAG=1`.
+  E48.
 - **Arrival MAE.** For cells burned in both maps, the mean absolute error
   in arrival time, in hours. Only meaningful when many cells burned in
   both, so read it beside the area ratio.
@@ -199,6 +209,14 @@ a bug in this page.
   kernel. ×0 = wind off.
 - **Wind from-bearing.** Where the wind comes from, 0° = north, clockwise.
   The weather-report convention, used everywhere since Round 2.
+- **ERA5-vs-station disagreement (angle).** How far apart, in degrees,
+  ERA5's and the station log's wind "toward" bearings are for the same
+  window — the *circular* difference, so 350° and 10° count as 20°
+  apart, not 340°. A small angle means the two inputs agree on which way
+  the wind blew that day; a large one flags a window where trusting the
+  coarse ERA5 daily average alone is a real risk, not a hypothetical
+  one — found on some of Brattain's biggest-growth windows. `SMC_DIAG=1`
+  reports both bearings per window so this can be computed. E48.
 - **Wind source (`SMC_WIND_SOURCE`).** Which weather log the driver reads
   its per-window wind vector from: `era5` (the default — the scenario's
   daily-average reanalysis wind, unchanged behaviour) or `station` — the
@@ -221,6 +239,15 @@ a bug in this page.
   is `SMC_WIND_ROT_GENE`'s half-width. E30b: tests whether the filter can
   learn its way out of a wrong ERA5 daily direction (E41) rather than
   needing the input fixed by hand.
+- **SMC_DIAG (per-window diagnostics).** Opt-in knob; off (default) adds
+  nothing to the report. On, it adds one extra field, `diag`, to every
+  scored window's report row in `open`/`assim`/`evolve` mode (all three
+  share the same scoring loop, so all three carry it) — the ERA5 and
+  station wind vectors for that window, the ensemble's per-window
+  learned-gene medians, and the **head/flank miss decomposition** above.
+  Nothing else in the report changes: a report from a run with
+  `SMC_DIAG` unset is byte-identical to one from before this knob
+  existed. E48.
 - **Spotting.** Embers igniting cells far ahead of the front. Supported,
   off after E7; switched back on, as illumination genes only, in E43.
 - **Spotting genes.** `model.spotting.p_spot` (per-step chance a burning
@@ -407,6 +434,14 @@ a bug in this page.
 - **Growth direction.** Direction from the previous day's burned set to
   the centroid of the new burn. Compared with the wind direction to ask
   whether the fire followed the wind.
+- **Ignition centroid.** The mean (x, y) position of the cells burning at
+  day 0 — one fixed point for the whole run, computed once from the
+  ignition mask, not recomputed window by window. Used as the reference
+  point the **head/flank miss decomposition** measures "downwind" from
+  (a cell counts as downwind if going from the centroid toward that cell
+  is also going the way the window's wind blows), so a cell's
+  downwind/cross-wind label doesn't drift as the fire itself moves.
+  `SMC_DIAG=1`. E48.
 - **Wedge.** E37's finding: the reachable region is small-and-any-shape
   or big-and-round. Big and elongated is unreachable.
 - **LB(U), length-to-breadth ratio.** Anderson (1983)'s empirical fire

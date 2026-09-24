@@ -104,9 +104,12 @@
 //!      above — the fixed knob rotates the input once for everyone, this
 //!      one lets the filter search for a per-member correction to it).
 //!      SMC_DIAG=1 (off; E48/Round 7 Task 3: opt-in per-window diagnostics
-//!      on `open`/`assim`'s `ObsScore` -- a new `diag` field, `None`/
-//!      omitted from the JSON when this is unset so every existing field
-//!      is byte-identical to before this knob existed. See [`diag`] for
+//!      on `ObsScore` -- a new `diag` field, `None`/omitted from the JSON
+//!      when this is unset so every existing field is byte-identical to
+//!      before this knob existed. Emitted by `open`, `assim` and
+//!      `evolve`'s forecast half alike, since all three step through the
+//!      same `modes::open::run` loop (see that module's own doc comment).
+//!      See [`diag`] for
 //!      what it adds: the ERA5 wind vector and (when `station_hourly.json`
 //!      exists for the scenario) the station vector mean for the window,
 //!      the ensemble's per-window median `model.p0`/`wind_scale`/
