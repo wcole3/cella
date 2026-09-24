@@ -1,4 +1,4 @@
-# E44 — five-seed E30b Arm B and E37b at the 4× clock (the promotion test) · forecast: STOP RULE TRIPPED on Pier — Arm B not promoted as tested; E37b (map batch) still pending
+# E44 — five-seed E30b Arm B and E37b at the 4× clock (the promotion test) · REJECTED as tested — stop rule trips on Pier; E37b-at-4× recovers most of the arrival kernel's lost coverage and Ferguson barely enters the wedge, but Brattain and Pier stay outside it
 
 _Round 7 (2026-09-23) · two batches: forecast — `ARM_B` preset, seeds 0–4,
 six fires, `assim` mode, 30 runs at 2 workers; map — `ARM_B` preset, six
@@ -16,26 +16,36 @@ table and `exp37_illuminate.json` (E37) / `exp30_arrival_illuminate.json`
 TEST_PLAN v1.9, §9 · forecast batch: `binary_git b60c032` (clean HEAD,
 verified in all 30 summary rows and all 30 raw reports), load(1 min)
 3.16 at launch → 3.44 at finish, wall time 21466.4 s ≈ 5.96 h at 2
-workers (**shared box — do not compare this wall time against any other
-batch's**) · map batch: `binary_git`/load/wall time [PENDING — filled
-in Result 2] · terms:
+workers · map batch: `binary_git f5da768` (clean HEAD, verified in all 6
+summary rows and all 6 raw reports), load(1 min) 0.65 at launch → 5.73
+at finish, wall time 51313.0 s ≈ 14.25 h at 2 workers (**both wall times:
+shared box, 2 workers, do not compare against each other or against any
+other batch's**) · terms:
 [GLOSSARY.md](GLOSSARY.md)_
 
-**In short.** The forecast half of the promotion test is in, and it is
-a mixed result, not the clean pass the pilot suggested. Four of six
-fires do exactly what the prediction said: Brattain, Chimney and
-Ferguson beat E33 beyond 2 sd (all three by more than 4.5 sd), and Bear
-ties. But Pier — predicted to tie — instead loses to E33 by 4.60 E33-sd
-(0.521 vs E33's 0.535, E33's own sd only 0.003), and Buck — predicted to
-land "within its own sd" — lands at +1.27 sd, a real if modest gain, not
-a tie. Pier's loss is the one that matters: the pre-registered stop rule
-("if the five-seed mean loses to E33 beyond 1 sd on any fire, Arm B is
-not promoted") is written in terms of a *loss* beyond 1 sd, and Pier's
-loss clears that bar more than four times over. **The stop rule has
-tripped.** Per TEST_PLAN v1.9, E45 and E46 still run (they explain the
-pilot regardless of promotion); E47 does not. The map batch (E37b at the
-4× clock) is pre-registered independently of this stop rule and is
-running now — see Result 2 below, added when it finishes.
+**In short.** Both halves of the promotion test are in, and neither is a
+clean pass. Forecast: four of six fires do exactly what the prediction
+said — Brattain, Chimney and Ferguson beat E33 beyond 2 sd (all three by
+more than 4.5 sd), Bear ties — but Pier, predicted to tie, instead loses
+to E33 by 4.60 sd (E33's own sd only 0.003), and Buck, predicted to land
+"within its own sd," lands at +1.27 sd, a real gain but not a tie. The
+pre-registered stop rule ("loses to E33 beyond 1 sd on any fire") trips
+on Pier, more than four times over — **Arm B is not promoted as
+tested**; E45 and E46 still run, E47 does not. Illumination: the 4×
+clock recovers most of the coverage the arrival kernel lost at 1× (on
+three of six fires the 4× archive fills *more* cells than E37's own base
+model; a fourth, Bear, lands just under it), and Brattain and Ferguson
+stop being "unreachable in size" the
+way they were at 1×. But of the three fires E37/E37b's wedge excluded,
+only **Ferguson** now sits inside it, and barely (its model reaches an
+elongation of 1.62 against an observed 1.61, a 0.01 margin at the exact
+size threshold). Brattain and Pier remain outside — Brattain can now
+reach the *size* but not the *shape* (max elongation at that size 1.34
+against an observed 1.83); Pier's reach barely moved at all. Arm B's own
+five-seed sd, the new noise floor for later experiments, is also
+markedly larger than E33's on the two fires with the widest per-seed
+disagreement in the learned `wind_rot_deg` gene — Brattain (8.86×) and
+Pier (7.45×) — with Chimney elevated too but far more modestly (2.63×).
 
 **Question.** Does the full, multi-seed Arm B configuration (arrival
 kernel, rear-focus wind law, 4× clock, the widened `arrival_x4` prior, a
@@ -267,3 +277,170 @@ promoted); E47 does not run. Arm B, as tested here, is **not
 promoted**. The E37b-at-4× map batch is pre-registered independently of
 this stop rule (TEST_PLAN v1.9 requires it regardless of the forecast
 outcome) and is launched below; its own result is reported in Result 2.
+
+## Result 2 — E37b at the 4× clock
+
+Provenance: all 6 summary rows (`exp44_e37b_4x_illuminate.json`) and all
+6 raw reports (`exp44_e37b_4x_illuminate/*.json`) carry `binary_git
+f5da768`, matching the clean HEAD the map batch was launched from (a
+different, later commit than the forecast batch's `b60c032` — the
+Result 1 write-up in between moved `binary_git`, see the "Runner fix"
+provenance note above). Batch: 6 jobs (one per fire), 2 workers,
+load(1 min) 0.65 → 5.73, wall time 51313.0 s ≈ 14.25 h — **far past the
+≈ 1–2 h the pre-registered design estimated**, the opposite direction of
+Result 1's own surprise (the forecast batch ran *faster* than its
+estimate). The 4× clock quadruples the tick count of every one of the
+960 evaluations per fire the same way it does a forecast's ticks, and
+illumination has no cheaper way to sample the gene space than running
+all 960 to completion (shared box, 2 workers — this number is not
+comparable to Result 1's wall time or to E37/E37b's own, which ran at
+the 1× clock).
+
+Coverage of the 400-bin map (20 growth bins × 20 elongation bins), the
+model's maximum elongation at any size and at a size at least as big as
+the real fire's own day-5 growth, next to E37 (base model,
+`39-e37-illuminate-the-fire-model.md`) and E37b at the 1× clock
+(`47-e30-arrival-time-kernel-fires.md`, Result 1) — none re-run, both
+quoted from their own published tables:
+
+| Fire | E37 cells (%) | E37 any | E37 at-size | E37b·1× cells (%) | E37b·1× any | E37b·1× at-size | E37b·4× cells (%) | E37b·4× any | E37b·4× at-size | observed g/e (day 5) | E37 reachable? | E37b·1× reachable? | **E37b·4× reachable?** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Bear | 125 (31%) | 3.19 | 2.03 | 49 (12%) | 2.08 | 1.40 | 116 (29%) | 2.43 | 1.86 | 0.047 / 1.98 | yes | no | **no** |
+| Brattain | 112 (28%) | 5.52 | 1.35 | 32 (8%) | 4.21 | — | 125 (31%) | 4.02 | 1.34 | 0.110 / 1.83 | no | no — unreachable in size | **no** (reachable in size again, still wrong shape) |
+| Buck | 60 (15%) | 1.95 | 1.49 | 29 (7%) | 1.61 | 1.36 | 47 (12%) | 1.96 | 1.49 | 0.058 / 1.50 | borderline | no | **borderline** |
+| Chimney | 48 (12%) | 1.54 | 1.35 | 22 (6%) | 1.19 | 1.04 | 57 (14%) | 1.73 | 1.73 | 0.067 / 1.22 | yes | no | **yes** |
+| Ferguson* | 52 (13%) | 2.06 | 1.38 | 12 (3%) | 1.61 | — | 68 (17%) | 1.91 | 1.62 | 0.080 / 1.61 | no | no — unreachable in size | **borderline — yes, by 0.01** |
+| Pier* | 34 (9%) | 1.39 | 1.15 | 21 (5%) | 1.22 | 1.16 | 32 (8%) | 1.31 | 1.31 | 0.102 / 1.45 | no | no | **no** |
+
+How to read it: "cells (%)" is coverage of the 400-bin map (elites /
+400); the two elongation columns per run are the most stretched fire
+the model made at any size, and at a size at least as big as the real
+fire's own day-5 growth; an em-dash means no elite in the whole
+960-evaluation search reached the observed growth at all — nothing to
+take a maximum of. "Reachable?" follows the same rule
+`39-e37-...md`/`47-e30-...md` used: yes if the at-size elongation meets
+or beats the observed elongation, no if it falls short, "borderline"
+when the two are within about 0.02 of each other (both Buck's E37
+borderline call, 1.49 vs 1.50, and Ferguson's 4× call, 1.62 vs 1.61, are
+0.01 apart). `*` = holdout pair.
+
+**Coverage recovers past E37's own baseline on three of six fires, and
+close to it on a fourth.** The 4× clock does not just partially undo the
+collapse E37b's 1× illumination found — on Brattain, Chimney and
+Ferguson the 4× archive fills *more* cells than E37's own base-model
+archive did (Brattain 125 vs E37's 112; Chimney 57 vs 48; Ferguson 68 vs
+52). Bear (116 vs E37's 125) lands just under it; Buck (47 vs 60) and
+Pier (32 vs 34) recover much less of the gap. Brattain and Ferguson also
+stop being **unreachable in size**: at 1× no elite reached their
+observed day-5 growth at all (the em-dashes above); at 4× an elite does,
+on both.
+
+**But only Ferguson crosses into the wedge, and by the thinnest possible
+margin.** Its at-size elongation ceiling (1.62) beats its observed
+elongation (1.61) by 0.01 — the same margin E37's own "borderline" call
+for Buck used, so this is read the same way: a real but fragile pass,
+not a decisive one. **Brattain** recovers the *size* (no longer an
+em-dash) but not the *shape*: its at-size elongation ceiling is 1.34,
+barely changed from the 1× number, still less than half its observed
+1.83. **Pier** barely moves at all (any-size max 1.31 at 4× vs 1.22 at
+1×, at-size 1.31 vs 1.16) and stays well short of its observed 1.45.
+Answering the brief's question directly: **of Brattain, Ferguson and
+Pier, only Ferguson now sits inside the reachable wedge — and that pass
+is a 0.01 margin at the exact size threshold, not a comfortable clear.**
+
+There is no pre-registered numeric prediction for this half of the
+experiment to check clause by clause (TEST_PLAN v1.9 only requires
+reporting coverage next to E37/E37b and stating whether Brattain,
+Ferguson and Pier now sit inside the wedge); that reporting requirement
+is answered above.
+
+**What it means.** The 4× clock was diagnosed, in
+`47-e30-...md`'s corrected root-cause note, as fixing the clock cap that
+made the *illumination* growth-limited (Brattain's day-5 shape needs
+about 1.9 cells/tick, unreachable at 50 ticks/day even at the prior's
+own edge) without necessarily fixing the forecast's own binding
+constraint (more likely the direction input, per E41). This result is
+consistent with exactly that split: the clock fix does what it was
+diagnosed to do for illumination — coverage recovers, often past E37's
+own baseline, and two fires stop being unreachable in size — but
+recovering *reach* is not the same as recovering the *right shape at the
+right size*, and only one of the three excluded fires (Ferguson) crosses
+that second, harder bar, narrowly. Brattain's own case is the clearest
+illustration: it has the *widest* elongation range of any fire in the
+whole table (any-size max 4.02, nearly a third of the full 1–4 axis) —
+the model can draw very stretched shapes somewhere in its gene space —
+but not at the specific size Brattain's own fire reached by day 5. The
+forecast side tells a related but not identical story: Brattain's
+five-seed forecast is a strong win (+5.73 sd), so the filter can fit
+Brattain well when it is allowed to search over multiple days and
+correct with observations, even though a single 5-day, no-feedback
+illumination run cannot find a matching elite at that exact size and
+shape. Pier is the harder case for the "clock was the fix" story: its
+forecast is the stop rule's own trigger (−4.60 sd) and its illumination
+barely moved, so whatever is wrong with Pier looks less like a clock-cap
+problem and more like the pilot's original, still-unresolved direction
+question.
+
+**Questions this raises.**
+
+- Does Ferguson's 0.01-margin pass hold up under any noise at all — a
+  second seed for the illumination search (MAP-Elites here used a single
+  seed, unlike the forecast's five), or a slightly different gene
+  discretisation? This experiment cannot tell a real pass from a
+  coin-flip at that margin; a repeat run (different seed, mechanism
+  otherwise unchanged) would settle it either way. Open.
+- Is Arm B's own elevated forecast sd on Brattain (8.86× E33's) and Pier
+  (7.45×) actually driven by the wide, sign-disagreeing per-seed spread
+  in the learned `wind_rot_deg` gene reported in Result 1 (Brattain's
+  five-seed medians range −29.9° to +46.2°, crossing zero; Pier's range
+  −43.1° to −3.4°, all negative but far apart)? The correlation is
+  suggestive — the two fires with the widest, most seed-disagreeing
+  rotation medians are also the two with the largest sd inflation — but
+  this experiment did not hold the gene fixed and re-run to test it
+  directly, and Chimney (also a wide, one-sided range, −47.6° to −8.6°)
+  has a far more modest sd ratio (2.63×), so the relationship is not
+  clean. Open; E45's own design (Arm B-σ0, mutation sigma 0 on
+  `wind_rot_deg`) is close to a direct test of this, though it was
+  pre-registered for a different question (mechanism, not variance).
+- Brattain's illumination can reach its observed *size* at 4× but not
+  its *shape*, while its *forecast* wins by 5.73 sd — what does the
+  filter's five-day, observation-corrected fit find that the single
+  5-day blind illumination search does not? Open; a `replay` of
+  Brattain's own forecast posterior genome against the illumination's
+  behaviour axes (the same technique E43's fix used) would show directly
+  whether the filter is finding an elite the search itself missed, or
+  succeeding by a different route (e.g. leaning on days 1–4 more than
+  day 5's exact shape).
+- Pier's illumination barely moved between 1× and 4× (any-size 1.22 →
+  1.31) while five of the other six fires moved substantially — is Pier
+  specifically direction-limited (E41-style) rather than speed/clock-
+  limited, consistent with its forecast being the stop rule's own
+  trigger? Open, not tested directly here.
+- The map batch took ≈ 14.25 h against a ≈ 1–2 h estimate — should the
+  pre-registered design for any later map-mode batch (E47's
+  illumination, if the stop rule permitted it; it does not run here) be
+  re-estimated at roughly the 4× clock's real cost, not the 1× E37/E37b
+  wall time the original estimate was implicitly built on? Open,
+  practical.
+
+**Verdict.** **REJECTED as tested — Arm B is not promoted.** The
+pre-registered stop rule trips on Pier (five-seed mean −4.60 sd against
+E33, more than four times the 1 sd bar, robust even excluding Pier's
+single worst seed). What held: three of six fires beat E33 beyond 2 sd
+exactly as predicted (Brattain, Chimney, Ferguson), Bear ties as
+predicted, and the 4× clock does what `47-e30-...md`'s diagnosis said it
+should for illumination — coverage recovers, on three of six fires past
+E37's own base-model coverage, and two fires (Brattain, Ferguson) stop
+being unreachable in size. What did not hold: Pier meets neither the
+forecast prediction nor the illumination — its reach barely moved and
+its forecast lost badly enough to trigger the stop rule; Buck's forecast
+gain (+1.27 sd) is real but is not "within its own sd" as predicted; and
+of the three fires the wedge excluded, only Ferguson now sits inside it,
+by a 0.01 margin that this experiment cannot itself distinguish from
+noise. Per TEST_PLAN v1.9's consequence text: E45 and E46 still run —
+they explain the pilot's mechanism regardless of promotion, and E45's
+`wind_rot_deg` ablation in particular bears directly on this file's own
+open question about Brattain's and Pier's elevated forecast sd; E47 does
+not run.
+
+**Later.** Not yet revisited.
