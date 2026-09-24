@@ -43,6 +43,7 @@ thing that touches the network^H^H^H^H^H the binary).
 """
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import tempfile
@@ -205,8 +206,60 @@ def run(out_dir, fire, label, env, members=32, mode="assim"):
     batches share the box politely -- everything else (row shape, JSON
     field meanings, the printed one-line summary) is `r5_common.run()`
     itself; this is a thin wrapper, not a copy, so the two never drift
-    apart."""
+    apart. `r5_common.run()` unconditionally parses an `assim`-shaped
+    report (`r["scores"][-1]`, `r["mean_consensus_iou"]`, ...), which a
+    `map`-mode `MapReport` (`cella_lib/examples/wildfire_smc/modes/
+    map.rs`) does not have at all (no `scores` key) -- so `mode="map"`
+    is routed to `_run_map` below instead, the same archive-parsing shape
+    every Round 6 illuminate script used by hand (e.g.
+    `exp_r6_arrival_illuminate.py`)."""
+    if mode == "map":
+        return _run_map(out_dir, fire, label, env, members)
     return _r5.run(out_dir, fire, label, env, members, mode, argv_prefix=NICE_PREFIX)
+
+
+def _run_map(out_dir, fire, label, env, members=32):
+    """One `wildfire_smc map` run (MAP-Elites illumination), niced like
+    every other Round 7 child. Report land in
+    `out_dir/<fire>_<label>.json`. Row shape mirrors what the Round 6
+    illuminate scripts pulled out of a `MapReport` by hand: elite count
+    and coverage off `archive.stats`, `labels`/`ranges` off the archive,
+    the observed fire's own (hours, growth, elongation) series, plus two
+    convenience fields the E37b-style write-up tables need -- the
+    model's maximum elongation at any size, and at a size at least as
+    big as the real fire's day-5 growth (same elite filter
+    `wildfire_smc replay` uses), `None` if no elite reaches that growth
+    at all (nothing to take a maximum of)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rep = out_dir / f"{fire}_{label}.json"
+    full_env = {**os.environ, **_r5.BASE_ENV, **env}
+    argv = [*NICE_PREFIX, str(BIN), str(VAL / "data" / "scenarios" / fire), str(members), "map", str(rep)]
+    subprocess.run(argv, check=True, capture_output=True, env=full_env)
+    r = json.loads(rep.read_text())
+    a = r["archive"]
+    growths = [e["descriptor"][0] for e in a["elites"]]
+    elongs = [e["descriptor"][1] for e in a["elites"]]
+    observed = r.get("observed", [])
+    obs_growth_day5 = observed[-1][1] if observed else float("nan")
+    obs_elong_day5 = observed[-1][2] if observed else float("nan")
+    at_size = [el for g, el in zip(growths, elongs) if g >= obs_growth_day5]
+    row = {
+        "fire": fire, "config": label, "mode": "map", "members": members,
+        "holdout": fire in HOLDOUT,
+        "binary_git": r.get("binary_git", "unknown"), "binary_built_utc": r.get("binary_built_utc", "unknown"),
+        "elites": a["stats"]["elites"], "coverage": a["stats"]["coverage"],
+        "labels": a["labels"], "ranges": a["ranges"],
+        "max_elongation_any_size": max(elongs) if elongs else None,
+        "max_elongation_at_size": max(at_size) if at_size else None,
+        "observed_growth_day5": obs_growth_day5, "observed_elongation_day5": obs_elong_day5,
+        "observed": observed,
+    }
+    at_size_str = "None" if row["max_elongation_at_size"] is None else f"{row['max_elongation_at_size']:.2f}"
+    any_size_str = "None" if row["max_elongation_any_size"] is None else f"{row['max_elongation_any_size']:.2f}"
+    print(f"{fire:14s} {label:24s} map elites {row['elites']:3d} coverage {row['coverage']:.2f} "
+          f"max elong any {any_size_str} at-size {at_size_str} "
+          f"(observed g={obs_growth_day5:.3f} e={obs_elong_day5:.2f})", flush=True)
+    return row
 
 
 def run_all(jobs, out_json, workers=2, load_gate=8.0, gate_sleep=600, skip_binary_check=False):

@@ -24,7 +24,16 @@ pilot), E47 does not.
 `--stage {forecast,map,all}` (default all) selects which batch(es) to
 build jobs for, so the forecast and map batches can be launched
 separately per the "one batch at a time" rule.
+
+Arm B's own five-seed sd per fire is the noise floor every later
+arrival-kernel arm (E45/E46/E47) is judged against from this experiment
+on, so the forecast batch's own `run_all()` summary JSON
+(`exp44_arm_b_5seed_summary.json`) gets a small `arm_b_sd` block added
+after that batch finishes: `{fire: {"mean", "sd", "n"}}`, off
+`r7_common.fire_stats()` on the same rows the write-up's table is built
+from.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -65,4 +74,11 @@ if __name__ == "__main__":
             c.dry_run(jobs, out_json)
     else:
         for jobs, out_json in stages:
-            c.run_all(jobs, out_json, workers=args.workers)
+            rows, summary = c.run_all(jobs, out_json, workers=args.workers)
+            if out_json == FORECAST_OUT:
+                stats = c.fire_stats(rows)
+                summary["arm_b_sd"] = {
+                    fire: {"mean": mean, "sd": sd, "n": n} for fire, (mean, sd, n) in stats.items()
+                }
+                summary_path = c.EXP / out_json.replace(".json", "_summary.json")
+                summary_path.write_text(json.dumps(summary, indent=1))
