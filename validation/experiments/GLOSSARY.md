@@ -328,6 +328,15 @@ a bug in this page.
 - **Posterior trajectory.** The posterior tracked day by day instead of
   only at the end — the population's median (and cross-seed sd) of a
   knob at each observation, from day 1 through the final day. E42.
+- **IQR (interquartile range) / IQR trend.** A gene's spread across the
+  ensemble's members at one window: the middle value minus the bottom
+  quarter's value (Q3 − Q1 of the members' values, linear-interpolation
+  quantiles). Unlike sd, one outlier member cannot pull it far. Read
+  window over window as the "IQR trend": if a gene is *learning* one
+  correct value, its IQR should narrow as the filter converges; if a
+  gene is carrying per-member *diversity* the filter keeps (see Angular
+  diversity, below), its IQR should stay wide. `wind_rot_deg_iqr`,
+  `SMC_DIAG=1` (per-window diagnostics, above), E45.
 - **Hazard.** One day's own probability of something happening — here,
   the chance *that specific day* rolls a member "contained" — as
   opposed to the running total, see Cumulative probability. E42.
@@ -370,6 +379,14 @@ a bug in this page.
   proportional to weight. Children keep the parent's grid; you cannot
   redraw the past.
 - **σ (sigma).** Mutation size, as a share of each knob's range.
+- **Per-gene sigma.** A `sigma` set on one gene's own spec instead of the
+  engine's shared default — it overrides the engine's σ for that gene
+  only, every other gene still mutates at the engine's σ. `sigma: 0`
+  freezes that one gene: each member keeps exactly the value it drew at
+  birth for the rest of the run (resampling still copies it, so
+  selection still acts on it — only mutation stops). `SMC_WIND_ROT_
+  SIGMA` (E45) is this mechanism applied to `wind_rot_deg`, isolating
+  angular diversity from learning (see Angular diversity, below).
 - **Immigrants.** Share of children (20 % by default) that get fresh
   knobs from the prior instead of a parent's. Keeps the crowd from
   becoming clones. They inherit their parent's *state* (grid, contained

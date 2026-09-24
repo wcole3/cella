@@ -59,12 +59,26 @@ const SPOT_DIST_HI: f64 = 20.0;
 /// the list entirely, so [`cella_lib::wildfire::driver::WildfireDriver::apply`]
 /// never sees a value for it and every member's wind direction is exactly
 /// the forcing's own, unchanged (the pre-E30b behaviour).
+///
+/// `wind_rot_sigma` (Round 7 Task 5: `SMC_WIND_ROT_SIGMA`) is a per-gene
+/// mutation-size override for `wind_rot_deg` only, applied to the gene
+/// [`wind_rot_gene`] just added — `None` (the default) leaves the gene's
+/// `sigma` unset, i.e. it mutates at the engine's own sigma exactly as
+/// before this knob existed (byte-identical reports). `Some(0.0)` (E45's
+/// Arm B-σ0) freezes the gene: each member keeps the rotation it was born
+/// with for the rest of the run, so the ensemble's per-member angular
+/// *diversity* survives while the *learning* half of the gene (mutating
+/// toward a better bearing) is switched off — see
+/// [`cella_lib::explore::genome::GeneSpace::resolve`]'s per-gene `sigma`,
+/// which accepts `0.0` for exactly this. Has no effect when
+/// `wind_rot_gene` is `None` (nothing to attach a sigma override to).
 pub(crate) fn build_genes(
     prior: Vec<GeneSpec>,
     contain: bool,
     tau_off: bool,
     spot: bool,
     wind_rot_gene: Option<f64>,
+    wind_rot_sigma: Option<f64>,
 ) -> Vec<GeneSpec> {
     let mut genes = prior;
     if contain {
@@ -79,7 +93,10 @@ pub(crate) fn build_genes(
         genes.push(GeneSpec::range(GENE_SPOT_DIST, SPOT_DIST_LO, SPOT_DIST_HI));
     }
     if let Some(h) = wind_rot_gene {
-        genes.push(GeneSpec::range(GENE_WIND_ROT_DEG, -h, h));
+        genes.push(GeneSpec {
+            sigma: wind_rot_sigma,
+            ..GeneSpec::range(GENE_WIND_ROT_DEG, -h, h)
+        });
     }
     genes
 }
@@ -208,7 +225,7 @@ mod spot_gene_tests {
 
     #[test]
     fn without_smc_spot_the_gene_list_and_config_are_unchanged() {
-        let genes = build_genes(default_genes(), false, false, false, None);
+        let genes = build_genes(default_genes(), false, false, false, None, None);
         assert!(genes.iter().all(|g| g.key != GENE_SPOT_P && g.key != GENE_SPOT_DIST));
 
         let cfg = tiny_config();
@@ -224,7 +241,7 @@ mod spot_gene_tests {
 
     #[test]
     fn smc_spot_adds_both_spotting_genes_with_the_documented_ranges() {
-        let genes = build_genes(default_genes(), false, false, true, None);
+        let genes = build_genes(default_genes(), false, false, true, None, None);
         let p_spot = genes
             .iter()
             .find(|g| g.key == GENE_SPOT_P)
@@ -245,7 +262,7 @@ mod spot_gene_tests {
 
     #[test]
     fn smc_spot_combines_with_contain_and_tau_off() {
-        let genes = build_genes(default_genes(), true, true, true, None);
+        let genes = build_genes(default_genes(), true, true, true, None, None);
         let keys: Vec<&str> = genes.iter().map(|g| g.key.as_str()).collect();
         assert!(keys.contains(&GENE_CONTAIN_A));
         assert!(keys.contains(&GENE_CONTAIN_B));
@@ -397,7 +414,7 @@ mod e30b_wind_rot_gene_tests {
 
     #[test]
     fn without_smc_wind_rot_gene_the_gene_list_is_unchanged() {
-        let genes = build_genes(default_genes(), true, true, false, None);
+        let genes = build_genes(default_genes(), true, true, false, None, None);
         assert!(
             genes.iter().all(|g| g.key != GENE_WIND_ROT_DEG),
             "wind_rot_deg must stay out of the list unless SMC_WIND_ROT_GENE is set"
@@ -406,7 +423,7 @@ mod e30b_wind_rot_gene_tests {
 
     #[test]
     fn smc_wind_rot_gene_adds_the_gene_at_the_requested_half_width() {
-        let genes = build_genes(default_genes(), true, true, false, Some(90.0));
+        let genes = build_genes(default_genes(), true, true, false, Some(90.0), None);
         let g = genes
             .iter()
             .find(|g| g.key == GENE_WIND_ROT_DEG)
@@ -423,11 +440,62 @@ mod e30b_wind_rot_gene_tests {
 
     #[test]
     fn a_different_half_width_is_reflected_in_the_range() {
-        let genes = build_genes(default_genes(), false, false, false, Some(15.0));
+        let genes = build_genes(default_genes(), false, false, false, Some(15.0), None);
         let g = genes
             .iter()
             .find(|g| g.key == GENE_WIND_ROT_DEG)
             .expect("wind_rot_deg gene present");
         assert_eq!(g.range, Some([-15.0, 15.0]));
+    }
+
+    /// Round 7 Task 5 (E45): `SMC_WIND_ROT_SIGMA` unset (`None`) must leave
+    /// the `wind_rot_deg` gene spec's `sigma` field unset too -- the Task 1
+    /// acceptance property (unset ⇒ byte-identical reports) depends on this,
+    /// since `GeneSpec.sigma` is what would otherwise get serialised into
+    /// `genes` in the report.
+    #[test]
+    fn smc_wind_rot_sigma_unset_leaves_the_gene_spec_unchanged() {
+        let genes = build_genes(default_genes(), true, true, false, Some(90.0), None);
+        let g = genes
+            .iter()
+            .find(|g| g.key == GENE_WIND_ROT_DEG)
+            .expect("wind_rot_deg gene present");
+        assert_eq!(g.sigma, None, "unset SMC_WIND_ROT_SIGMA must not set a sigma override");
+    }
+
+    /// `SMC_WIND_ROT_SIGMA=0` (Arm B-σ0) must land as a per-gene `sigma`
+    /// override on `wind_rot_deg` only -- every other gene in the same
+    /// list (e.g. `model.p0`) must keep its own `sigma` unset, since the
+    /// override is Task 5's per-gene mechanism, not a change to the
+    /// engine's own default sigma.
+    #[test]
+    fn smc_wind_rot_sigma_sets_a_per_gene_override_on_wind_rot_deg_only() {
+        let genes = build_genes(default_genes(), false, false, false, Some(90.0), Some(0.0));
+        let rot = genes
+            .iter()
+            .find(|g| g.key == GENE_WIND_ROT_DEG)
+            .expect("wind_rot_deg gene present");
+        assert_eq!(rot.sigma, Some(0.0));
+        assert_eq!(rot.range, Some([-90.0, 90.0]), "sigma does not disturb the range");
+        for other in genes.iter().filter(|g| g.key != GENE_WIND_ROT_DEG) {
+            assert_eq!(
+                other.sigma, None,
+                "SMC_WIND_ROT_SIGMA must not touch any gene but wind_rot_deg ({})",
+                other.key
+            );
+        }
+    }
+
+    /// `SMC_WIND_ROT_SIGMA` set without `SMC_WIND_ROT_GENE` has nothing to
+    /// attach a sigma override to -- the gene stays out of the list
+    /// entirely, same as with both knobs unset.
+    #[test]
+    fn smc_wind_rot_sigma_has_no_effect_when_the_gene_is_absent() {
+        let genes = build_genes(default_genes(), false, false, false, None, Some(0.0));
+        assert!(
+            genes.iter().all(|g| g.key != GENE_WIND_ROT_DEG),
+            "wind_rot_deg must stay out of the list when SMC_WIND_ROT_GENE is unset, \
+             regardless of SMC_WIND_ROT_SIGMA"
+        );
     }
 }

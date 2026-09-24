@@ -298,6 +298,7 @@ pub(crate) fn run(
                     wind_scale_median: diag::median_gene(&genomes, GENE_WIND_SCALE)
                         .unwrap_or(1.0),
                     wind_rot_deg_median: diag::median_gene(&genomes, GENE_WIND_ROT_DEG),
+                    wind_rot_deg_iqr: diag::iqr_gene(&genomes, GENE_WIND_ROT_DEG),
                     downwind_miss: counts.downwind_miss,
                     crosswind_miss: counts.crosswind_miss,
                     downwind_false_positive: counts.downwind_false_positive,

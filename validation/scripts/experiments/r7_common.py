@@ -60,7 +60,7 @@ __all__ = [
     "BIN", "EXP", "FIRES", "HOLDOUT", "VAL", "REPO", "PRIOR", "ARM_B", "NICE_PREFIX",
     "arg_parser", "command_for", "dry_run", "run", "run_all",
     "check_binary_git", "load_1min", "wait_for_load",
-    "fire_stats", "verdict", "summary_table", "e33_baseline",
+    "fire_stats", "verdict", "summary_table", "e33_baseline", "arm_b_baseline",
 ]
 
 REPO = Path(__file__).resolve().parents[3]
@@ -323,6 +323,43 @@ def e33_baseline(value_key="mean_consensus_iou"):
         stats = fire_stats(rows, value_key)
         return {fire: (mean, sd) for fire, (mean, sd, _n) in stats.items()}
     return dict(_E33_FALLBACK)
+
+
+# Arm B's own five-seed sd (exp44_arm_b_5seed_summary.json's "arm_b_sd"
+# block, exp_r7_e44.py's forecast batch, binary_git b60c032) -- the noise
+# floor every arrival-kernel arm from E45 on is judged against
+# (TEST_PLAN.md v1.9, "Noise floor for all six"), used only if that
+# summary JSON is not present on disk (results/experiments is gitignored,
+# same reason _E33_FALLBACK exists above).
+_ARM_B_FALLBACK = {
+    "Bear_2020": (0.47285919911915464, 0.0053476183233077705),
+    "Brattain_2020": (0.4374735867318865, 0.03392424393899961),
+    "Buck_2017": (0.6397036656372039, 0.00538794378529568),
+    "Chimney_2016": (0.489335016243905, 0.03077702875196609),
+    "Ferguson_2018": (0.3859720996337302, 0.013614755532273325),
+    "Pier_2017": (0.5207486354935142, 0.022770117809419003),
+}
+
+
+def arm_b_baseline():
+    """{fire: (mean, sd)}, Arm B's own five-seed noise floor from E44's
+    forecast batch (`exp44_arm_b_5seed_summary.json`'s `arm_b_sd` block --
+    written by exp_r7_e44.py right after that batch's run_all() returns,
+    off r7_common.fire_stats() on the same rows E44's own table is built
+    from). This is the baseline every arrival-kernel arm (E45, E46, E47,
+    E49) is judged against from E44 on (TEST_PLAN.md v1.9, "Noise floor
+    for all six"), in place of e33_baseline() above -- pass this to
+    summary_table()'s `baseline` argument instead. Falls back to
+    _ARM_B_FALLBACK (the published numbers, same values
+    `50-e44-full-e30b-arm-b.md`'s Result 1 table reports to three
+    decimals) if the summary JSON is not present on disk."""
+    path = EXP / "exp44_arm_b_5seed_summary.json"
+    if path.exists():
+        summary = json.loads(path.read_text())
+        block = summary.get("arm_b_sd")
+        if block:
+            return {fire: (v["mean"], v["sd"]) for fire, v in block.items()}
+    return dict(_ARM_B_FALLBACK)
 
 
 def verdict(delta_sd):

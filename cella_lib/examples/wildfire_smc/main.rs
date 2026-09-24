@@ -103,6 +103,15 @@
 //!      top of any fixed SMC_WIND_ROT_DEG rotation of the whole schedule
 //!      above — the fixed knob rotates the input once for everyone, this
 //!      one lets the filter search for a per-member correction to it).
+//!      SMC_WIND_ROT_SIGMA=<f64> (unset; Round 7 Task 5/E45: a per-gene
+//!      mutation-size override on `wind_rot_deg` only, no effect unless
+//!      SMC_WIND_ROT_GENE is also set — see [`priors::build_genes`].
+//!      Unset leaves the gene's sigma at the engine's own default
+//!      (byte-identical reports to before this knob existed).
+//!      SMC_WIND_ROT_SIGMA=0 freezes the gene at each member's birth
+//!      draw — resampling still copies it and selection still acts on
+//!      it, only mutation stops — isolating per-member angular
+//!      *diversity* from the *learning* half of the gene).
 //!      SMC_DIAG=1 (off; E48/Round 7 Task 3: opt-in per-window diagnostics
 //!      on `ObsScore` -- a new `diag` field, `None`/omitted from the JSON
 //!      when this is unset so every existing field is byte-identical to
@@ -114,7 +123,10 @@
 //!      exists for the scenario) the station vector mean for the window,
 //!      the ensemble's per-window median `model.p0`/`wind_scale`/
 //!      `wind_rot_deg` (the last `None` unless SMC_WIND_ROT_GENE is set),
-//!      and a head-vs-flank decomposition of the consensus-vs-truth miss
+//!      the per-window interquartile range (spread) of `wind_rot_deg`
+//!      (Round 7 Task 5/E45: `wind_rot_deg_iqr`, same "`None` unless the
+//!      gene is in this run's list" rule as the median beside it), and a
+//!      head-vs-flank decomposition of the consensus-vs-truth miss
 //!      and false-positive cells (downwind of the ignition centroid, by
 //!      the window's ERA5 "toward" direction, vs cross/upwind).
 //!
@@ -223,6 +235,7 @@ fn main() {
         knobs.tau_off,
         knobs.spot,
         knobs.wind_rot_gene,
+        knobs.wind_rot_sigma,
     );
 
     let mut sc: Scenario = load(&dir.join("scenario.json"));

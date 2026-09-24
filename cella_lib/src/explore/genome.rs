@@ -31,6 +31,11 @@
 //! with probability `sigma`; a choice is redrawn with probability `sigma`;
 //! in a bit-string about `8 × sigma` bits flip whatever its length (one or
 //! two at the default 0.2). A per-gene `sigma` overrides the engine's.
+//! `sigma: 0` is allowed for a per-gene override (unlike the engine's own
+//! `sigma`, which must stay positive) and freezes that one gene: every
+//! Gaussian step, flip and redraw above becomes a no-op at `sigma = 0`, so
+//! a member keeps exactly the value it was born with — selection can still
+//! act on that value (resampling still copies it), only mutation stops.
 
 use std::collections::BTreeMap;
 
@@ -72,7 +77,9 @@ pub struct GeneSpec {
     /// Allowed options of a choice gene; a subset of the knob's options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choices: Option<Vec<String>>,
-    /// Per-gene mutation size, overriding the engine's `sigma`.
+    /// Per-gene mutation size, overriding the engine's `sigma`. `0` is
+    /// allowed here (freezes this gene at its birth draw; see the module
+    /// doc comment) even though the engine's own `sigma` must be positive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sigma: Option<f64>,
 }
@@ -383,9 +390,9 @@ impl GeneSpace {
                 return Err(invalid(key, "listed twice"));
             }
             if let Some(s) = spec.sigma
-                && !(s > 0.0 && s.is_finite())
+                && !(s >= 0.0 && s.is_finite())
             {
-                return Err(invalid(key, "sigma must be a positive number"));
+                return Err(invalid(key, "sigma must be a non-negative number"));
             }
             if is_prefixed(key) {
                 let keys = expand_key(key, &descs);
@@ -1132,6 +1139,45 @@ mod tests {
             "not an allowed choice: first option"
         );
         assert_eq!(wild.0[4], ParamValue::Choice("off".into()));
+    }
+
+    /// Round 7 Task 5 (E45's `SMC_WIND_ROT_SIGMA=0`): a per-gene `sigma` of
+    /// exactly `0.0` must resolve (not be rejected the way a negative
+    /// sigma is) and must freeze that one gene under repeated mutation --
+    /// every member keeps exactly the value it was born with -- while a
+    /// second gene with no override in the same space keeps mutating
+    /// normally at the engine's own sigma. This is the library-level half
+    /// of the "does the library reject sigma 0" question E45's brief asks;
+    /// it does not (this test is the acceptance check for that fix).
+    #[test]
+    fn a_per_gene_sigma_of_zero_is_accepted_and_freezes_that_gene_only() {
+        let sim = life();
+        let frozen = spec(r#"{"key": "q", "range": [-2.0, 2.0], "sigma": 0.0}"#);
+        assert_eq!(frozen.sigma, Some(0.0));
+        let specs = vec![
+            frozen,
+            GeneSpec::range("rule.subrules[0].count", 1.0, 6.0),
+        ];
+        let space = GeneSpace::resolve(&specs, &sim, &[], &[])
+            .expect("sigma: 0.0 must resolve, unlike a negative sigma");
+        let mut rng = Rng::new(11);
+        let mut g = Genome(vec![ParamValue::Float(0.75), ParamValue::Int(3)]);
+        let born = g.clone();
+        for _ in 0..200 {
+            // Engine sigma 0.5 would move an unfrozen float gene a lot over
+            // 200 mutations; the frozen gene (index 0) must never move.
+            space.mutate(&mut rng, &mut g, 0.5);
+            assert_eq!(
+                g.0[0], born.0[0],
+                "sigma: 0.0 must be a no-op on the gene it overrides"
+            );
+        }
+        // The other gene (no per-gene override) did mutate at the engine's
+        // sigma -- confirms the freeze is per-gene, not a global accident.
+        assert_ne!(
+            g.0[1], born.0[1],
+            "the non-overridden gene should have moved under 200 mutations at sigma 0.5"
+        );
     }
 
     #[test]

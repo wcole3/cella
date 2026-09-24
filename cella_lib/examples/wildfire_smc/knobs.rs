@@ -47,6 +47,11 @@ pub(crate) struct Knobs {
     pub(crate) contain: bool,
     pub(crate) tau_off: bool,
     pub(crate) wind_rot_gene: Option<f64>,
+    /// Round 7 Task 5 (E45): per-gene mutation-size override on
+    /// `wind_rot_deg` only (`SMC_WIND_ROT_SIGMA`), no effect unless
+    /// `wind_rot_gene` is also set. `None` (unset) leaves the gene's sigma
+    /// at the engine's own default. See `priors::build_genes`.
+    pub(crate) wind_rot_sigma: Option<f64>,
     pub(crate) spread: Option<String>,
     pub(crate) wind_law: Option<String>,
     pub(crate) c2: Option<f64>,
@@ -78,6 +83,7 @@ impl Knobs {
             contain: env_f64("SMC_CONTAIN", 0.0) > 0.0,
             tau_off: env_f64("SMC_TAU_OFF", 0.0) > 0.0,
             wind_rot_gene: env_f64_opt("SMC_WIND_ROT_GENE"),
+            wind_rot_sigma: env_f64_opt("SMC_WIND_ROT_SIGMA"),
             spread: std::env::var("SMC_SPREAD").ok(),
             wind_law: std::env::var("SMC_WIND_LAW").ok(),
             c2: env_f64_opt("SMC_C2"),

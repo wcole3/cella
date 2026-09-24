@@ -4,14 +4,17 @@
 //!
 //! Three things live here: the ensemble's per-window learned-gene medians
 //! (`median_gene`, since [`cella_lib::Ensemble::genome_stats`] gives mean/
-//! sd/min/max but not a median), the ignition centroid and a head-vs-flank
-//! classifier for the consensus-vs-truth miss and false-positive cells
-//! (`centroid`, `head_flank_decompose`), and the per-window diagnostic row
-//! itself (`WindowDiag`). The ERA5/station wind vectors for a window are
-//! read by the caller (`modes::open::run` already has the ERA5 entry in
-//! hand; the station log is loaded once via [`crate::nulls::load_station`]
-//! and read per window via [`crate::nulls::station_vector_mean`]) and
-//! passed straight into `WindowDiag`, not recomputed here.
+//! sd/min/max but not a median) and spread (`iqr_gene`, Round 7 Task 5:
+//! the interquartile range -- Q3 minus Q1 -- of a gene over the current
+//! members, a robust width that (unlike sd) is not pulled around by one
+//! outlier member), the ignition centroid and a head-vs-flank classifier
+//! for the consensus-vs-truth miss and false-positive cells (`centroid`,
+//! `head_flank_decompose`), and the per-window diagnostic row itself
+//! (`WindowDiag`). The ERA5/station wind vectors for a window are read by
+//! the caller (`modes::open::run` already has the ERA5 entry in hand; the
+//! station log is loaded once via [`crate::nulls::load_station`] and read
+//! per window via [`crate::nulls::station_vector_mean`]) and passed
+//! straight into `WindowDiag`, not recomputed here.
 
 use std::collections::BTreeMap;
 
@@ -43,6 +46,16 @@ pub(crate) struct WindowDiag {
     /// `None` unless `SMC_WIND_ROT_GENE` is set (Arm A has no such gene).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) wind_rot_deg_median: Option<f64>,
+    /// Round 7 Task 5 (E45): interquartile range (Q3 − Q1) of `wind_rot_deg`
+    /// over the ensemble's members at this window -- the posterior
+    /// *spread*, as opposed to `wind_rot_deg_median`'s central tendency.
+    /// `None` under the same condition as `wind_rot_deg_median` (the gene
+    /// absent from this run's gene list), same "absent means not part of
+    /// this run" convention as the median field beside it. A learned
+    /// bearing should narrow this over the windows of a run; per-member
+    /// angular diversity that survives selection should not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) wind_rot_deg_iqr: Option<f64>,
     /// Truth-1/consensus-0 cells whose displacement from the ignition
     /// centroid has a positive dot product with the window's ERA5 "toward"
     /// vector.
@@ -65,7 +78,10 @@ pub(crate) struct WindowDiag {
 /// [`cella_lib::Ensemble::genome_stats`], which this complements: that
 /// gives mean/sd/min/max, this gives the median the mean can hide a skew
 /// behind.
-pub(crate) fn median_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Option<f64> {
+/// The numeric values of `key` across `genomes`, sorted. Shared by
+/// `median_gene` and `iqr_gene` so both read the same "absent gene" and
+/// NaN-sorting rules from one place.
+fn sorted_gene_values(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Vec<f64> {
     let mut v: Vec<f64> = genomes
         .iter()
         .filter_map(|g| match g.get(key) {
@@ -74,19 +90,61 @@ pub(crate) fn median_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -
             _ => None,
         })
         .collect();
-    if v.is_empty() {
-        return None;
-    }
     // total_cmp (not partial_cmp) so a stray NaN gene value sorts to one
     // end instead of aborting the whole run -- diag is a read-only
     // diagnostic, it should never be why a batch panics.
     v.sort_by(f64::total_cmp);
+    v
+}
+
+pub(crate) fn median_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Option<f64> {
+    let v = sorted_gene_values(genomes, key);
+    if v.is_empty() {
+        return None;
+    }
     let n = v.len();
     Some(if n % 2 == 1 {
         v[n / 2]
     } else {
         (v[n / 2 - 1] + v[n / 2]) / 2.0
     })
+}
+
+/// Linear-interpolation quantile of a *sorted* slice (the same method
+/// numpy's default `interpolation="linear"` and Excel's `PERCENTILE.INC`
+/// use): index `q * (n - 1)`, interpolating between the two neighbouring
+/// values when that index is not a whole number. `sorted` must be sorted
+/// ascending and non-empty.
+fn quantile(sorted: &[f64], q: f64) -> f64 {
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0];
+    }
+    let pos = q * (n - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    if lo == hi {
+        sorted[lo]
+    } else {
+        let frac = pos - lo as f64;
+        sorted[lo] + frac * (sorted[hi] - sorted[lo])
+    }
+}
+
+/// The interquartile range (Q3 − Q1, linear-interpolation quantiles) of a
+/// numeric gene over `genomes` -- the ensemble's posterior *spread* at
+/// this window, to sit beside [`median_gene`]'s central tendency. `None`
+/// under the same "gene absent from this run's gene list" condition as
+/// `median_gene` (e.g. `wind_rot_deg` when `SMC_WIND_ROT_GENE` is unset).
+/// A single member (`n == 1`) has no spread to speak of; `quantile`
+/// returns that one value for both Q1 and Q3 in that case, so the IQR is
+/// `0.0`, not `None` -- there *is* a gene, it just isn't spread out.
+pub(crate) fn iqr_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Option<f64> {
+    let v = sorted_gene_values(genomes, key);
+    if v.is_empty() {
+        return None;
+    }
+    Some(quantile(&v, 0.75) - quantile(&v, 0.25))
 }
 
 /// The centroid (mean column, mean row) of a boolean mask's `true` cells,
@@ -213,6 +271,64 @@ mod tests {
         ];
         let m = median_gene(&genomes, "wind_scale").unwrap();
         assert!((m - 0.25).abs() < 1e-12, "got {m}");
+    }
+
+    /// Round 7 Task 5's own acceptance check: a known 10-value vector,
+    /// linear-interpolation quartiles computed by hand. Sorted 1..=10:
+    /// Q1 index = 0.25 * 9 = 2.25 -> between v[2]=3 and v[3]=4, frac 0.25
+    /// -> 3.25. Q3 index = 0.75 * 9 = 6.75 -> between v[6]=7 and v[7]=8,
+    /// frac 0.75 -> 7.75. IQR = 7.75 - 3.25 = 4.5.
+    #[test]
+    fn iqr_gene_matches_a_known_vector_computed_by_hand() {
+        let genomes: Vec<_> = (1..=10)
+            .map(|i| row(&[("wind_rot_deg", i as f64)]))
+            .collect();
+        let iqr = iqr_gene(&genomes, "wind_rot_deg").unwrap();
+        assert!((iqr - 4.5).abs() < 1e-12, "got {iqr}");
+    }
+
+    #[test]
+    fn iqr_gene_is_zero_for_a_single_member_not_none() {
+        let genomes = vec![row(&[("wind_rot_deg", 12.0)])];
+        assert_eq!(iqr_gene(&genomes, "wind_rot_deg"), Some(0.0));
+    }
+
+    #[test]
+    fn iqr_gene_is_none_when_the_key_is_absent_from_every_member() {
+        // Same convention as median_gene: SMC_DIAG on but SMC_WIND_ROT_GENE
+        // unset (Arm A) must report "no such gene," not a false IQR of 0.
+        let genomes = vec![row(&[("model.p0", 0.2)]), row(&[("model.p0", 0.3)])];
+        assert_eq!(iqr_gene(&genomes, "wind_rot_deg"), None);
+    }
+
+    /// `WindowDiag.wind_rot_deg_iqr: None` (Arm A, or any run without
+    /// `SMC_WIND_ROT_GENE`, even with `SMC_DIAG=1` on) must not serialise a
+    /// `"wind_rot_deg_iqr"` key at all -- same `skip_serializing_if`
+    /// convention as `wind_rot_deg_median` beside it, and the field-level
+    /// half of "IQR absent when the gene isn't part of the run."
+    #[test]
+    fn wind_rot_deg_iqr_is_absent_from_the_json_when_none() {
+        let diag = WindowDiag {
+            era5_speed_ms: 1.0,
+            era5_from_deg: 0.0,
+            era5_toward_deg: 180.0,
+            station_speed_ms: None,
+            station_toward_deg: None,
+            p0_median: 0.2,
+            wind_scale_median: 1.0,
+            wind_rot_deg_median: None,
+            wind_rot_deg_iqr: None,
+            downwind_miss: 0,
+            crosswind_miss: 0,
+            downwind_false_positive: 0,
+            crosswind_false_positive: 0,
+        };
+        let json = serde_json::to_string(&diag).unwrap();
+        assert!(
+            !json.contains("wind_rot_deg_iqr"),
+            "None must omit the key entirely, not serialise null: {json}"
+        );
+        assert!(!json.contains("wind_rot_deg_median"), "median has the same convention: {json}");
     }
 
     #[test]
