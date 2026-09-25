@@ -30,6 +30,73 @@ pub(crate) fn env_f64_opt(key: &str) -> Option<f64> {
     std::env::var(key).ok().and_then(|v| v.parse::<f64>().ok())
 }
 
+/// `SMC_WIND_SOURCE=era5|station` (Round 7 Task 6/E46): which wind feeds
+/// the driver's per-window forcing. `Era5` (default, unset) is the
+/// existing behaviour — byte-identical reports to before this knob
+/// existed. `Station` replaces each window's ERA5 (speed, from-bearing)
+/// with the station log's vector mean over that same window, falling
+/// back to that window's own ERA5 entry (counted) where the station log
+/// has no samples in range. See `crate::nulls::wind_schedule_for`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WindSource {
+    Era5,
+    Station,
+}
+
+impl WindSource {
+    fn from_env() -> Self {
+        Self::from_opt(std::env::var("SMC_WIND_SOURCE").ok().as_deref())
+    }
+
+    /// The env-free half of `from_env`, so the parsing rule (unset/"era5"/
+    /// anything unrecognised -> `Era5`, only exactly "station" ->
+    /// `Station`) is unit-testable without mutating the process's real
+    /// environment (tests run in parallel in the same process — see
+    /// `wind_source_tests` below).
+    fn from_opt(v: Option<&str>) -> Self {
+        match v {
+            Some("station") => WindSource::Station,
+            // Unset, "era5", or anything unrecognised: the pre-existing
+            // behaviour, so a typo in the env var is a silent no-op rather
+            // than a panic — consistent with every other `SMC_*` knob here.
+            _ => WindSource::Era5,
+        }
+    }
+
+    /// The string the report's `wind_source` field carries.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            WindSource::Era5 => "era5",
+            WindSource::Station => "station",
+        }
+    }
+}
+
+#[cfg(test)]
+mod wind_source_tests {
+    use super::WindSource;
+
+    /// TEST_PLAN.md v1.9 E46: "era5 (default) is unchanged behaviour" —
+    /// unset must parse the same as before this knob existed.
+    #[test]
+    fn unset_defaults_to_era5() {
+        assert_eq!(WindSource::from_opt(None), WindSource::Era5);
+    }
+
+    #[test]
+    fn station_parses_to_station() {
+        assert_eq!(WindSource::from_opt(Some("station")), WindSource::Station);
+    }
+
+    /// A typo or an explicit "era5" is a no-op, not a panic — same rule
+    /// every other `SMC_*` knob in this file follows.
+    #[test]
+    fn unrecognised_value_falls_back_to_era5() {
+        assert_eq!(WindSource::from_opt(Some("era5")), WindSource::Era5);
+        assert_eq!(WindSource::from_opt(Some("bogus")), WindSource::Era5);
+    }
+}
+
 /// Every `SMC_*` knob read once at the top of `main`, before any
 /// mode-specific dispatch — the mode-specific knobs (`SMC_FIT_DAYS`,
 /// `SMC_POP`, `SMC_MAP_DAYS`, `SMC_MAP_REPLAY`, ...) are read where the mode
@@ -71,6 +138,8 @@ pub(crate) struct Knobs {
     /// JSON when this is unset, so every existing field is unaffected. See
     /// `crate::diag`.
     pub(crate) diag: bool,
+    /// Round 7 Task 6 (E46): `SMC_WIND_SOURCE`. See [`WindSource`].
+    pub(crate) wind_source: WindSource,
 }
 
 impl Knobs {
@@ -111,6 +180,7 @@ impl Knobs {
                 },
             },
             diag: env_f64("SMC_DIAG", 0.0) > 0.0,
+            wind_source: WindSource::from_env(),
         }
     }
 }

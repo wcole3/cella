@@ -14,9 +14,10 @@ use cella_lib::explore::metrics::{brier, iou};
 use cella_lib::wildfire::wind_toward_grid_deg;
 use serde::Deserialize;
 
+use crate::knobs::WindSource;
 use crate::report::{provenance, write_json};
 use crate::score::NullObsScore;
-use crate::{Scenario, Truth, load, mask_at};
+use crate::{Scenario, Truth, WindEntry, load, mask_at};
 
 /// Chamfer distance (3-4 mask) from the seed set; basis of the radial null.
 pub(crate) fn chamfer_from(seed_mask: &[bool], w: usize, h: usize) -> Vec<u32> {
@@ -160,6 +161,101 @@ pub(crate) fn station_vector_mean(log: &StationLog, start_hours: f64, end_hours:
     let n = rows.len().max(1) as f64;
     let (mx, my) = (ux / n, uy / n);
     (mx.hypot(my), my.atan2(mx))
+}
+
+/// Whether the station log has at least one hourly row inside
+/// `[start_hours, end_hours)` — the same predicate [`station_vector_mean`]
+/// applies before it falls back to the nearest row. Exposed separately
+/// (Round 7 Task 6/E46) so a caller that needs to *know* a window had no
+/// station sample — `SMC_WIND_SOURCE=station` falls back to that window's
+/// own ERA5 entry, not to `station_vector_mean`'s nearest-row imputation,
+/// and counts the fallback — can tell the two apart.
+fn station_window_has_samples(log: &StationLog, start_hours: f64, end_hours: f64) -> bool {
+    log.rows
+        .iter()
+        .any(|r| r.hours >= start_hours - 1e-6 && r.hours < end_hours - 1e-6)
+}
+
+/// [`station_vector_mean`]'s `(speed, "toward" radians)` pair, converted
+/// back to a weather-report `from_deg` bearing — the same convention
+/// `WindEntry`/ERA5 use — by inverting `wind_toward_grid_deg`
+/// (`toward = (from_deg + 90).rem_euclid(360)`, so `from_deg = toward -
+/// 90` reproduces the same toward angle once it goes back through that
+/// same function; the raw, unwrapped representative is fine, since every
+/// caller re-wraps with `rem_euclid`). Round 7 Task 6 (E46): reuses
+/// `station_vector_mean`'s vector-mean math rather than duplicating it —
+/// the same conversion the Ellipse null's `ellipse_station` variant
+/// already does for [`grow_ellipse`] below, just handed back in the
+/// scenario's own wind convention instead of the grid's.
+fn station_window_from_deg(log: &StationLog, start_hours: f64, end_hours: f64) -> (f64, f64) {
+    let (speed, toward_rad) = station_vector_mean(log, start_hours, end_hours);
+    (speed, toward_rad.to_degrees() - 90.0)
+}
+
+/// `SMC_WIND_SOURCE` (Round 7 Task 6/E46): the wind schedule
+/// `modes::open::run`'s assim loop actually feeds the driver's forcing —
+/// `sc.wind` unchanged under `WindSource::Era5` (byte-identical to before
+/// this knob existed), or [`station_wind_schedule`] under
+/// `WindSource::Station`. The single point both the real run and its unit
+/// tests call, so "unset behaves like before" and "station replaces the
+/// schedule" can never drift apart.
+pub(crate) fn wind_schedule_for(
+    sc: &Scenario,
+    source: WindSource,
+    station: Option<&StationLog>,
+) -> (Vec<WindEntry>, usize) {
+    match source {
+        WindSource::Era5 => (sc.wind.clone(), 0),
+        WindSource::Station => station_wind_schedule(sc, station),
+    }
+}
+
+/// `SMC_WIND_SOURCE=station` (Round 7 Task 6/E46): a wind schedule the same
+/// shape as `sc.wind` (same `.hours` boundaries, same length — so the
+/// scored windows' timing is untouched, "same daily cadence, no sub-daily
+/// driver changes") but with each window's `(speed_ms, from_deg)`
+/// replaced by the station vector mean over that window's own bounds —
+/// the same `cur.hours..next.hours` bounds `modes::open::run`'s assim
+/// loop uses. `station: None` (no `station_hourly.json` for this fire) is
+/// treated the same as every window being a gap. A window with no station
+/// rows in range — including the schedule's last entry, which is never a
+/// `cur` in `sc.wind.windows(2)` and so is never actually read by the
+/// loop — falls back to *that window's own ERA5 entry unchanged*, not
+/// `station_vector_mean`'s own nearest-row imputation, and is counted.
+/// Returns `(schedule, fallback_windows)`.
+fn station_wind_schedule(sc: &Scenario, station: Option<&StationLog>) -> (Vec<WindEntry>, usize) {
+    let mut out = Vec::with_capacity(sc.wind.len());
+    let mut fallbacks = 0usize;
+    for (i, w) in sc.wind.iter().enumerate() {
+        let next = sc.wind.get(i + 1);
+        let station_entry = match (station, next) {
+            (Some(log), Some(next)) if station_window_has_samples(log, w.hours, next.hours) => {
+                let (speed_ms, from_deg) = station_window_from_deg(log, w.hours, next.hours);
+                Some(WindEntry {
+                    hours: w.hours,
+                    speed_ms,
+                    from_deg,
+                })
+            }
+            _ => None,
+        };
+        match station_entry {
+            Some(entry) => out.push(entry),
+            None => {
+                // Only a real scored window (one with a `next`) can be a
+                // "gap" in the sense the report counts — the schedule's
+                // final entry always falls through here too (it has no
+                // `next`), but it is never read as a `cur` by the assim
+                // loop, so counting it would over-report fallbacks that
+                // never actually affected a forecast.
+                if next.is_some() {
+                    fallbacks += 1;
+                }
+                out.push(*w);
+            }
+        }
+    }
+    (out, fallbacks)
 }
 
 /// Anderson (1983)'s length-to-breadth ratio of a wind-driven fire ellipse,
@@ -721,5 +817,171 @@ mod ellipse_null_tests {
         // Every seed cell is included (it's at distance 0, so it's always
         // among the closest `target` cells).
         assert!(wide_seed.iter().zip(&grown).all(|(&s, &g)| !s || g));
+    }
+}
+
+/// Round 7 Task 6 (E46): `SMC_WIND_SOURCE=station`'s wind schedule. See
+/// `wind_schedule_for` and `station_wind_schedule`'s own doc comments for
+/// what each case means.
+#[cfg(test)]
+mod e46_station_wind_source_tests {
+    use super::*;
+
+    fn scenario_with_wind(wind: Vec<WindEntry>) -> Scenario {
+        Scenario {
+            format_version: 2,
+            id: "test".into(),
+            grid: crate::GridMeta {
+                width: 4,
+                height: 4,
+            },
+            wind,
+            steps_per_hour: 1.0,
+        }
+    }
+
+    fn row(hours: f64, from_deg: f64, speed_ms: f64) -> StationRow {
+        StationRow {
+            hours,
+            from_deg,
+            speed_ms,
+        }
+    }
+
+    /// A synthetic station log blowing a constant, known wind (west, 270°,
+    /// 5 m/s — the same convention `west_wind_stretches_the_grown_set_
+    /// toward_positive_x` above uses) for every hour of a two-day
+    /// scenario. `station_wind_schedule` must reproduce that exact
+    /// (speed, direction) for both windows, via the same vector-mean math
+    /// `station_vector_mean` already uses for the Ellipse null (not a
+    /// duplicate) — checked by feeding the schedule's `from_deg` back
+    /// through `wind_toward_grid_deg` and comparing the resulting
+    /// "toward" angle and speed against a direct call to
+    /// `station_vector_mean` over the same window.
+    #[test]
+    fn synthetic_log_with_a_known_vector_mean_reproduces_it() {
+        let rows: Vec<StationRow> = (0..48).map(|h| row(h as f64, 270.0, 5.0)).collect();
+        let log = StationLog { rows };
+        let sc = scenario_with_wind(vec![
+            WindEntry {
+                hours: 0.0,
+                speed_ms: 1.0,
+                from_deg: 0.0,
+            },
+            WindEntry {
+                hours: 24.0,
+                speed_ms: 1.0,
+                from_deg: 0.0,
+            },
+            WindEntry {
+                hours: 48.0,
+                speed_ms: 1.0,
+                from_deg: 0.0,
+            },
+        ]);
+
+        let (schedule, fallbacks) = station_wind_schedule(&sc, Some(&log));
+        assert_eq!(fallbacks, 0, "every window has hourly station rows");
+        assert_eq!(schedule.len(), sc.wind.len());
+        // .hours never move -- same daily cadence, no sub-daily change.
+        for (s, w) in schedule.iter().zip(&sc.wind) {
+            assert_eq!(s.hours, w.hours);
+        }
+
+        // `expect_toward` is already a "toward" angle in radians (station_
+        // vector_mean's own return convention) -- compare it directly to
+        // the schedule's `from_deg` run back through `wind_toward_grid_deg`,
+        // not through that function a second time.
+        let (expect_speed, expect_toward) = station_vector_mean(&log, 0.0, 24.0);
+        assert!((schedule[0].speed_ms - expect_speed).abs() < 1e-9);
+        let got_toward = wind_toward_grid_deg(schedule[0].from_deg).to_radians();
+        assert!(
+            (got_toward - expect_toward).abs() < 1e-9,
+            "got_toward={got_toward} expect_toward={expect_toward}"
+        );
+        // The known input itself: a steady west wind at 5 m/s blows
+        // toward grid angle 0 (+x) at speed 5.
+        assert!((schedule[0].speed_ms - 5.0).abs() < 1e-6);
+        assert!(
+            (wind_toward_grid_deg(schedule[0].from_deg) - 0.0).abs() < 1e-6
+                || (wind_toward_grid_deg(schedule[0].from_deg) - 360.0).abs() < 1e-6
+        );
+    }
+
+    /// TEST_PLAN.md v1.9 E46: "era5 (default) is unchanged behaviour" --
+    /// `wind_schedule_for(.., WindSource::Era5, ..)` must return `sc.wind`
+    /// itself, untouched, regardless of whether a station log is even
+    /// passed in.
+    #[test]
+    fn era5_source_is_an_identical_schedule() {
+        let sc = scenario_with_wind(vec![
+            WindEntry {
+                hours: 0.0,
+                speed_ms: 3.0,
+                from_deg: 90.0,
+            },
+            WindEntry {
+                hours: 24.0,
+                speed_ms: 4.0,
+                from_deg: 180.0,
+            },
+        ]);
+        let log = StationLog {
+            rows: vec![row(0.0, 270.0, 9.0)],
+        };
+        let (schedule, fallbacks) = wind_schedule_for(&sc, WindSource::Era5, Some(&log));
+        assert_eq!(fallbacks, 0);
+        assert_eq!(schedule.len(), sc.wind.len());
+        for (s, w) in schedule.iter().zip(&sc.wind) {
+            assert_eq!(s.hours, w.hours);
+            assert_eq!(s.speed_ms, w.speed_ms);
+            assert_eq!(s.from_deg, w.from_deg);
+        }
+    }
+
+    /// A window with no station rows in range falls back to that window's
+    /// own ERA5 entry, unchanged, and is counted -- not silently imputed
+    /// from the nearest row the way `station_vector_mean` does on its own.
+    #[test]
+    fn window_with_no_station_samples_falls_back_to_era5_and_is_counted() {
+        let sc = scenario_with_wind(vec![
+            WindEntry {
+                hours: 0.0,
+                speed_ms: 3.0,
+                from_deg: 90.0,
+            },
+            WindEntry {
+                hours: 24.0,
+                speed_ms: 4.0,
+                from_deg: 180.0,
+            },
+            WindEntry {
+                hours: 48.0,
+                speed_ms: 5.0,
+                from_deg: 200.0,
+            },
+        ]);
+        // Station rows only cover the first window (0-24h); the second
+        // (24-48h) is a gap.
+        let log = StationLog {
+            rows: (0..24).map(|h| row(h as f64, 270.0, 6.0)).collect(),
+        };
+        let (schedule, fallbacks) = station_wind_schedule(&sc, Some(&log));
+        assert_eq!(fallbacks, 1, "exactly one scored window (24-48h) is a gap");
+        assert_eq!(schedule.len(), 3);
+        // First window: replaced by the station mean, not the ERA5 entry.
+        assert!((schedule[0].speed_ms - 6.0).abs() < 1e-6);
+        // Second window: gap -- falls back to its own ERA5 entry exactly.
+        assert_eq!(schedule[1].speed_ms, sc.wind[1].speed_ms);
+        assert_eq!(schedule[1].from_deg, sc.wind[1].from_deg);
+
+        // No station log at all (fire has no station_hourly.json): every
+        // scored window is a gap.
+        let (schedule_no_log, fallbacks_no_log) = station_wind_schedule(&sc, None);
+        assert_eq!(fallbacks_no_log, 2, "both scored windows are gaps with no log");
+        for (s, w) in schedule_no_log.iter().zip(&sc.wind) {
+            assert_eq!(s.speed_ms, w.speed_ms);
+            assert_eq!(s.from_deg, w.from_deg);
+        }
     }
 }

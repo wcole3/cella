@@ -129,6 +129,20 @@
 //!      head-vs-flank decomposition of the consensus-vs-truth miss
 //!      and false-positive cells (downwind of the ignition centroid, by
 //!      the window's ERA5 "toward" direction, vs cross/upwind).
+//!      SMC_WIND_SOURCE=era5|station (era5; Round 7 Task 6/E46): which
+//!      wind feeds the driver's per-window forcing in `open`/`assim`/
+//!      `evolve`-forecast mode (`modes::open::run`). `station` replaces
+//!      each window's ERA5 (speed, from-bearing) with the station log's
+//!      vector mean over that same window — same daily cadence, no
+//!      sub-daily driver changes — falling back to that window's own
+//!      ERA5 entry (counted as `station_fallback_windows` in the report)
+//!      where the station log has no samples in range or no station file
+//!      exists at all; see [`nulls::wind_schedule_for`]. `era5` (default,
+//!      unset) is byte-identical to before this knob existed. The
+//!      deterministic nulls and SMC_DIAG's `era5_*`/`station_*`
+//!      diagnostic fields always read the scenario's own ERA5 (or the
+//!      station log directly) regardless of this knob — only the
+//!      ensemble's own forcing changes.
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,
@@ -178,7 +192,7 @@ struct GridMeta {
     height: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 struct WindEntry {
     hours: f64,
     speed_ms: f64,

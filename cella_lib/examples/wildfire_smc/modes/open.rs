@@ -29,10 +29,13 @@ use cella_lib::{CellType, Ensemble, EnsembleConfig, GeneSpec, ParamValue};
 use serde::Serialize;
 
 use crate::diag;
-use crate::knobs::Knobs;
+use crate::knobs::{Knobs, WindSource};
 use crate::modes::assim::maybe_assimilate;
 use crate::modes::evolve::FitReport;
-use crate::nulls::{anderson_lb, chamfer_from, grow_ellipse, load_station, radial_mask_from, station_vector_mean};
+use crate::nulls::{
+    anderson_lb, chamfer_from, grow_ellipse, load_station, radial_mask_from, station_vector_mean,
+    wind_schedule_for,
+};
 use crate::report::{provenance, write_json};
 use crate::score::ObsScore;
 use crate::{Scenario, Truth, mask_at};
@@ -75,6 +78,15 @@ struct Report {
     /// Present in `evolve` mode: what the fit found before the forecast ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     fit: Option<FitReport>,
+    /// Round 7 Task 6 (E46): `"era5"` (default) or `"station"` -- which
+    /// wind fed the driver's per-window forcing. New field; every
+    /// existing field above is unaffected by this knob.
+    wind_source: String,
+    /// Round 7 Task 6 (E46): how many scored windows had no station
+    /// sample in range and fell back to that window's own ERA5 entry.
+    /// Always `0` under `wind_source == "era5"` (the station log is never
+    /// consulted at all in that case).
+    station_fallback_windows: usize,
 }
 
 /// Mean of a numeric gene over the members, or `fallback` when the gene is
@@ -156,13 +168,33 @@ pub(crate) fn run(
     // ever read as "yesterday's true perimeter", never grown from itself.
     let mut prev_obs = ignition.clone();
 
-    // E48 (Round 7 Task 3) per-window diagnostics, opt-in via SMC_DIAG=1:
-    // the station log (if any) is loaded once, same lookup as `nulls`
-    // mode's own; the ignition centroid is fixed for the whole run (the
+    // E48 (Round 7 Task 3) per-window diagnostics, opt-in via SMC_DIAG=1,
+    // and Round 7 Task 6 (E46)'s SMC_WIND_SOURCE=station both need the
+    // station log (if any); it's loaded once here, same lookup as `nulls`
+    // mode's own. The ignition centroid is fixed for the whole run (the
     // pre-registered E48 entry's own wording: "downwind of the ignition
-    // centroid"). Both stay unused (and cost nothing) when the knob is off.
-    let station = if knobs.diag { load_station(dir) } else { None };
+    // centroid"). Both stay unused (and cost nothing) when neither knob
+    // needs them.
+    let need_station = knobs.diag || knobs.wind_source == WindSource::Station;
+    let station = if need_station { load_station(dir) } else { None };
     let ignition_centroid = diag::centroid(&ignition, sc.grid.width);
+
+    // E46: the wind schedule the loop below actually forces the driver
+    // with -- `sc.wind` unchanged under the default `era5` source
+    // (byte-identical to before this knob existed), or the station
+    // vector mean per window under `station` (falling back to that
+    // window's own ERA5 entry, counted, where the station log has a
+    // gap). The deterministic nulls and SMC_DIAG's `era5_*` fields below
+    // keep reading `sc.wind` directly, regardless of this knob -- only
+    // the ensemble's own forcing changes.
+    let (wind_schedule, station_fallback_windows) =
+        wind_schedule_for(sc, knobs.wind_source, station.as_ref());
+    if knobs.wind_source == WindSource::Station {
+        eprintln!(
+            "  wind_source=station: {station_fallback_windows} of {} scored window(s) fell back to ERA5 (no station sample)",
+            wind_schedule.len().saturating_sub(1)
+        );
+    }
 
     eprintln!(
         "{}: {}x{}, {} members, mode {mode}, beta {}, sigma {}, immigrants {}, genes {:?}",
@@ -179,10 +211,21 @@ pub(crate) fn run(
     let mut scores: Vec<ObsScore> = Vec::new();
     let mut steps_done = 0u64;
     let mut obs_idx = 1usize;
-    for win in sc.wind.windows(2) {
+    for (win, driver_win) in sc.wind.windows(2).zip(wind_schedule.windows(2)) {
         let (cur, next) = (&win[0], &win[1]);
-        ens.set_forcing(forcing(cur.hours, cur.speed_ms, cur.from_deg + rot))
-            .expect("driver applies the weather");
+        // `driver_cur` is `cur` under the default era5 source, or the
+        // station-substituted entry for this window under E46's
+        // SMC_WIND_SOURCE=station (same `.hours` either way). Everything
+        // below except this one `set_forcing` call -- the deterministic
+        // nulls, the scored windows' timing, SMC_DIAG's `era5_*` fields --
+        // keeps reading `cur`/`next` from the scenario's own ERA5 `sc.wind`.
+        let driver_cur = &driver_win[0];
+        ens.set_forcing(forcing(
+            driver_cur.hours,
+            driver_cur.speed_ms,
+            driver_cur.from_deg + rot,
+        ))
+        .expect("driver applies the weather");
         let target = (next.hours * sc.steps_per_hour).round() as u64;
         ens.step_n(target - steps_done).expect("members step");
         steps_done = target;
@@ -415,6 +458,8 @@ pub(crate) fn run(
         final_genomes: ens.genomes(),
         scores,
         fit,
+        wind_source: knobs.wind_source.as_str().to_string(),
+        station_fallback_windows,
     };
     write_json(out, &report);
     eprintln!(
