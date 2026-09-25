@@ -18,27 +18,37 @@ using Arm B's own sd as the bar (pre-registered) · pre-registered
 TEST_PLAN v1.9, §9 · `station_a` batch: `binary_git e55b0a6` (clean
 HEAD, verified in the batch summary and all 18 raw reports), load(1 min)
 5.19 at launch → 10.10 at finish, wall time 1084.1 s ≈ 18.1 min at 2
-workers · `station_b`/`station_c` batches: `binary_git`/load/wall
-[PENDING] (**every wall time here: shared box, 2 workers, do not
-compare against each other or against E44's/E45's**) · terms:
-[GLOSSARY.md](GLOSSARY.md)_
+workers · `station_b` batch: `binary_git 8407748` (clean HEAD, verified
+in the batch summary and all 18 raw reports), load(1 min) 5.09 at
+launch → 7.61 at finish, wall time 14389.1 s ≈ 4.00 h at 2 workers ·
+`station_c` batch: `binary_git`/load/wall [PENDING] (**every wall time
+here: shared box, 2 workers, do not compare against each other or
+against E44's/E45's**) · terms: [GLOSSARY.md](GLOSSARY.md)_
 
-**In short.** Arm (a) is in; arms (b) and (c) are not yet. The
-prediction's clause (a) — "ties E33 everywhere" — **does not hold**: only
-three of six fires tie (Bear, Buck, Chimney); Brattain and Pier lose
-beyond 2 sd (−5.00 sd, −3.27 sd) and Ferguson gains beyond 2 sd (+9.41
-sd, the largest move of any arm in this write-up so far). Station wind
-alone, with no arrival kernel and no gene, is not a no-op for the
-Bernoulli config — it moves half the fires by more than the noise floor,
-in both directions. The deterministic nulls (Circle, Ellipse,
-persistence, both lagged variants) are unchanged from E33's own values
-to three decimals, as expected (they read ERA5 directly, never the
-station log, regardless of this knob), and every one of the 18 windows
-across all six fires had a station sample — zero fallback windows for
-arm (a). See Result 1 below for the full tables and a look at why the
-"only cares about wind speed" premise undersells how much even a
-Bernoulli/exponential config's *rate* (not direction) depends on which
-wind speed it is handed.
+**In short.** Arms (a) and (b) are in; arm (c) is not yet. Neither
+clause checked so far holds cleanly. (a) "ties E33 everywhere" **does
+not hold**: only three of six fires tie (Bear, Buck, Chimney); Brattain
+and Pier lose beyond 2 sd and Ferguson gains beyond 2 sd (+9.41 sd) —
+station wind alone, with no arrival kernel and no gene, is not a no-op
+for the Bernoulli config. (b) "recovers most of the gene's gain on
+Ferguson and Chimney" **splits in two**: on Ferguson it holds and then
+some — station wind alone (still no gene) recovers *more than the
+entire* measured gain the gene's own arm showed over E33, by either of
+two operational definitions computed here (+214% and +404% of the
+gene's gain, respectively) — while on Chimney it fails outright: station
+wind alone loses to Arm B beyond 2 sd (−4.28 sd), and its own gain over
+E33 is *negative* (−0.077), the opposite of the clause's prediction. The
+common thread through both arms so far: Ferguson's ERA5 wind speed is
+wrong by an order of magnitude (10.19× low against the station log,
+arm (a)'s own diagnostic), and *any* correction to it — with or without
+the arrival kernel, with or without the gene — helps enormously; Chimney
+does not have that kind of error, and something the gene supplies (a
+per-member learned *direction* correction) is not something the station
+log's own direction reading replicates. The deterministic nulls are
+unchanged (to three decimals) across both arms and match E44's own null
+table exactly, as expected; zero `station_fallback_windows` on every
+fire, every seed, in both arms so far. See Result 1 and Result 2 below
+for the full tables.
 
 **Question.** Is the coarse ERA5 daily-mean wind the real problem behind
 the `wind_rot_deg` gene's gains (E44, E45, E48), or does the gene do more
@@ -278,23 +288,144 @@ interaction, not by "grain" alone — this is itself the honest answer to
 part of this experiment's question, ahead of arms (b)/(c): even the
 *input* alone, with no gene and no arrival kernel, is not neutral.
 
-## Result 2 — arm (b): `station_b` vs Arm B · PENDING
+## Result 2 — arm (b): `station_b` vs Arm B
 
-_[Filled in after arm (b)'s batch (Phase 3).]_
+Provenance: the batch summary and all 18 raw reports
+(`exp46_station_wind_input_b/*.json`) carry `binary_git 8407748`,
+matching the clean HEAD this batch was launched from. 18 jobs (3 seeds ×
+6 fires), 2 workers, load(1 min) 5.09 → 7.61, wall time 14389.1 s ≈ 4.00
+h (**shared box, not a claim about anything but this run**).
+
+Mean one-window-ahead consensus IoU, three seeds, against Arm B's own
+five-seed baseline from E44 (`exp44_arm_b_5seed_summary.json`'s
+`arm_b_sd` block, `r7_common.arm_b_baseline()`), generated directly by
+`r7_common.summary_table()`:
+
+| Fire | Arm B mean | Arm B sd | station_b mean | station_b sd | Delta (sd) | verdict |
+|---|---|---|---|---|---|---|
+| Bear | 0.473 | 0.005 | 0.468 | 0.012 | −0.004 (−0.84 sd) | tie |
+| Brattain | 0.437 | 0.034 | 0.349 | 0.001 | −0.088 (−2.59 sd) | **beyond 2 sd (loss)** |
+| Buck | 0.640 | 0.005 | 0.599 | 0.008 | −0.041 (−7.64 sd) | **beyond 2 sd (loss)** |
+| Chimney | 0.489 | 0.031 | 0.358 | 0.020 | −0.132 (−4.28 sd) | **beyond 2 sd (loss)** |
+| Ferguson* | 0.386 | 0.014 | 0.434 | 0.026 | +0.048 (+3.56 sd) | **beyond 2 sd (gain)** |
+| Pier* | 0.521 | 0.023 | 0.488 | 0.015 | −0.033 (−1.45 sd) | beyond 1 sd (loss) |
+
+`*` = holdout pair. Per-seed IoU, plainly (seeds 0–2, sorted): Bear
+0.457, 0.467, 0.481; Brattain 0.348, 0.350, 0.350; Buck 0.591, 0.597,
+0.607; Chimney 0.336, 0.364, 0.374; Ferguson 0.405, 0.448, 0.451; Pier
+0.475, 0.483, 0.505 — Brattain's three seeds are unusually tight (sd
+0.001), the rest show ordinary spread.
+
+Brier, the four nulls, and final contained fraction:
+
+| Fire | Brier Arm B (5-seed mean) | Brier station_b (3-seed mean) | Circle | Ellipse | Persistence | Lagged persistence | Lagged Circle | Contained, 3 seeds (min–max) | Fallback windows |
+|---|---|---|---|---|---|---|---|---|---|
+| Bear | 0.0507 | 0.0522 | 0.541 | 0.513 | 0.091 | 0.902 | 0.912 | 1.000–1.000 | 0 |
+| Brattain | 0.1020 | 0.1296 | 0.450 | 0.469 | 0.017 | 0.889 | 0.900 | 1.000–1.000 | 0 |
+| Buck | 0.0396 | 0.0439 | 0.670 | 0.701 | 0.205 | 0.957 | 0.944 | 1.000–1.000 | 0 |
+| Chimney | 0.0947 | 0.1264 | 0.372 | 0.247 | 0.119 | 0.882 | 0.867 | 0.469–0.812 | 0 |
+| Ferguson* | 0.1356 | 0.1171 | 0.373 | 0.503 | 0.007 | 0.919 | 0.915 | 0.906–1.000 | 0 |
+| Pier* | 0.1074 | 0.1232 | 0.559 | 0.566 | 0.199 | 0.953 | 0.946 | 1.000–1.000 | 0 |
+
+Nulls again match arm (a)'s and E44's own tables exactly, to three
+decimals (unaffected by `SMC_WIND_SOURCE`, as designed). **Zero
+`station_fallback_windows`** on every fire, every seed — the same six
+station logs, the same window boundaries as arm (a); no discrepancy to
+report. Brier improves on Ferguson (0.117 vs Arm B's 0.136) and is
+worse everywhere else, most sharply on Chimney (0.126 vs 0.095) —
+tracking the IoU table above, not surprising given Brier and consensus
+IoU are different scores of the same underlying probability field.
+Containment: Chimney (46.9%/68.8%/81.2%, none of the three seeds fully
+closes — a wider spread than arm (a)'s 56.2–71.9% on the same fire) and
+Ferguson (one seed at 90.6%, the other two full) both leave members
+uncontained by the run's end, the same two fires E44's own Arm B table
+flagged for partial containment.
+
+Learned gene medians (three-seed median of each seed's own final-
+ensemble median; no `wind_rot_deg` row — the gene is unset in this arm):
+
+| Fire | `model.p0` med. (range) | `model.burn_duration` med. (range, hours) | `wind_scale` med. (range) |
+|---|---|---|---|
+| Bear | 0.078 (0.053–0.137) | 64.5 (44.0–68.0) | 0.548 (0.524–0.839) |
+| Brattain | 0.132 (0.117–0.213) | 46.0 (44.0–61.5) | 0.720 (0.659–0.845) |
+| Buck | 0.072 (0.033–0.269) | 41.0 (38.0–51.5) | 0.671 (0.586–0.906) |
+| Chimney | 0.305 (0.254–0.494) | 45.5 (36.5–52.5) | 0.581 (0.361–0.583) |
+| Ferguson* | 0.386 (0.256–0.400) | 62.5 (52.5–64.5) | 0.939 (0.860–1.250) |
+| Pier* | 0.100 (0.072–0.164) | 47.5 (47.5–57.5) | 0.971 (0.658–1.056) |
+
+**"Recovers most of the gene's gain" — operational definition (post-hoc
+note, TEST_PLAN v1.9 does not define this quantitatively).** The
+pre-registered prediction names "the gene's gain" without a number.
+Two readings are both defensible from data already on disk, and are
+reported side by side rather than picking one silently:
+
+- **Definition A (primary — multi-seed, but conflates the arrival
+  kernel with the gene):** the gene's gain = Arm B's own five-seed mean
+  (E44, ERA5, gene **on**) minus E33's five-seed mean (Bernoulli, no
+  arrival kernel) — the total measured improvement the Arm B bundle
+  showed over the pre-arrival-kernel baseline, all attributed here to
+  "the gene" only in the loose sense the prediction's own phrasing
+  uses it (Arm B's headline addition over the already-separately-tested
+  arrival kernel, E30/E30a). "Recovered fraction" = (station_b's own
+  mean − E33's mean) ÷ (Arm B's mean − E33's mean).
+- **Definition B (secondary — isolates the gene proper, but single-seed
+  and older): the gene's gain = Arm B (E30b pilot, seed 0, ERA5, gene
+  on, 0.398 Ferguson / 0.498 Chimney) minus Arm A (same pilot, seed 0,
+  ERA5, gene **off**, arrival kernel otherwise identical — the same
+  toggle arm (b) makes here, just under ERA5 instead of station wind:
+  0.386 Ferguson / 0.382 Chimney,
+  `48-e30b-uncapped-clock-direction-gene-pilot.md`'s own Result table).
+  "Recovered fraction" = (station_b's own mean − Arm A's seed-0 IoU) ÷
+  (Arm B pilot's seed-0 IoU − Arm A's seed-0 IoU).
+
+| Fire | Def. A: gene's gain | station_b's gain over E33 | Def. A recovered | Def. B: gene's gain (pilot) | station_b vs Arm A (pilot) | Def. B recovered |
+|---|---|---|---|---|---|---|
+| Ferguson* | +0.042 | +0.091 | **+214%** | +0.012 | +0.048 | **+404%** |
+| Chimney | +0.055 | −0.077 | **−139%** | +0.116 | −0.024 | **−21%** |
+
+Both definitions agree on the shape of the answer even though they
+disagree on scale: **on Ferguson, station wind alone recovers not just
+"most" but *more than all* of the gene's measured gain, by either
+definition — it overshoots.** On Chimney, station wind alone does not
+recover any of the gene's gain by either definition — it moves in the
+**opposite direction**, below both E33 and Arm A. Read together with
+arm (a)'s own diagnostic (Ferguson's station wind speed is 10.19× its
+ERA5 mean — an order-of-magnitude input error, not a fine-grained one),
+the likeliest reading is not "the gene and station wind do the same
+job on Ferguson" but that Ferguson's ERA5 input was so far off in
+*magnitude* that almost any correction — with or without the arrival
+kernel, with or without the gene, as arm (a) already showed — helps
+enormously, while Chimney's problem is something the learned
+per-member *direction* correction supplies that the station log's own
+(differently wrong, per E48's own per-window finding on Brattain, and
+plausibly here too) direction does not replicate.
+
+**Arm (b)'s own prediction clause.** "(b) recovers most of the gene's
+gain on Ferguson and Chimney." **Holds for Ferguson, fails for
+Chimney** — a fire-specific split, not a clean "input repair" story for
+this clause as a whole. Ferguson's result is consistent with the
+prediction's letter (station wind does recover the gene's gain there,
+and then some) but arguably not its intended spirit (the mechanism
+looks like "fixing an order-of-magnitude speed error," not "fixing the
+direction the gene was correcting for"). Chimney's result directly
+contradicts the clause: the gene's own gain on Chimney is not
+recoverable from station wind alone — station wind alone is *worse*
+than not touching the wind input at all (E33) and worse than the same
+arrival-kernel config with the gene off under ERA5 (Arm A, pilot).
 
 ## Result 3 — arm (c): `station_c` vs Arm B, and vs arm (b) directly · PENDING
 
 _[Filled in after arm (c)'s batch (Phase 4).]_
 
-**Station fallback windows, per fire, per arm.** Arm (a): zero fallback
-windows on every fire (table in Result 1 above) — every scored window
-had a station sample. Arms (b)/(c) use the same six scenario station
-logs, so their fallback counts are expected to match arm (a)'s
-(zero everywhere); confirmed once those batches are in (Phase 3/4) —
-if any arm's count differs from arm (a)'s on the same fire, that would
-itself be a bug (the station log and the scenario's window boundaries
-do not depend on which arm is running) and will be reported explicitly,
-not silently reconciled.
+**Station fallback windows, per fire, per arm.** Arms (a) and (b): zero
+fallback windows on every fire, every seed (tables in Result 1/Result 2
+above) — every scored window had a station sample, and arm (b)'s counts
+match arm (a)'s exactly, fire for fire, as expected (same six station
+logs, same window boundaries, neither depends on which arm is running).
+Arm (c) uses the same station logs too, so its fallback counts are
+expected to match as well; confirmed once that batch is in (Phase 4) —
+if it differs on any fire, that would itself be a bug and will be
+reported explicitly, not silently reconciled.
 
 **Prediction checked clause by clause.** _[Filled in at Phase 4.]_
 
