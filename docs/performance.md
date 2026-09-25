@@ -1418,6 +1418,27 @@ build time via the `RUSTFLAGS` environment variable
 `.cargo/config.toml`, so it never silently affects a plain `cargo build`
 or `cargo test` and has to be asked for explicitly every time.
 
+**Renamed after this study ran (whole-branch review).** The profile above
+is what this study actually measured, under Cargo's *built-in* `bench`
+name — which, per the first "build-system detail" below, defaults to the
+*same* output directory as `release` (`target/release/`, no separate
+`target/bench/`). That means a `cargo build --profile bench --example
+wildfire_smc` could fingerprint-match and silently reuse or overwrite the
+plain-release `cella_lib/target/release/examples/wildfire_smc` every
+experiment runner calls — the exact build-root trap this campaign's own
+tooling notes warn about elsewhere, just reachable through a profile name
+instead of a stray `cargo build` in the wrong directory. The profile has
+since been renamed to `[profile.bench-study]` (identical settings, in
+both `Cargo.toml` files) so it gets its own `target/bench-study/`
+directory and can never collide with `target/release/`. This is a
+naming/safety fix, not a re-run: every number below was measured under
+the old built-in `bench` name, and none of them changed. Anyone repeating
+this study should substitute `--profile bench-study` for `--profile
+bench` in the commands below; whether Cargo's built-in-profile quirks in
+the second "build-system detail" below (the ignored `panic = "abort"`)
+still apply under a custom name was not re-checked, since re-checking
+would mean re-running the study, which this fix does not do.
+
 **Method.** Five variants, each built and run once, plus two repeats of
 the plain release baseline to see how much the box's own noise moves the
 number on its own. Every build and run: `nice -n 10`, one at a time
@@ -1476,8 +1497,9 @@ release/(i)/(iii) is a clean same-binary noise measurement (the box's
 own run-to-run variance), which is exactly the yardstick every other
 variant needs to be read against. Only (ii), (iv) and (v) changed the
 effective profile enough to force a genuine recompile (confirmed by
-their own multi-second-to-90-second build times above, not a 0.05 s
-cache hit).
+their own multi-second-to-90-second compile time when built, not a
+0.05 s cache hit — the exact per-variant build durations were logged
+during the session but were not carried into a table in this file).
 
 **Results — wall time and the suite's own internal total, both variants
 compared against the release baseline's own two-repeat spread:**
@@ -1498,19 +1520,26 @@ internal figure is used for the ratio column rather than wall time
 because it is the suite's own per-benchmark sum, less sensitive to this
 shared box's process-launch jitter than an outer `time` call. The
 release baseline's own two repeats already move by 2.5 % against each
-other (1180.71 → 1210.27 ms) with nothing changed at all — that is this
-study's own noise floor, and every variant above sits inside or barely
-outside that band except (ii), which is the one variant clearly, robustly
-*slower* than release, not faster. (iv)'s run shares the box with a load
-spike to 7.67 (another process, not this study's own doing — see the
-global "never compare wall time across batches" rule this campaign
-already follows); its wall time is not trustworthy on its own, but its
-internal TOTAL (measured inside one process, not affected by what else
-the box is doing at launch) still lands at the fastest of the four real
-variants tested. Three representative individual benchmarks, release
-repeat 1 vs each variant (ms, avg of 10 runs each; the full 46-benchmark
-table is in each run's own captured log under `/tmp/bench-*.log`, not
-committed):
+other (1180.71 → 1210.27 ms) with nothing changed at all. That two-repeat
+figure understates the real noise floor, though: (i) and (iii) are, per
+the "build-system details" above, confirmed to be *the same compiled
+binary* as release, not independent measurements of a different profile —
+so the honest same-binary spread is all four numbers together (1180.71,
+1210.27, 1223.75, 1235.08 ms), a 4.6 % range, not the 2.5 % the two release
+repeats alone suggest. Read against the wider 4.6 % band, every variant
+below sits inside or barely outside it except (ii), which in this one run
+was clearly slower than release, not faster — this study built (ii) once,
+so "robustly slower" would overstate what a single run can show; a repeat
+build of (ii) would be needed to say more than "slower in the one run
+measured here." (iv)'s run shares the box with a load spike to 7.67
+(another process, not this study's own doing — see the global "never
+compare wall time across batches" rule this campaign already follows);
+its wall time is not trustworthy on its own, but its internal TOTAL
+(measured inside one process, not affected by what else the box is doing
+at launch) still lands at the fastest of the four real variants tested.
+Three representative individual benchmarks, release repeat 1 vs each
+variant (ms, avg of 10 runs each; the full 46-benchmark table is in each
+run's own captured log under `/tmp/bench-*.log`, not committed):
 
 | Benchmark | Release r1 | (i) | (ii) | (iii) | (iv) | (v) |
 |---|---|---|---|---|---|---|

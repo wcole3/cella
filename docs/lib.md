@@ -196,7 +196,11 @@ spread/spotting overrides; `nulls.rs` holds every deterministic dummy
 forecaster (persistence, Circle, Ellipse, and their lagged variants);
 `score.rs` holds the per-observation report-row structs; `report.rs` holds
 the JSON-writing and build-provenance boilerplate every mode's report ends
-with; and `modes/{open,assim,evolve,map}.rs` hold one mode each (`replay`
+with; `diag.rs` holds the opt-in (`SMC_DIAG=1`) per-window diagnostics
+(E48: per-window learned-gene medians and IQR spread, the ignition
+centroid, and a head-vs-flank miss/false-positive decomposition) that
+`modes/open.rs` attaches to each score as `ObsScore.diag`; and
+`modes/{open,assim,evolve,map}.rs` hold one mode each (`replay`
 lives beside `map`, since it re-evaluates a `map`-mode archive; `nulls`
 mode lives in `nulls.rs`, next to the null-forecaster code it is entirely
 built from).

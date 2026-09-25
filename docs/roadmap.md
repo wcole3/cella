@@ -944,10 +944,17 @@ cargo test  --package cella --bin cella
 
 # The library — separate build root, must be run from its own directory
 cd cella_lib && CELLA_ASCII=0 cargo test --package cella_lib
-make coverage    # = cd cella_lib && CELLA_ASCII=0 cargo llvm-cov --package cella_lib --html; the >= 99% bar
+make coverage-all    # = cd cella_lib && CELLA_ASCII=0 cargo llvm-cov --package cella_lib --html -- --include-ignored; the >= 99% bar
 ```
 
-`make clippy`, `make test`, and `make coverage` wrap these; see the `Makefile`.
+`make clippy`, `make test`, and `make coverage-all` wrap these; see the
+`Makefile`. **`make coverage-all` is the gate, not the plain `make
+coverage`** (this file named `make coverage` in earlier rounds; `make
+coverage` only runs non-`#[ignore]`d tests, so it undercounts every line
+that a slow or opt-in test alone reaches — the 99.02 % figure Round 7's
+own hygiene task measured (`round-7.md`, "Configuration after this
+round") was `make coverage-all`, over the full suite including ignored
+tests, and that is the number the 99 % bar is checked against).
 
 ### Two traps in the tooling
 
