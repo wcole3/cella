@@ -697,6 +697,71 @@ mod tests {
         );
     }
 
+    /// Round 7 Task 7 (E49), Phase 2: the sweep's own endpoints. The
+    /// sweep (`SMC_CONTAIN_GROWTH_FLOOR` in {1e-5, 1e-4, 1e-3}) produced
+    /// byte-identical reports, so this pins that the three values it used
+    /// really do reach `period_end` and really do change the daily
+    /// containment probability of a member whose growth sits below the
+    /// floor. Same stalled-member setup as the test above (growth exactly
+    /// 0 before the floor). With `contain_a = -4, contain_b = -0.5` the
+    /// probabilities are well apart: p = sigmoid(-4 - 0.5 ln f) =
+    /// 0.853 at 1e-5, 0.646 at 1e-4, 0.366 at 1e-3. Every run uses the
+    /// same seed, so every member sees the same random draw `u` under all
+    /// three floors, and "contained" at a larger floor implies "contained"
+    /// at a smaller one: the fractions must fall strictly as the floor
+    /// rises.
+    ///
+    /// The second half is the reason a sweep can still come out
+    /// identical: with a steep slope (`contain_b = -2`) and `contain_a =
+    /// 0`, the same three floors give p = 0.9999999999 / 0.99999999 /
+    /// 0.999999 -- all saturated at "certainly contained", so the floor
+    /// binds but no draw can land between the probabilities.
+    #[test]
+    fn sweep_floors_1e5_1e4_1e3_change_containment_unless_the_logit_is_saturated() {
+        let contained_at = |a: f64, b: f64, floor: f64| -> f64 {
+            let mut genes = fire_genes();
+            for g in &mut genes {
+                if g.key == "model.p0" {
+                    *g = GeneSpec::range("model.p0", 0.0, 0.0);
+                }
+            }
+            genes.push(GeneSpec::range(GENE_CONTAIN_A, a, a));
+            genes.push(GeneSpec::range(GENE_CONTAIN_B, b, b));
+            let driver = WildfireDriver {
+                steps_per_day: 6,
+                weather: vec![],
+                contain_growth_floor: floor,
+            };
+            let cfg = EnsembleConfig {
+                members: 200,
+                genes,
+                ..fire_config(200, driver)
+            };
+            let mut e = Ensemble::new(template(16, 16), &cfg).unwrap();
+            e.set_forcing(forcing(0.0, 0.0, 270.0)).unwrap();
+            e.step_n(12).unwrap();
+            e.state_fraction(STATE_CONTAINED)
+        };
+
+        let lo = contained_at(-4.0, -0.5, 1e-5);
+        let mid = contained_at(-4.0, -0.5, 1e-4);
+        let hi = contained_at(-4.0, -0.5, 1e-3);
+        assert!(
+            lo > mid && mid > hi,
+            "a stalled member's containment must fall as the floor rises: \
+             1e-5 -> {lo}, 1e-4 -> {mid}, 1e-3 -> {hi}"
+        );
+        // Loose bands around the exact probabilities above (200 members).
+        assert!((lo - 0.853).abs() < 0.1, "1e-5: {lo}");
+        assert!((mid - 0.646).abs() < 0.1, "1e-4: {mid}");
+        assert!((hi - 0.366).abs() < 0.1, "1e-3: {hi}");
+
+        let sat_lo = contained_at(0.0, -2.0, 1e-5);
+        let sat_hi = contained_at(0.0, -2.0, 1e-3);
+        assert_eq!(sat_lo, 1.0);
+        assert_eq!(sat_hi, 1.0, "saturated logit: the floor binds but cannot flip a draw");
+    }
+
     #[test]
     fn without_forcing_hours_come_from_steps_and_wind_from_the_schedule() {
         let driver = WildfireDriver {

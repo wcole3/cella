@@ -46,6 +46,18 @@ Tasks 5/6 used for `exp_r7_e45.py`/`exp_r7_e46.py`:
   prior, wind-rotation gene). 4 fires x 3 values = 12 runs. Output
   exp49_containment_4x_clock_sweep.json.
 
+- `--arm diag` (Phase 2, added after the sweep came back byte-identical
+  across all three floors on every fire). ONE job: Bear seed 0, Arm B
+  preset, `SMC_CONTAIN_GROWTH_FLOOR=1e-3` (the sweep's widest floor),
+  `SMC_DIAG=1`, which records every daily containment draw (burned count
+  before/after, raw growth ratio before the floor, the member's
+  contain_a/contain_b, outcome) in each window's `diag.contain_draws`.
+  Since the three sweep runs were identical, this one run's draws are the
+  draws of all three, and they say whether any floor in {1e-5, 1e-4,
+  1e-3} could have changed any draw. The report's own
+  `contain_growth_floor` field shows the floor the driver held. Output
+  exp49_containment_4x_clock_diag.json.
+
 Prediction (write before the run, TEST_PLAN.md v1.9 verbatim): the
 fraction is correct, not a bug -- the fire really grows for longer under
 the faster clock, and the ICS-209 lead E42 measured (13-21 days) shrinks
@@ -73,6 +85,7 @@ SWEEP_VALUES = [1e-5, 1e-4, 1e-3]
 ARMS = {
     "fix": ("exp49_containment_4x_clock_fix.json",),
     "sweep": ("exp49_containment_4x_clock_sweep.json",),
+    "diag": ("exp49_containment_4x_clock_diag.json",),
 }
 
 
@@ -102,7 +115,21 @@ def sweep_jobs():
     ]
 
 
-JOBS_FOR = {"fix": fix_jobs, "sweep": sweep_jobs}
+def diag_jobs():
+    """Phase 2 diagnostic: one job, Bear seed 0, the sweep's widest floor
+    (1e-3), SMC_DIAG=1 so every containment draw is recorded."""
+    return [
+        (
+            "Bear_2020",
+            "armB_seed0_floor0.001_diag",
+            {**c.ARM_B, "SMC_SEED": "0", "SMC_CONTAIN_GROWTH_FLOOR": "0.001", "SMC_DIAG": "1"},
+            32,
+            "assim",
+        )
+    ]
+
+
+JOBS_FOR = {"fix": fix_jobs, "sweep": sweep_jobs, "diag": diag_jobs}
 
 
 if __name__ == "__main__":
@@ -110,21 +137,22 @@ if __name__ == "__main__":
     p.add_argument("--arm", choices=list(ARMS), default=None,
                     help="which batch to build/run -- 'fix' (branch 2, not launched -- "
                          "kept for documentation) or 'sweep' (branch 3, the one this task "
-                         "actually runs). Required to actually launch a batch; a bare "
-                         "--dry-run with no --arm prints jobs for both.")
+                         "actually runs), or 'diag' (Phase 2: one SMC_DIAG=1 job recording "
+                         "every containment draw). Required to actually launch a batch; a "
+                         "bare --dry-run with no --arm prints jobs for all arms.")
     args = p.parse_args()
 
     arm_names = [args.arm] if args.arm else list(ARMS)
 
     if args.dry_run:
         if args.arm is None:
-            print("# no --arm given: printing jobs for both ('fix' is not launched; see module docstring)")
+            print("# no --arm given: printing jobs for every arm ('fix' is not launched; see module docstring)")
         for arm_name in arm_names:
             (out_json,) = ARMS[arm_name]
             c.dry_run(JOBS_FOR[arm_name](), out_json)
     else:
         if args.arm is None:
-            p.error("--arm {fix,sweep} is required to launch a batch -- 'sweep' is the "
+            p.error("--arm {fix,sweep,diag} is required to launch a batch -- 'sweep' is the "
                      "branch this task actually runs (TEST_PLAN.md v1.9 E49: everything "
                      "scales, so sweep the containment threshold)")
         (out_json,) = ARMS[args.arm]

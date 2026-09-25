@@ -18,7 +18,10 @@
 
 use std::collections::BTreeMap;
 
-use cella_lib::ParamValue;
+use cella_lib::wildfire::driver::{
+    GENE_CONTAIN_A, GENE_CONTAIN_B, STATE_BURNED_AT_DAY_START, STATE_CONTAINED,
+};
+use cella_lib::{CellType, Ensemble, ParamValue};
 use serde::Serialize;
 
 /// One window's E48 diagnostics: the ERA5 wind vector, the station vector
@@ -67,6 +70,80 @@ pub(crate) struct WindowDiag {
     pub(crate) downwind_false_positive: u64,
     /// Truth-0/consensus-1 cells, not downwind of the ignition centroid.
     pub(crate) crosswind_false_positive: u64,
+    /// Round 7 Task 7 (E49): the smallest raw growth ratio (before the
+    /// growth floor is applied) among the containment draws in
+    /// `contain_draws`; `None` when no still-burning member was drawn for
+    /// since the previous scored window.
+    pub(crate) min_growth_uncontained: Option<f64>,
+    /// Round 7 Task 7 (E49): every containment draw the driver made since
+    /// the previous scored window, one row per draw -- enough to compute,
+    /// offline, the containment probability each draw would have had
+    /// under any other growth floor.
+    pub(crate) contain_draws: Vec<ContainDraw>,
+}
+
+/// One daily containment draw (E49), recorded from outside the driver so
+/// the driver itself is unchanged: the member's burned count at the start
+/// and end of the period, the raw growth ratio `(burned - before) /
+/// before` *before* the floor, the member's `contain_a`/`contain_b` genes,
+/// and whether the draw contained it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub(crate) struct ContainDraw {
+    pub(crate) before: f64,
+    pub(crate) burned: f64,
+    pub(crate) growth_raw: f64,
+    pub(crate) contain_a: f64,
+    pub(crate) contain_b: f64,
+    pub(crate) contained: bool,
+}
+
+/// Step `ens` exactly `n` times -- the same `Ensemble::step` calls
+/// `step_n` makes, so the run is unchanged -- and, at every step that ends
+/// a containment period, append one [`ContainDraw`] per member the driver
+/// draws for. The driver draws only for a member that has both
+/// containment genes, a positive burned count at the previous boundary
+/// (`STATE_BURNED_AT_DAY_START`) and no `contained` flag yet; this reads
+/// exactly those same inputs from the member's state just before the
+/// boundary step and the outcome just after it. The burned count is taken
+/// with `burnt` (Burning + BurnedOut), the same two types the driver counts.
+pub(crate) fn step_recording_contain_draws(
+    ens: &mut Ensemble,
+    n: u64,
+    period: u64,
+    burnt: &[CellType; 2],
+    out: &mut Vec<ContainDraw>,
+) {
+    for _ in 0..n {
+        let ends_period = period > 0 && (ens.step_count() + 1).is_multiple_of(period);
+        // (member index, before, a, b) for every member the driver will draw for.
+        let pending: Vec<(usize, f64, f64, f64)> = if ends_period {
+            let space = ens.space();
+            ens.members()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| {
+                    let a = space.float(&m.genome, GENE_CONTAIN_A)?;
+                    let b = space.float(&m.genome, GENE_CONTAIN_B)?;
+                    let before = m.state.get(STATE_BURNED_AT_DAY_START).unwrap_or(0.0);
+                    (before > 0.0 && !m.state.flag(STATE_CONTAINED)).then_some((i, before, a, b))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        ens.step().expect("members step");
+        for (i, before, a, b) in pending {
+            let burned = ens.member_mask(i, burnt).iter().filter(|x| **x).count() as f64;
+            out.push(ContainDraw {
+                before,
+                burned,
+                growth_raw: (burned - before) / before,
+                contain_a: a,
+                contain_b: b,
+                contained: ens.members()[i].state.flag(STATE_CONTAINED),
+            });
+        }
+    }
 }
 
 /// The median of a numeric gene over `genomes` (one `BTreeMap` per member,
@@ -322,6 +399,8 @@ mod tests {
             crosswind_miss: 0,
             downwind_false_positive: 0,
             crosswind_false_positive: 0,
+            min_growth_uncontained: None,
+            contain_draws: Vec::new(),
         };
         let json = serde_json::to_string(&diag).unwrap();
         assert!(
@@ -370,5 +449,102 @@ mod tests {
         assert_eq!(counts.crosswind_miss, 0);
         assert_eq!(counts.downwind_false_positive, 0);
         assert_eq!(counts.crosswind_false_positive, 0);
+    }
+
+    /// E49: recording the containment draws must not change the run. Two
+    /// identical ensembles on a small burning grid, one stepped with
+    /// `Ensemble::step_n`, the other with `step_recording_contain_draws`:
+    /// every member's burned mask and the contained fraction must match,
+    /// the recorder must have seen draws, and each recorded outcome must
+    /// be consistent with its own growth (a contained member can only
+    /// have been drawn for once).
+    #[test]
+    fn recording_contain_draws_leaves_the_run_unchanged() {
+        use cella_lib::config::{CellaConfig, Config2D};
+        use cella_lib::explore::driver::Forcing;
+        use cella_lib::wildfire::driver::{FORCING_HOURS, WildfireDriver};
+        use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireModel, WildfireParams};
+        use cella_lib::{EnsembleConfig, GeneSpec, Rule2D};
+
+        let (w, h) = (16usize, 16usize);
+        let build = || {
+            let params = WildfireParams {
+                seed: 0,
+                p0: 0.3,
+                fuels: vec![FuelClass {
+                    name: "Forest".into(),
+                    veg_factor: 1.0,
+                }],
+                wind_speed: 0.0,
+                wind_from_deg: 0.0,
+                c1: 0.045,
+                c2: 0.131,
+                slope_a: 0.078,
+                cell_size: 30.0,
+                burn_duration: 3,
+                spotting: None,
+                burning_name: None,
+                burned_name: None,
+                spread: "bernoulli".into(),
+                arrival_jitter: 0.2,
+                wind_law: "exponential".into(),
+            };
+            let mut initial = vec!["Forest".to_string(); w * h];
+            initial[(h / 2) * w + w / 2] = "Burning".into();
+            let cfg = CellaConfig::D2(Config2D {
+                width: w,
+                height: h,
+                history_limit: 1,
+                initial,
+                rule: Rule2D { subrules: vec![] },
+                model: Some(Box::new(WildfireModel::new(params, WildfireEnv::default()))),
+                ..Config2D::default()
+            });
+            let ens_cfg = EnsembleConfig {
+                members: 12,
+                genes: vec![
+                    GeneSpec::log_range("model.p0", 0.05, 0.6),
+                    GeneSpec::range(GENE_CONTAIN_A, -4.0, -1.0),
+                    GeneSpec::range(GENE_CONTAIN_B, -2.0, -0.3),
+                ],
+                track: vec!["Burning".into(), "BurnedOut".into()],
+                driver: Some(Box::new(WildfireDriver {
+                    steps_per_day: 4,
+                    ..WildfireDriver::default()
+                })),
+                ..EnsembleConfig::default()
+            };
+            let mut e = Ensemble::new(cfg.build_sim().unwrap(), &ens_cfg).unwrap();
+            let mut f = Forcing::new();
+            f.insert(FORCING_HOURS.into(), 0.0);
+            e.set_forcing(f).unwrap();
+            e
+        };
+        let burnt = [CellType::new("Burning"), CellType::new("BurnedOut")];
+
+        let mut plain = build();
+        plain.step_n(24).unwrap();
+        let mut recorded = build();
+        let mut draws = Vec::new();
+        step_recording_contain_draws(&mut recorded, 24, 4, &burnt, &mut draws);
+
+        for i in 0..plain.len() {
+            assert_eq!(plain.member_mask(i, &burnt), recorded.member_mask(i, &burnt));
+        }
+        assert_eq!(
+            plain.state_fraction(STATE_CONTAINED),
+            recorded.state_fraction(STATE_CONTAINED)
+        );
+        assert!(!draws.is_empty(), "a burning ensemble must draw for containment");
+        let contained_draws = draws.iter().filter(|d| d.contained).count() as f64;
+        assert_eq!(
+            contained_draws / plain.len() as f64,
+            recorded.state_fraction(STATE_CONTAINED),
+            "each contained member is drawn for, and contained, exactly once"
+        );
+        for d in &draws {
+            assert!(d.before > 0.0 && d.burned >= d.before, "{d:?}");
+            assert_eq!(d.growth_raw, (d.burned - d.before) / d.before);
+        }
     }
 }

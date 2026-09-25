@@ -87,6 +87,12 @@ struct Report {
     /// Always `0` under `wind_source == "era5"` (the station log is never
     /// consulted at all in that case).
     station_fallback_windows: usize,
+    /// Round 7 Task 7 (E49): the containment growth floor the members'
+    /// driver actually holds (`WildfireDriver::contain_growth_floor`, set
+    /// from `SMC_CONTAIN_GROWTH_FLOOR`; `1e-4` when unset). New field only,
+    /// so a report says which floor was in force instead of the reader
+    /// having to trust the runner's file name.
+    contain_growth_floor: f64,
 }
 
 /// Mean of a numeric gene over the members, or `fallback` when the gene is
@@ -129,6 +135,14 @@ pub(crate) fn run(
     let rot = knobs.wind_rot_deg;
     let total = sc.grid.width * sc.grid.height;
 
+    let driver = WildfireDriver {
+        // One containment draw per simulated day.
+        steps_per_day,
+        weather: Vec::new(),
+        contain_growth_floor: knobs.contain_growth_floor,
+    };
+    // Echoed into the report (E49) from the driver itself, not the knob.
+    let contain_growth_floor = driver.contain_growth_floor;
     let ens_cfg = EnsembleConfig {
         members,
         seed: knobs.seed,
@@ -141,12 +155,7 @@ pub(crate) fn run(
         immigrant_reset: knobs.immigrant_reset,
         immigrant_reset_gate: knobs.immigrant_reset_gate,
         state_correction: knobs.state_correction,
-        driver: Some(Box::new(WildfireDriver {
-            // One containment draw per simulated day.
-            steps_per_day,
-            weather: Vec::new(),
-            contain_growth_floor: knobs.contain_growth_floor,
-        })),
+        driver: Some(Box::new(driver)),
     };
     let template = cfg
         .build_sim()
@@ -212,6 +221,8 @@ pub(crate) fn run(
     let mut scores: Vec<ObsScore> = Vec::new();
     let mut steps_done = 0u64;
     let mut obs_idx = 1usize;
+    // E49 (SMC_DIAG=1 only): containment draws since the last scored window.
+    let mut pending_draws: Vec<diag::ContainDraw> = Vec::new();
     for (win, driver_win) in sc.wind.windows(2).zip(wind_schedule.windows(2)) {
         let (cur, next) = (&win[0], &win[1]);
         // `driver_cur` is `cur` under the default era5 source, or the
@@ -228,7 +239,18 @@ pub(crate) fn run(
         ))
         .expect("driver applies the weather");
         let target = (next.hours * sc.steps_per_hour).round() as u64;
-        ens.step_n(target - steps_done).expect("members step");
+        if knobs.diag {
+            // E49: same steps, but every containment draw is recorded.
+            diag::step_recording_contain_draws(
+                &mut ens,
+                target - steps_done,
+                steps_per_day,
+                burnt,
+                &mut pending_draws,
+            );
+        } else {
+            ens.step_n(target - steps_done).expect("members step");
+        }
         steps_done = target;
 
         if obs_idx < truth.observed_at.len()
@@ -347,6 +369,11 @@ pub(crate) fn run(
                     crosswind_miss: counts.crosswind_miss,
                     downwind_false_positive: counts.downwind_false_positive,
                     crosswind_false_positive: counts.crosswind_false_positive,
+                    min_growth_uncontained: pending_draws
+                        .iter()
+                        .map(|d| d.growth_raw)
+                        .reduce(f64::min),
+                    contain_draws: std::mem::take(&mut pending_draws),
                 })
             } else {
                 None
@@ -461,6 +488,7 @@ pub(crate) fn run(
         fit,
         wind_source: knobs.wind_source.as_str().to_string(),
         station_fallback_windows,
+        contain_growth_floor,
     };
     write_json(out, &report);
     eprintln!(

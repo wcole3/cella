@@ -128,7 +128,17 @@
 //!      gene is in this run's list" rule as the median beside it), and a
 //!      head-vs-flank decomposition of the consensus-vs-truth miss
 //!      and false-positive cells (downwind of the ignition centroid, by
-//!      the window's ERA5 "toward" direction, vs cross/upwind).
+//!      the window's ERA5 "toward" direction, vs cross/upwind). Round 7
+//!      Task 7 (E49) adds `contain_draws` (every daily containment draw
+//!      since the previous scored window: burned count before/after, raw
+//!      growth ratio before the floor, the member's `contain_a`/
+//!      `contain_b`, and whether it was contained) and
+//!      `min_growth_uncontained` (the smallest of those raw growths).
+//!      SMC_CONTAIN_GROWTH_FLOOR=<f> (1e-4; Round 7 Task 7/E49): the floor
+//!      the containment draw clamps a day's growth ratio to before taking
+//!      its log (`WildfireDriver::contain_growth_floor`). Unset is the
+//!      value the operator always used, so runs are unchanged; the floor
+//!      in force is echoed as the report's `contain_growth_floor` field.
 //!      SMC_WIND_SOURCE=era5|station (era5; Round 7 Task 6/E46): which
 //!      wind feeds the driver's per-window forcing in `open`/`assim`/
 //!      `evolve`-forecast mode (`modes::open::run`). `station` replaces
