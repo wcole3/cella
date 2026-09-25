@@ -891,6 +891,19 @@ it and is queued for a full five-seed run. None of Round 6's new options
 immigrant reset) are on by default. Full write-up:
 [`validation/experiments/round-6.md`](../validation/experiments/round-6.md).
 
+Round 7 (2026-09-23/25) ran that queued full five-seed test — the
+promotion test for the arrival-kernel configuration (Arm B: 4× clock, the
+learned `wind_rot_deg` gene, ±90°). It beat the existing model on four of
+six fires but lost to it on Pier by 4.60 sd, more than four times the
+pre-registered stop-rule bar, so **Arm B is not promoted**; two further,
+independent experiments built to explain why the gene helps each
+concluded the gain is fire-specific and cannot be stated as one
+mechanism. A separate audit found no scaling bug in the containment
+operator under the faster clock — an earlier round's low contained
+fraction on one fire was a single unlucky seed, not a broken threshold.
+The recommended configuration is unchanged from Round 5/6. Full write-up:
+[`validation/experiments/round-7.md`](../validation/experiments/round-7.md).
+
 **Acceptance still owed — the manual GL checklist** (this machine cannot
 open a window; see §6):
 

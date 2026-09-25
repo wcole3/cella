@@ -881,30 +881,31 @@ in `validation/results/analysis/`.
 
 ## 10. Roadmap after v1
 
-**Current (after Round 6, 2026-09-12) — in order:**
+**Current (after Round 7, 2026-09-25) — in order:**
 
-1. The full five-seed E30b on Arm B's configuration (4× clock, widened
-   p0/burn_duration prior, the learned `wind_rot_deg` gene), plus E37b
-   re-run at the same 4× clock.
-2. The E30b mechanism ablations: Arm B with mutation σ = 0 on
-   `wind_rot_deg` (diversity-only test), and Arm B with the gene's range
-   narrowed to ±20° (learned-correction-only test).
-3. Arrival + rear_focus + spotting genes (E43) together — not yet
-   combined.
-4. A finer angular neighbourhood, or a fitted template-LB correction, for
-   the rear-focus hull overshoot that remains at high wind (LB > 1.5).
-5. A fuel term in the containment operator, and the ICS-209 check's own
+1. Separate Ferguson's station-wind direction repair from its
+   speed-averaging artefact (E46): an arm that holds wind speed scale
+   fixed while substituting only the direction, and/or the reverse.
+2. Brattain's station-wind loss (all three E46 arms, unrelated to the
+   gene) is unexplained; E48-style per-window diagnostics on this fire's
+   station log would be the cheap next step.
+3. Whether the resampling-degeneracy IQR collapse E45 found is
+   `wind_rot_deg`-specific, or a general property of this ensemble's
+   selection pressure (untested on another gene).
+4. Arrival + rear_focus + spotting genes (E43) together — still not
+   combined; E47, the task that would have run this, did not run because
+   E44's stop rule tripped.
+5. A finer angular neighbourhood, or a fitted template-LB correction, for
+   the rear-focus hull overshoot that remains at high wind (LB > 1.5) —
+   carried from Round 6.
+6. A fuel term in the containment operator, and the ICS-209 check's own
    follow-up (does ICS-209's containment-line lag scale with fire size or
-   fuel type?) — carried from Round 4/5.
-6. Pre-existing gap: crate coverage ≈ 98.3 % vs. the 99 % gate. (Two other
-   items that used to sit here — `make clippy` not linting `cella_lib`'s
-   own examples, and `wildfire_smc.rs`'s size — were fixed in Round 7
-   Task 1: `make clippy` now also runs from `cella_lib/`, and
-   `cella_lib/examples/wildfire_smc/` is a small module tree instead of
-   one 2,420-line file.)
+   fuel type?) — carried from Round 4/5; E49's audit narrows the lever to
+   the learned `contain_a`/`contain_b` genes, not the growth floor.
 
-Full context for each item: `validation/experiments/round-6.md`, "Still
-open after this round."
+Full context for each item: `validation/experiments/round-7.md`, "Still
+open after this round" (which also carries forward `round-6.md`'s own
+list where Round 7 didn't touch it).
 
 **Original v1 roadmap (2026-08-14), superseded in substance by each
 round's own "Still open" section but kept here for the record:**
@@ -917,3 +918,15 @@ round's own "Still open" section but kept here for the record:**
 4. Input upgrades driven by measured failures, in whatever order the
    failures rank them: canopy-cover density, fuel moisture proxy, per-cell
    wind (WindNinja-downscaled), suppression masks.
+
+## 11. Where the results are
+
+Every round's numbers live in `validation/experiments/`, one summary file
+per round (`round-1.md` … `round-7.md`) linking that round's individual
+experiment files, plus the plain-language walkthrough in
+[ANALYSIS.md](ANALYSIS.md) (§5a–§5f, one subsection per round since
+Round 2) and the per-experiment index in
+[`experiments/README.md`](experiments/README.md)'s "All experiments"
+table. This section is a pointer, not a summary: read `round-7.md` for
+the current promotion decision and configuration, and §9 above (the plan
+changelog) for what each round pre-registered before it ran.

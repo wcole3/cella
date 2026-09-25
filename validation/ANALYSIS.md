@@ -486,6 +486,77 @@ Nothing here should be read as fixed for production use yet — every new
 option above ships turned off by default until it has been proven on
 enough independent runs.
 
+## 5f. September 23–25: the promotion test, and why it didn't pass
+
+Details in [experiments/](experiments/README.md) E48, E44, E45, E46, E49
+and [round-7.md](experiments/round-7.md), and every term in
+[experiments/GLOSSARY.md](experiments/GLOSSARY.md).
+
+**Round 6 left one big trial run on the table: does the wind-fixing kernel
+and its learned direction gene actually deserve to replace the model we
+already trust?** We had one lucky-looking single trial (one random seed)
+where it beat the old model on every one of the six fires. This round ran
+it properly — five trials each, the way every other promoted change in
+this project has been checked — and set a hard rule in advance: if the
+new configuration loses to the old one by more than a small margin on
+*any* fire, it does not get promoted, no matter how well it does
+elsewhere. It lost on one fire, Pier, by more than four times that
+margin. Three fires it clearly won on average, but the rule was written
+to catch exactly this shape of result — a good-looking average that hides
+a fire it makes worse — and it did its job. **The new configuration is
+not promoted. The model we already had remains the recommendation.**
+
+**We also asked why the new configuration's gene helps, and it turns out
+there isn't one answer.** We ran two separate tests, each designed to
+pin down whether the learned per-fire wind-direction gene works because
+each simulated fire converges on the *one correct* bearing, or because
+having many simulated fires all guessing *different* bearings is what
+actually helps (the ensemble spreads its bets and something usually
+lands close). One fire's own result argued for "one correct value";
+another fire's result, from the very same test, argued for "spread
+matters more than any single value." Both readings are real, and they
+contradict each other. A second test asked a related question with real
+weather-station readings standing in for the (coarser) reanalysis wind
+data the model normally uses: on one fire, just swapping in the
+better-measured wind alone did all the work and the gene added nothing;
+on a different fire, the better-measured wind alone made things *worse*,
+and only the learned gene fixed it. Two independent tests, two different
+questions, and both came back "it depends which fire you ask" rather
+than one tidy explanation. That is itself useful to know — a change we
+cannot explain in one sentence is not a change we should make the
+default, which is exactly what our own rule (above) said before either
+test ran.
+
+**A smaller worry from Round 6 turned out to be nothing.** One fire's
+"percentage of the simulated fire under control" number had looked
+unexpectedly low under the faster clock the new configuration uses,
+which raised a fair question: is the part of the model that decides
+"this fire is contained now" somehow not keeping pace with the faster
+clock? We checked every quantity that logic depends on, and all of them
+correctly speed up or slow down with the clock the way they should. We
+even tried three very different settings for the one fixed number in
+that logic (how small a day's growth has to get before it's treated as
+"basically stopped") and got the *exact same result* every time — the
+real fires never grow slowly enough for that number to matter at all. And
+once we ran the low-looking fire five times instead of one, its average
+matched the old model almost exactly; the one low run had just been an
+unlucky roll of the dice, not a sign of a broken clock.
+
+**What is left.** Because the promotion test failed, a planned sixth
+experiment — combining this round's wind-direction fix with two earlier,
+separately-promising tricks (ember jump, faster spread near the fire's
+edge) — was skipped by our own pre-written rule: there was no point
+combining pieces of a configuration we had just decided not to use. Two
+follow-up checks are worth doing regardless of promotion: one fire's
+"better-measured wind alone helped enormously" result turned out to be
+partly explained by a subtle mismatch in how the two wind data sources
+average speed over an area versus at a single point, so that result needs
+a cleaner follow-up test before it is trusted at full strength; and a
+second fire lost ground under the better-measured wind for reasons we
+still don't understand. Nothing about the model we recommend for real use
+changed this round — every option this round tested stays off by
+default, the same rule Round 6 followed.
+
 ## 6. Reading any future results table — a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means
