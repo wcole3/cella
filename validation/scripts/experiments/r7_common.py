@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """Shared runner for the Round 7 experiments (E44-E49), pre-registered in
-`validation/TEST_PLAN.md` v1.9. Built on `r5_common`/`r6_common` (imported,
-not copied) plus the shared-machine and provenance rules Round 7's plan
-(`docs/superpowers/plans/round-7-experiments.md`, "Global constraints")
-binds on every task:
+`validation/TEST_PLAN.md` v1.9, section 9. Built on `r5_common`/`r6_common`
+(imported, not copied) plus the shared-machine and provenance rules that
+same section's "Global constraints" binds on every task:
 
 - **2 workers by default** (`--workers`, every `exp_r7_e*.py` script) and
   every child process runs under `nice -n 10` -- other people's jobs share
@@ -39,10 +38,11 @@ binds on every task:
 `--dry-run` in every `exp_r7_e*.py` script must work with nothing built
 or running: it only prints jobs and the exact command + env each would
 run, via `dry_run()` below, and never calls `run_all` (which is the only
-thing that touches the network^H^H^H^H^H the binary).
+thing that touches the binary).
 """
 import argparse
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -375,25 +375,55 @@ def verdict(delta_sd):
     return f"**{label}**" if a >= 2.0 else label
 
 
-def summary_table(arm_stats_by_label, baseline, fires=FIRES):
+def summary_table(arm_stats_by_label, baseline, fires=FIRES, show_se=False, baseline_n=5):
     """arm_stats_by_label: {label: {fire: (mean, sd, n)}} (fire_stats() on
     each arm's rows). baseline: {fire: (mean, sd)} (e33_baseline(), or
     Arm B's own sd once E44 has run). Markdown table: Fire | baseline
     mean | baseline sd | <label> mean | <label> sd | Delta <label> (sd) |
     verdict <label>, one column block per arm, same shape and wording as
-    48-e30b-...md's per-fire tables."""
+    48-e30b-...md's per-fire tables. A fire missing from an arm's own
+    rows (`n == 0`) prints "missing" in every one of that arm's cells for
+    that row, rather than running `verdict()` on a delta built from
+    `float("nan")` -- `nan < 1.0` is `False` in Python, so an unguarded
+    call reads as a real, if unlikely, "beyond 1 sd (loss)" instead of
+    the "there is no data here" it actually means.
+
+    `show_se` (default `False`, so every pre-existing caller's output is
+    unchanged): appends two more columns per arm, "SE of difference" and
+    "Delta (SE)" -- the Welch standard error of the difference between
+    this arm's mean and the baseline's (`sqrt(arm_sd**2 / arm_n +
+    baseline_sd**2 / baseline_n)`) and the delta expressed in that many
+    SEs, a less noise-sensitive companion to the "Delta (sd)"/verdict
+    pair (which divides by the *baseline's* own sd alone and ignores the
+    arm's). `baseline_n` (default 5) is the seed count behind `baseline`
+    itself -- `baseline` only ever carries (mean, sd), not n, so this is
+    the one place that count has to be supplied by the caller; every
+    Round 7 baseline (`e33_baseline()`, `arm_b_baseline()`) is a
+    five-seed mean, so the default matches every caller that does not
+    override it. Added for E44's five-seed Arm-B-vs-E33 table
+    (`50-e44-full-e30b-arm-b.md`); every other Round 7 write-up's table
+    keeps `show_se` off."""
     labels = list(arm_stats_by_label)
     header = "| Fire | Baseline mean | Baseline sd |" + "".join(
-        f" {l} mean | {l} sd | Delta {l} (sd) | verdict {l} |" for l in labels
+        f" {l} mean | {l} sd | Delta {l} (sd) | verdict {l} |"
+        + (f" {l} SE of difference | Delta {l} (SE) |" if show_se else "")
+        for l in labels
     )
-    sep = "|---|---|---|" + "---|---|---|---|" * len(labels)
+    sep = "|---|---|---|" + "".join(
+        "---|---|---|---|" + ("---|---|" if show_se else "") for _ in labels
+    )
     lines = [header, sep]
     for fire in fires:
         b_mean, b_sd = baseline[fire]
         name = fire.split("_")[0] + ("*" if fire in HOLDOUT else "")
         cells = [name, f"{b_mean:.3f}", f"{b_sd:.3f}"]
         for label in labels:
-            mean, sd, _n = arm_stats_by_label[label].get(fire, (float("nan"), float("nan"), 0))
+            mean, sd, n = arm_stats_by_label[label].get(fire, (float("nan"), float("nan"), 0))
+            if n == 0:
+                cells += ["missing", "missing", "missing", "missing"]
+                if show_se:
+                    cells += ["missing", "missing"]
+                continue
             delta = mean - b_mean
             if b_sd:
                 delta_str = f"{delta:+.3f} ({delta / b_sd:+.2f} sd)"
@@ -405,5 +435,11 @@ def summary_table(arm_stats_by_label, baseline, fires=FIRES):
                 delta_str = f"{delta:+.3f} (sd=0)"
                 v = "undefined (zero sd)"
             cells += [f"{mean:.3f}", f"{sd:.3f}", delta_str, v]
+            if show_se:
+                se = math.sqrt(sd ** 2 / n + b_sd ** 2 / baseline_n)
+                if se:
+                    cells += [f"{se:.4f}", f"{delta / se:+.2f}"]
+                else:
+                    cells += ["0.0000", "undefined (zero SE)"]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)

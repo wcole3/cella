@@ -80,6 +80,13 @@ pub(crate) fn build_genes(
     wind_rot_gene: Option<f64>,
     wind_rot_sigma: Option<f64>,
 ) -> Vec<GeneSpec> {
+    if wind_rot_sigma.is_some() && wind_rot_gene.is_none() {
+        eprintln!(
+            "warning: SMC_WIND_ROT_SIGMA is set but SMC_WIND_ROT_GENE is not -- there is no \
+             wind_rot_deg gene in this run's list to attach a sigma override to, so \
+             SMC_WIND_ROT_SIGMA has no effect"
+        );
+    }
     let mut genes = prior;
     if contain {
         genes.push(GeneSpec::new(GENE_CONTAIN_A));

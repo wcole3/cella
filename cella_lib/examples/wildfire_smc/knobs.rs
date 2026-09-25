@@ -32,8 +32,13 @@ pub(crate) fn env_f64_opt(key: &str) -> Option<f64> {
 
 /// `SMC_WIND_SOURCE=era5|station` (Round 7 Task 6/E46): which wind feeds
 /// the driver's per-window forcing. `Era5` (default, unset) is the
-/// existing behaviour — byte-identical reports to before this knob
-/// existed. `Station` replaces each window's ERA5 (speed, from-bearing)
+/// existing behaviour: every field that existed in the report before
+/// this knob does not change value. The report is not byte-identical to
+/// a pre-Round-7 one even so — `modes::open::run`'s `Report` struct
+/// unconditionally gained three new fields this round (`wind_source`,
+/// `station_fallback_windows`, and `contain_growth_floor`, a sibling
+/// knob's field), regardless of whether any of the three knobs behind
+/// them are set. `Station` replaces each window's ERA5 (speed, from-bearing)
 /// with the station log's vector mean over that same window, falling
 /// back to that window's own ERA5 entry (counted) where the station log
 /// has no samples in range. See `crate::nulls::wind_schedule_for`.
@@ -146,9 +151,13 @@ pub(crate) struct Knobs {
     /// comment for what it does). Unset parses to the operator's
     /// pre-existing hard-coded value (`1e-4`,
     /// `cella_lib::wildfire::driver::default_contain_growth_floor`'s
-    /// twin default here), so every report from before this knob existed
-    /// is reproduced byte-identically. Must be a finite number > 0: see
-    /// [`contain_growth_floor_from`].
+    /// twin default here), so the operator's own containment behaviour
+    /// is reproduced exactly. The *report*, though, is not byte-identical
+    /// to a pre-Round-7 one even when this knob is left unset:
+    /// `modes::open::run`'s `Report` struct unconditionally gained this
+    /// field, plus `wind_source` and `station_fallback_windows` (two
+    /// sibling knobs' fields), this round. Must be a finite number > 0:
+    /// see [`contain_growth_floor_from`].
     pub(crate) contain_growth_floor: f64,
 }
 
@@ -260,6 +269,32 @@ impl Knobs {
             contain_growth_floor: contain_growth_floor_from(
                 std::env::var("SMC_CONTAIN_GROWTH_FLOOR").ok().as_deref(),
             ),
+        }
+    }
+
+    /// Warn, once, when `SMC_WIND_SOURCE=station` or a non-default
+    /// `SMC_CONTAIN_GROWTH_FLOOR` is set but `context` (`"map mode"` or
+    /// `"evolve mode's fit half"`) never reads either knob: `map` mode
+    /// builds its own `WildfireDriver` straight off the scenario's ERA5
+    /// schedule (`modes::map::run_map`), and `evolve`'s fit half
+    /// (`modes::evolve::fit_first_days`) does the same for its own
+    /// GA-driven driver -- both knobs only ever reach the ensemble in
+    /// `modes::open::run` (`open`/`assim`, and `evolve`'s own forecast
+    /// half once the fit is pinned). Warning only, no behaviour change:
+    /// silently ignoring an unused knob is the pre-existing behaviour.
+    pub(crate) fn warn_if_wind_or_floor_ignored(&self, context: &str) {
+        if self.wind_source == WindSource::Station {
+            eprintln!(
+                "warning: SMC_WIND_SOURCE=station has no effect in {context} -- it always \
+                 uses the scenario's own ERA5 wind"
+            );
+        }
+        if self.contain_growth_floor != cella_lib::wildfire::driver::default_contain_growth_floor()
+        {
+            eprintln!(
+                "warning: SMC_CONTAIN_GROWTH_FLOOR is set to a non-default value but has no \
+                 effect in {context} -- its driver always uses the operator's default floor"
+            );
         }
     }
 }

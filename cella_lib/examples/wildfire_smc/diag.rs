@@ -366,6 +366,22 @@ mod tests {
         assert!((iqr - 4.5).abs() < 1e-12, "got {iqr}");
     }
 
+    /// Odd n (n = 5): both quartile indices land on whole numbers (Q1
+    /// index = 0.25 * 4 = 1.0, Q3 index = 0.75 * 4 = 3.0), exercising
+    /// `quantile`'s `lo == hi` branch directly -- the 10-value test above
+    /// (even n) never lands on a whole-number index, and the single-member
+    /// test below short-circuits through `quantile`'s own `n == 1` case
+    /// instead of this general branch. Sorted 1..=5: Q1 = v[1] = 2.0, Q3 =
+    /// v[3] = 4.0, IQR = 2.0.
+    #[test]
+    fn iqr_gene_odd_count_hits_the_whole_number_quantile_index() {
+        let genomes: Vec<_> = (1..=5)
+            .map(|i| row(&[("wind_rot_deg", i as f64)]))
+            .collect();
+        let iqr = iqr_gene(&genomes, "wind_rot_deg").unwrap();
+        assert!((iqr - 2.0).abs() < 1e-12, "got {iqr}");
+    }
+
     #[test]
     fn iqr_gene_is_zero_for_a_single_member_not_none() {
         let genomes = vec![row(&[("wind_rot_deg", 12.0)])];

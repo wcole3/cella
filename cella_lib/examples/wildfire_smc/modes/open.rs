@@ -190,10 +190,14 @@ pub(crate) fn run(
     let ignition_centroid = diag::centroid(&ignition, sc.grid.width);
 
     // E46: the wind schedule the loop below actually forces the driver
-    // with -- `sc.wind` unchanged under the default `era5` source
-    // (byte-identical to before this knob existed), or the station
-    // vector mean per window under `station` (falling back to that
-    // window's own ERA5 entry, counted, where the station log has a
+    // with -- `sc.wind`'s own values unchanged under the default `era5`
+    // source (identical to what the driver was forced with before this
+    // knob existed -- but see the `Report` struct above: the report
+    // itself unconditionally gained `wind_source`/`station_fallback_
+    // windows`/`contain_growth_floor` this round, so it is not
+    // byte-identical to a pre-Round-7 report even under `era5`), or the
+    // station vector mean per window under `station` (falling back to
+    // that window's own ERA5 entry, counted, where the station log has a
     // gap). The deterministic nulls and SMC_DIAG's `era5_*` fields below
     // keep reading `sc.wind` directly, regardless of this knob -- only
     // the ensemble's own forcing changes.

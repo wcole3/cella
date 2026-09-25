@@ -116,8 +116,23 @@ pub struct WildfireDriver {
     /// contained with probability 1, silently -- the opposite of "no
     /// clamp". `wildfire_smc` rejects such values when it parses
     /// `SMC_CONTAIN_GROWTH_FLOOR`.
-    #[serde(default = "default_contain_growth_floor")]
+    ///
+    /// `skip_serializing_if` (added during the whole-branch review after
+    /// E49 landed): a driver at the default floor serialises with this
+    /// key absent, the same as a config written before this field
+    /// existed, so an old saved config stays byte-for-byte round-trippable
+    /// through a config export/import; a driver at a non-default floor
+    /// still writes the key (`#[serde(default = ...)]` above reads either
+    /// shape back in).
+    #[serde(
+        default = "default_contain_growth_floor",
+        skip_serializing_if = "is_default_contain_growth_floor"
+    )]
     pub contain_growth_floor: f64,
+}
+
+fn is_default_contain_growth_floor(floor: &f64) -> bool {
+    *floor == default_contain_growth_floor()
 }
 
 fn default_steps_per_day() -> u64 {
@@ -703,6 +718,36 @@ mod tests {
             wide_floor <= 0.15,
             "a floor of 5.0 should contain almost no stalled member: {wide_floor}"
         );
+    }
+
+    /// Config backward-compat (whole-branch review, after E49):
+    /// `contain_growth_floor`'s `skip_serializing_if` must drop the key
+    /// entirely for a driver at the default floor (so a driver written
+    /// before this field existed still serialises byte-for-byte the same),
+    /// and must still write it for a driver at a non-default floor (so the
+    /// override round-trips instead of silently reverting to `1e-4`).
+    #[test]
+    fn contain_growth_floor_is_omitted_only_at_its_default_value() {
+        let default_driver = WildfireDriver::default();
+        let default_json = serde_json::to_string(&default_driver).unwrap();
+        assert!(
+            !default_json.contains("contain_growth_floor"),
+            "a default driver must not serialise contain_growth_floor: {default_json}"
+        );
+        let round_tripped: WildfireDriver = serde_json::from_str(&default_json).unwrap();
+        assert_eq!(round_tripped, default_driver);
+
+        let overridden = WildfireDriver {
+            contain_growth_floor: 1e-3,
+            ..WildfireDriver::default()
+        };
+        let overridden_json = serde_json::to_string(&overridden).unwrap();
+        assert!(
+            overridden_json.contains(r#""contain_growth_floor":0.001"#),
+            "a non-default floor must still serialise: {overridden_json}"
+        );
+        let round_tripped: WildfireDriver = serde_json::from_str(&overridden_json).unwrap();
+        assert_eq!(round_tripped, overridden);
     }
 
     /// Round 7 Task 7 (E49), Phase 2: the sweep's own endpoints. The

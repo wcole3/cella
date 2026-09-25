@@ -194,8 +194,12 @@ fn station_window_from_deg(log: &StationLog, start_hours: f64, end_hours: f64) -
 
 /// `SMC_WIND_SOURCE` (Round 7 Task 6/E46): the wind schedule
 /// `modes::open::run`'s assim loop actually feeds the driver's forcing —
-/// `sc.wind` unchanged under `WindSource::Era5` (byte-identical to before
-/// this knob existed), or [`station_wind_schedule`] under
+/// `sc.wind`'s own values unchanged under `WindSource::Era5` (identical
+/// to what the driver was forced with before this knob existed; the
+/// *report* still gained the `wind_source`/`station_fallback_windows`
+/// fields unconditionally this round, so it is not byte-identical to a
+/// pre-Round-7 one even under `Era5` — see `modes::open::run`'s `Report`
+/// struct), or [`station_wind_schedule`] under
 /// `WindSource::Station`. The single point both the real run and its unit
 /// tests call, so "unset behaves like before" and "station replaces the
 /// schedule" can never drift apart.

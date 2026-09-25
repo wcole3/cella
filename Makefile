@@ -56,12 +56,19 @@ doc:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 ## Quick test run — only non-ignored tests (fast feedback)
+## Includes the wildfire_smc example's own unit tests (`cargo test
+## --package cella_lib` alone builds the example but does not run its
+## tests -- `cella_lib` is not a workspace member of the root Cargo.toml,
+## same "examples need a second invocation" trap `clippy` above works
+## around).
 test:
 	cd cella_lib && CELLA_ASCII=0 cargo test --package cella_lib
+	cd cella_lib && CELLA_ASCII=0 cargo test --example wildfire_smc
 
 ## Run all tests including ignored ones (multi-threaded)
 test-all:
 	cd cella_lib && CELLA_ASCII=0 cargo test --package cella_lib -- --include-ignored
+	cd cella_lib && CELLA_ASCII=0 cargo test --example wildfire_smc -- --include-ignored
 
 ## Run all tests including ignored ones, single-threaded
 test-all-single:

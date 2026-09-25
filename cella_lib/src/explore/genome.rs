@@ -36,6 +36,19 @@
 //! Gaussian step, flip and redraw above becomes a no-op at `sigma = 0`, so
 //! a member keeps exactly the value it was born with — selection can still
 //! act on that value (resampling still copies it), only mutation stops.
+//!
+//! **Exception: `evolve`'s iso+line variation.** The freeze above describes
+//! [`GeneSpace::mutate`]/`mutate_one`, the path `assim`/`open` mode (and
+//! resampling everywhere) use. `evolve` mode's own crossover-flavoured step
+//! ([`crate::explore::evolve::iso_line_step`]) does not honour a per-gene
+//! `sigma: 0` freeze the same way: alongside its own Gaussian step (scaled
+//! by the gene's `sigma`, so that half does stop at `sigma = 0`), it also
+//! moves the child a fraction of the way along the line toward a second,
+//! paired parent — a step whose size is a fixed 0.2 spread, independent of
+//! the gene's own `sigma`. A gene frozen this way in `evolve` mode can
+//! still move, via the line term alone, even at `sigma = 0`. No behaviour
+//! change here — this paragraph only documents a gap this module's own
+//! doc comment did not previously mention.
 
 use std::collections::BTreeMap;
 

@@ -148,7 +148,12 @@
 //!      ERA5 entry (counted as `station_fallback_windows` in the report)
 //!      where the station log has no samples in range or no station file
 //!      exists at all; see [`nulls::wind_schedule_for`]. `era5` (default,
-//!      unset) is byte-identical to before this knob existed. The
+//!      unset) leaves every pre-existing field's *value* unchanged; the
+//!      report is not byte-identical to a pre-Round-7 one even so, since
+//!      it unconditionally gained `wind_source` and
+//!      `station_fallback_windows` (plus `contain_growth_floor`, a
+//!      sibling knob's field) this round regardless of what any of the
+//!      three are set to. The
 //!      deterministic nulls and SMC_DIAG's `era5_*`/`station_*`
 //!      diagnostic fields always read the scenario's own ERA5 (or the
 //!      station log directly) regardless of this knob — only the
@@ -282,6 +287,7 @@ fn main() {
     let steps_per_day = knobs::steps_per_day_from(&sc);
 
     if mode == "map" {
+        knobs.warn_if_wind_or_floor_ignored("map mode");
         modes::map::run_map(
             &sc,
             &truth,
@@ -306,6 +312,7 @@ fn main() {
 
     let mut fit = None;
     if mode == "evolve" {
+        knobs.warn_if_wind_or_floor_ignored("evolve mode's fit half (it fits on ERA5)");
         let (report, best) = modes::evolve::fit_first_days(
             &sc,
             &truth,

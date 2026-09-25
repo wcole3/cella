@@ -27,7 +27,17 @@ codegen-units = 1
 # section for the exact command), not baked into this profile, so it can be
 # toggled per invocation without editing this file. Mirrored in
 # cella_lib/Cargo.toml — keep the two in sync, same rule as [profile.release].
-[profile.bench]
+#
+# Named `bench-study`, not Cargo's built-in `bench` profile: the built-in
+# name defaults to `target/release/` (no separate `target/bench/`), so a
+# `cargo build --profile bench --example wildfire_smc` could fingerprint-
+# match and silently reuse or overwrite the plain-release
+# `cella_lib/target/release/examples/wildfire_smc` every experiment runner
+# calls (`docs/performance.md`, "Bench profile study" -- "Two build-system
+# details discovered while setting this up"). A custom name gets its own
+# `target/bench-study/` directory instead, closing that risk; nothing about
+# this profile's settings or the study's own numbers changed.
+[profile.bench-study]
 inherits = "release"
 lto = "fat"
 panic = "abort"
