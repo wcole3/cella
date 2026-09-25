@@ -108,6 +108,14 @@ pub struct WildfireDriver {
     /// the value the operator has always used; this field exists so a
     /// caller can override it without changing that default. See
     /// `MemberDriver::period_end` below.
+    ///
+    /// **Must be a finite number > 0.** The floor is what keeps `ln
+    /// growth` finite for a member that did not grow. A floor of 0 (or
+    /// below, when growth is exactly 0) gives `ln 0 = -inf`, and with
+    /// `contain_b` always negative the logit becomes `+inf`: the member is
+    /// contained with probability 1, silently -- the opposite of "no
+    /// clamp". `wildfire_smc` rejects such values when it parses
+    /// `SMC_CONTAIN_GROWTH_FLOOR`.
     #[serde(default = "default_contain_growth_floor")]
     pub contain_growth_floor: f64,
 }

@@ -149,12 +149,13 @@ def draw_diagnostic():
     out["floor_binding_draws_at_1e-3"] = [
         {**d, **{f"p_{name}": p[name][i] for name, _ in FLOORS}} for d, i in below
     ]
-    # Where growth sits for the draws that were not saturated.
-    out["growth_quantiles"] = (
-        dict(zip(["min", "q10", "median", "q90"],
-                 [min(growth), *statistics.quantiles(growth, n=10)[0:1],
-                  statistics.median(growth), statistics.quantiles(growth, n=10)[-1]]))
-        if len(growth) > 1 else None)
+    # Where the raw growth of the recorded draws sits.
+    if len(growth) > 1:
+        deciles = statistics.quantiles(growth, n=10)
+        out["growth_quantiles"] = {"min": min(growth), "q10": deciles[0],
+                                   "median": statistics.median(growth), "q90": deciles[-1]}
+    else:
+        out["growth_quantiles"] = None
     return out
 
 

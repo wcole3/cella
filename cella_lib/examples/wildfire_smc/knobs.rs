@@ -147,8 +147,75 @@ pub(crate) struct Knobs {
     /// pre-existing hard-coded value (`1e-4`,
     /// `cella_lib::wildfire::driver::default_contain_growth_floor`'s
     /// twin default here), so every report from before this knob existed
-    /// is reproduced byte-identically.
+    /// is reproduced byte-identically. Must be a finite number > 0: see
+    /// [`contain_growth_floor_from`].
     pub(crate) contain_growth_floor: f64,
+}
+
+/// Parse `SMC_CONTAIN_GROWTH_FLOOR` (E49). Unset, or not a number at all,
+/// gives the default `1e-4` -- the same "unparsable means unset" rule as
+/// every `env_f64` knob here, so the unset path is unchanged. A number
+/// that is not finite and > 0 stops the run with a message instead:
+/// the floor exists to keep `ln(growth)` finite, so a floor of 0 (or a
+/// negative one, on a member whose growth is exactly 0) would make the
+/// containment logit `a + b * ln(0)` = +infinity (`contain_b` is always
+/// negative) and silently contain every stalled member, the opposite of
+/// "no clamp". NaN and infinity are rejected for the same reason: NaN
+/// makes `growth.max(floor)` ignore the floor, infinity makes `ln` infinite.
+pub(crate) fn contain_growth_floor_from(v: Option<&str>) -> f64 {
+    let default = cella_lib::wildfire::driver::default_contain_growth_floor();
+    match v.and_then(|s| s.parse::<f64>().ok()) {
+        None => default,
+        Some(f) if f.is_finite() && f > 0.0 => f,
+        Some(f) => panic!(
+            "SMC_CONTAIN_GROWTH_FLOOR={f} is invalid: the containment growth floor must be \
+             a finite number > 0, because it is what keeps ln(growth) finite for a member \
+             that did not grow (0 or less would make every stalled member certainly contained)"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod contain_growth_floor_tests {
+    use super::contain_growth_floor_from;
+
+    /// Unset (and, like every `env_f64` knob, unparsable) keeps the
+    /// operator's original floor, so existing runs are unchanged.
+    #[test]
+    fn unset_or_unparsable_gives_the_default() {
+        assert_eq!(contain_growth_floor_from(None), 1e-4);
+        assert_eq!(contain_growth_floor_from(Some("bogus")), 1e-4);
+    }
+
+    #[test]
+    fn a_positive_floor_is_used_as_given() {
+        assert_eq!(contain_growth_floor_from(Some("1e-05")), 1e-5);
+        assert_eq!(contain_growth_floor_from(Some("0.001")), 1e-3);
+    }
+
+    #[test]
+    #[should_panic(expected = "SMC_CONTAIN_GROWTH_FLOOR=0 is invalid")]
+    fn a_zero_floor_is_rejected() {
+        contain_growth_floor_from(Some("0"));
+    }
+
+    #[test]
+    #[should_panic(expected = "SMC_CONTAIN_GROWTH_FLOOR=-0.001 is invalid")]
+    fn a_negative_floor_is_rejected() {
+        contain_growth_floor_from(Some("-0.001"));
+    }
+
+    #[test]
+    #[should_panic(expected = "must be a finite number > 0")]
+    fn a_non_finite_floor_is_rejected() {
+        contain_growth_floor_from(Some("inf"));
+    }
+
+    #[test]
+    #[should_panic(expected = "must be a finite number > 0")]
+    fn a_nan_floor_is_rejected() {
+        contain_growth_floor_from(Some("NaN"));
+    }
 }
 
 impl Knobs {
@@ -190,9 +257,8 @@ impl Knobs {
             },
             diag: env_f64("SMC_DIAG", 0.0) > 0.0,
             wind_source: WindSource::from_env(),
-            contain_growth_floor: env_f64(
-                "SMC_CONTAIN_GROWTH_FLOOR",
-                cella_lib::wildfire::driver::default_contain_growth_floor(),
+            contain_growth_floor: contain_growth_floor_from(
+                std::env::var("SMC_CONTAIN_GROWTH_FLOOR").ok().as_deref(),
             ),
         }
     }

@@ -73,7 +73,9 @@ pub(crate) struct WindowDiag {
     /// Round 7 Task 7 (E49): the smallest raw growth ratio (before the
     /// growth floor is applied) among the containment draws in
     /// `contain_draws`; `None` when no still-burning member was drawn for
-    /// since the previous scored window.
+    /// since the previous scored window (the key is then omitted, same
+    /// convention as `wind_rot_deg_median`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) min_growth_uncontained: Option<f64>,
     /// Round 7 Task 7 (E49): every containment draw the driver made since
     /// the previous scored window, one row per draw -- enough to compute,
@@ -408,6 +410,10 @@ mod tests {
             "None must omit the key entirely, not serialise null: {json}"
         );
         assert!(!json.contains("wind_rot_deg_median"), "median has the same convention: {json}");
+        assert!(
+            !json.contains("min_growth_uncontained"),
+            "E49's min growth has the same convention: {json}"
+        );
     }
 
     #[test]
