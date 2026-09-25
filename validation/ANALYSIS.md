@@ -501,14 +501,23 @@ this project has been checked — and set a hard rule in advance: if the
 new configuration loses to the old one by more than a small margin on
 *any* fire, it does not get promoted, no matter how well it does
 elsewhere. It lost on one fire, Pier, by more than four times that
-margin. Three fires it clearly won on average, but the rule was written
-to catch exactly this shape of result — a good-looking average that hides
-a fire it makes worse — and it did its job. **The new configuration is
-not promoted. The model we already had remains the recommendation.**
+margin, measured the way the rule itself measures it (against how much
+that fire's old-model runs normally wiggle from one random seed to the
+next). Measured a different way instead — against how much *both*
+configurations' own five runs wiggle, not just the old model's — Pier's
+loss looks a good deal less dramatic, roughly the same size as the best
+gain the new configuration won on a different fire. That does not change
+the outcome: the rule was written, and agreed to, before the run, in the
+first way of measuring it, and a second, separate check (below) also
+came back "no" on its own. Three fires it clearly won on average, but the
+rule was written to catch exactly this shape of result — a good-looking
+average that hides a fire it makes worse — and it did its job. **The new
+configuration is not promoted. The model we already had remains the
+recommendation.**
 
 **We also asked why the new configuration's gene helps, and it turns out
 there isn't one answer.** We ran two separate tests, each designed to
-pin down whether the learned per-fire wind-direction gene works because
+pin down whether the learned per-member wind-direction gene works because
 each simulated fire converges on the *one correct* bearing, or because
 having many simulated fires all guessing *different* bearings is what
 actually helps (the ensemble spreads its bets and something usually
@@ -527,6 +536,35 @@ cannot explain in one sentence is not a change we should make the
 default, which is exactly what our own rule (above) said before either
 test ran.
 
+**A closer look afterward turned up a third possible story the
+pre-written test did not consider, though it does not settle the
+question either.** On five of the six fires, simply switching the gene's
+*learning* off (freezing each simulated fire's guess at whatever it
+started with) did about as well as leaving learning on — it only lost
+clearly on one fire, Buck. Meanwhile, the version that kept learning on
+but narrowed how far each fire's guess was allowed to range lost badly on
+exactly the fire (Chimney) where the full version's own best learned
+answer needed more room than that narrow range gave it. Read together,
+this suggests the gene may be doing most of its work just by giving each
+simulated fire a wide starting range of guesses to pick from, not by
+learning anything through mutation — mutation only clearly mattered on
+one of the six fires. This is a candidate explanation offered after the
+fact, not a tested one: nobody ran the one experiment that would check it
+directly (varying only how wide the range is, with learning left on at
+its normal strength throughout).
+
+**One more honesty check, using the dumbest possible forecasters as a
+floor.** Compared against a plain expanding circle and a wind-shaped
+oval — two deliberately unintelligent stand-ins used throughout this
+project as a sanity floor — the picture is thinner than the headline
+numbers alone suggest. The new configuration only beats the plain circle
+on two of the six fires (barely, on one of them), and only beats the oval
+on one. The model we already recommend does no better against the
+circle, beating it on only one of the six fires. That is not a new
+problem this round created, but it is worth keeping in mind before
+reading any of this round's numbers as a decisive win: the circle and
+oval are already strong, cheap competitors on several of these fires.
+
 **A smaller worry from Round 6 turned out to be nothing.** One fire's
 "percentage of the simulated fire under control" number had looked
 unexpectedly low under the faster clock the new configuration uses,
@@ -543,10 +581,11 @@ matched the old model almost exactly; the one low run had just been an
 unlucky roll of the dice, not a sign of a broken clock.
 
 **What is left.** Because the promotion test failed, a planned sixth
-experiment — combining this round's wind-direction fix with two earlier,
-separately-promising tricks (ember jump, faster spread near the fire's
-edge) — was skipped by our own pre-written rule: there was no point
-combining pieces of a configuration we had just decided not to use. Two
+experiment — adding one more piece, embers jumping ahead of the main
+fire and starting new spot fires (already separately promising on its
+own), on top of this round's full new configuration — was skipped by our
+own pre-written rule: there was no point adding another piece to a
+configuration we had just decided not to use. Two
 follow-up checks are worth doing regardless of promotion: one fire's
 "better-measured wind alone helped enormously" result turned out to be
 partly explained by a subtle mismatch in how the two wind data sources

@@ -217,18 +217,30 @@ a bug in this page.
   coarse ERA5 daily average alone is a real risk, not a hypothetical
   one — found on some of Brattain's biggest-growth windows. `SMC_DIAG=1`
   reports both bearings per window so this can be computed. E48.
+- **Vector mean.** Averaging wind as a vector (its u/v components) rather
+  than averaging speed and direction as separate scalars — a wind that
+  swings between two opposite directions during the averaging window
+  cancels toward near-zero speed ("a swinging wind averages toward
+  calm"), which a plain speed average would not do. ERA5's daily entries
+  here are a *domain* mean (space, over the fire's footprint) **and**
+  vector mean (time, over the day) of u/v; a station log's own vector
+  mean is a single point with no domain-space averaging to cancel
+  against, so it keeps more of the day's actual swing — every fire's
+  station speed sits at or above its ERA5 speed, one fire (Ferguson)
+  by more than 10×. E46, `validation/scripts/convert_pytorchfire.py`.
 - **Wind source (`SMC_WIND_SOURCE`).** Which weather log the driver reads
   its per-window wind vector from: `era5` (the default — the scenario's
-  daily-average reanalysis wind, unchanged behaviour) or `station` — the
-  hourly NOAA ISD log's vector mean over the same window
-  (`station_vector_mean`, already computed for the Ellipse null's
-  station variant, but not fed to the driver until this knob). A window
-  whose station log has a gap falls back to ERA5 for that window; the
-  report counts how many windows fell back. Distinct from the
-  wind-direction offset gene below, which *corrects* whichever source is
-  in use per member — this knob only changes which log is read. E46:
-  separates "the input is coarse" from "the filter can't use the input
-  it has."
+  daily-average reanalysis wind, unchanged behaviour; see Vector mean,
+  above, for why ERA5's own daily average is biased toward calm relative
+  to a station's) or `station` — the hourly NOAA ISD log's vector mean
+  over the same window (`station_vector_mean`, already computed for the
+  Ellipse null's station variant, but not fed to the driver until this
+  knob). A window whose station log has a gap falls back to ERA5 for
+  that window; the report counts how many windows fell back. Distinct
+  from the wind-direction offset gene below, which *corrects* whichever
+  source is in use per member — this knob only changes which log is
+  read. E46: separates "the input is coarse" from "the filter can't use
+  the input it has."
 - **Wind-direction offset gene (`wind_rot_deg`).** A free, per-member gene
   (`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`) added to the forcing's
   wind from-bearing before the driver writes it into the model, mod 360.
@@ -402,6 +414,17 @@ a bug in this page.
 - **Resampling.** Drawing the next population with probability
   proportional to weight. Children keep the parent's grid; you cannot
   redraw the past.
+- **Resampling degeneracy.** Repeated resampling narrows a population
+  toward whichever birth draws happened to survive selection, even for a
+  gene whose *mutation* is switched off — so a gene's per-window spread
+  (IQR) narrowing over a run is not, by itself, proof that the filter is
+  *learning* one value; selection alone thinning which starting draws
+  remain can produce the same narrowing trend. E45 found this directly:
+  under `SMC_WIND_ROT_SIGMA=0` (mutation frozen), `wind_rot_deg`'s IQR
+  still collapsed on every fire, purely from resampling. The standard
+  particle-filter name for the underlying effect is low effective sample
+  size; this is that effect read off one gene's own spread rather than
+  off `ess`.
 - **σ (sigma).** Mutation size, as a share of each knob's range.
 - **Per-gene sigma.** A `sigma` set on one gene's own spec instead of the
   engine's shared default — it overrides the engine's σ for that gene

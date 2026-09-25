@@ -226,8 +226,7 @@ in `validation/results/analysis/`.
 
 ## 9. Plan changelog
 
-- v1.9 (2026-09-23, before the E48 run): Round 7
-  (`docs/superpowers/plans/round-7-experiments.md`) pre-registers six
+- v1.9 (2026-09-23, before the E48 run): this section pre-registers six
   experiments, E44–E49, that ask one question — does the E30b Arm B
   configuration (arrival kernel, rear-focus wind law, 4× clock, the
   widened `arrival_x4` prior, a learned per-member `wind_rot_deg` gene
@@ -902,6 +901,16 @@ in `validation/results/analysis/`.
    follow-up (does ICS-209's containment-line lag scale with fire size or
    fuel type?) — carried from Round 4/5; E49's audit narrows the lever to
    the learned `contain_a`/`contain_b` genes, not the growth floor.
+7. For Round 8's own stop rule(s): pre-register a Welch/standard-error-
+   of-the-difference criterion beside the existing baseline-sd bar, not
+   in place of it (E44's Pier loss reads as "beyond 1 sd, more than four
+   times over" in baseline-sd units but only ≈ 1.4 SE of the difference
+   between the two arms' own five-seed noise — see `round-7.md`, "The
+   promotion decision," and `50-e44-full-e30b-arm-b.md`'s Result 1
+   table); and tie each arm's seed count to its own measured noise
+   (more noise ⇒ more seeds, not fewer) rather than a fixed count picked
+   in advance, the way E45's seed-count branch already ties itself to
+   E44's own sd comparison.
 
 Full context for each item: `validation/experiments/round-7.md`, "Still
 open after this round" (which also carries forward `round-6.md`'s own

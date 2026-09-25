@@ -25,8 +25,8 @@ faster clock, a widened `p0`/`burn_duration` prior, and a free per-member
 `wind_rot_deg` gene) beat or tied E33 on all six fires in a single seed,
 reversing the arrival kernel's own real-fire rejection (E30) — but it
 rested on one seed and a noise floor borrowed from a different
-configuration. Round 6's plan (`docs/superpowers/plans/round-7-experiments.md`)
-set the bar plainly:
+configuration. Round 7's own pre-registration (TEST_PLAN v1.9, §9) set
+the bar plainly:
 
 > **Does the E30b Arm B configuration deserve to replace the Bernoulli
 > recommendation, and if so, why does it work?** Arm B becomes the
@@ -97,7 +97,13 @@ carried forward here.
    inside it, and only by a 0.01 margin (elongation 1.62 vs. observed
    1.61) at the exact size threshold. Brattain recovers the size but not
    the shape (1.34 vs. an observed stretch of 1.83); Pier barely moves at
-   all.
+   all. Against the deterministic nulls (`50-e44-full-e30b-arm-b.md`'s
+   own nulls table), the wins are narrower than the headline sd-verdicts
+   suggest: Arm B beats the Circle on only two of six fires (Chimney,
+   and Ferguson by 0.013 — 0.386 vs. 0.373) and the Ellipse on only one
+   (Chimney); E33 itself beats the Circle on only one fire (Chimney) —
+   the Circle and Ellipse are already strong, cheap competitors on most
+   of these fires, under either configuration.
 
 3. **The gene's own mechanism is fire-specific, not one sentence** (E45).
    Freezing the gene's mutation (`SMC_WIND_ROT_SIGMA=0`, diversity kept,
@@ -109,19 +115,32 @@ carried forward here.
    the largest single move in the experiment). Chimney and Bear make
    opposite, equally clean cases: Chimney's own learned median (−29.3°)
    sits entirely outside ±20°, so a narrow range cannot represent the
-   correction it needs — a *learning* story; Bear's median (−7.6°) sits
-   comfortably inside ±20°, yet the narrow arm still loses while the
-   frozen arm ties — a *diversity* story, where a wide simultaneous spread
-   across members matters independent of where the median lands. No
-   single explanation fits both. The per-window IQR series adds a real
-   caveat to any future read of this gene: under a frozen gene, the
-   population's `wind_rot_deg` spread collapses from a birth-level ≈ 97°
-   down to 0.7°–43° purely through resampling thinning which birth draws
-   survive — with mutation entirely off. That means an IQR trend narrowing
-   over a run, by itself, cannot tell "the filter learned a bearing" apart
-   from "resampling degeneracy alone did it" — which is why the optional
-   third batch (Arm B itself under `SMC_DIAG=1`) was ruled out and not
-   run: it could not have discriminated the two stories either.
+   correction it needs — a *range* story, not a *learning* one (freezing
+   mutation entirely, σ0, actually *gains* on Chimney, +1.13 sd, which
+   rules out "the filter must learn the value through mutation" as the
+   reason ±20° fails there — what ±20° lacks is width, not a mutation
+   step); Bear's median (−7.6°) sits comfortably inside ±20°, yet the
+   narrow arm still loses while the frozen arm ties — a *diversity*
+   story, where a wide simultaneous spread across members matters
+   independent of where the median lands. No single explanation fits
+   both. The per-window IQR series adds a real caveat to any future read
+   of this gene: under a frozen gene, the population's `wind_rot_deg`
+   spread collapses from a birth-level ≈ 97° down to 0.7°–43° purely
+   through resampling thinning which birth draws survive — with mutation
+   entirely off. That means an IQR trend narrowing over a run, by itself,
+   cannot tell "the filter learned a bearing" apart from "resampling
+   degeneracy alone did it" — which is why the optional third batch
+   (Arm B itself under `SMC_DIAG=1`) was ruled out and not run: it could
+   not have discriminated the two stories either. A post-hoc read of the
+   same two tables together (`51-e45-wind-rot-mechanism.md`, "What it
+   means") offers a third candidate that the pre-registered design did
+   not set out to test: σ0 ties or beats Arm B on five of the six fires
+   (losing only on Buck), so mutation itself may add little beyond a
+   wide per-member range the filter selects within at birth — this does
+   not settle the question (no run here isolates range width from
+   mutation while holding the other fixed), but it is a specific,
+   testable candidate the verdict below should not be read as having
+   ruled out.
 
 4. **Station wind as a driver input is fire-specific too, and the two
    fires the prediction named split cleanly in opposite directions**
@@ -193,9 +212,18 @@ Checked against both halves of that rule:
 
 - **Task 4's stop rule tripped.** E44's five-seed Arm B loses to E33 on
   Pier by 4.60 sd — more than four times the pre-registered 1 sd bar, and
-  robust to seed choice (the fires-4-of-5 mean is still 1.39 sd below
-  E33). Per the stop rule's own text, this alone means **"Arm B is not
-  promoted."**
+  robust to seed choice (the four-of-five-seeds mean, excluding Pier's
+  single worst seed, is still 1.39 sd below E33). Per the stop rule's own
+  text, this alone means **"Arm B is not promoted."** That rule is
+  written in baseline-sd units (E33's own five-seed sd); read instead in
+  standard errors of the difference (Welch, using both arms' own
+  five-seed sd — the two added columns in `50-e44-full-e30b-arm-b.md`'s
+  Result 1 table), Pier's loss is ≈ 1.4 SE, about the same size as
+  Brattain's +1.4 SE gain — weaker evidence than the "more than four
+  times the bar" sd-units framing suggests on its own. This does not
+  change the verdict: the rule was pre-registered in sd units before the
+  run, and (below) the mechanism clause failed independently of this
+  margin either way.
 - **Neither Task 5 nor Task 6 gave a one-sentence mechanism.** E45's own
   verdict states it plainly: "Undetermined as a single sentence — the
   evidence splits by fire, not by one universal explanation." E46's own
@@ -207,10 +235,11 @@ Checked against both halves of that rule:
   required.
 
 **Arm B is not promoted.** Both conditions were required; neither is met.
-This is not a close call on either count — the stop rule trips more than
-four times over on its own, and two independent experiments designed to
-supply the mechanism clause both concluded, independently, that no single
-mechanism fits.
+The stop rule trips in the sd units it was pre-registered in — a milder
+SE-of-difference read of Pier's own margin (above) does not change that,
+since the rule was written and checked in sd units, not SE units — and
+two independent experiments designed to supply the mechanism clause both
+concluded, independently, that no single mechanism fits.
 
 **The recommended production configuration is unchanged from Round 5/6:**
 Bernoulli spread rule, 32 members, β 10, σ 0.2, immigrants 0.2,
@@ -228,12 +257,19 @@ that different fires need different amounts of it. A future design that
 starts from "which fires need what" (E46's own split, Ferguson vs.
 Chimney) rather than "what is the one true mechanism" would likely be
 more informative than a third ablation aimed at forcing a single-sentence
-answer where two honest experiments already said there isn't one.
-Separately, E46's post-hoc finding — that a gridded reanalysis's domain
-mean and a weather station's point mean are not the same "wind speed"
-even when both convert to the same units — is a general trap for any
-future comparison of the two input types, not specific to this round's
-station-wind knob.
+answer where two honest experiments already said there isn't one. A
+post-hoc read of E45's own two tables together (above; also
+`51-e45-wind-rot-mechanism.md`, "What it means") is itself an example of
+this: read side by side rather than fire by fire, σ0 ties or beats Arm B
+on five of six fires, which points at "a wide per-member range, selected
+within" as a single candidate mechanism the pre-registered per-fire
+framing did not surface — offered here as a candidate worth a direct
+test, not as a retroactive single-sentence answer the design already
+concluded it cannot defend. Separately, E46's post-hoc finding — that a
+gridded reanalysis's domain mean and a weather station's point mean are
+not the same "wind speed" even when both convert to the same units — is
+a general trap for any future comparison of the two input types, not
+specific to this round's station-wind knob.
 
 ## Still open after this round
 
@@ -269,18 +305,10 @@ In order:
    rather than fixed now because none is cheap enough to fold in:
    `validation/scripts/experiments/r7_common.py` still bundles the shared
    batch-launch gates (binary/load checks) and the per-fire summariser in
-   one 409-line file (Task 2's own acceptance noted this and deferred
-   splitting it); `r7_common._run_map` duplicates roughly five of
-   `r5_common.run`'s own launch lines rather than calling it directly (the
-   two report shapes, `assim` vs. `map`, do not share a parser); the IQR
-   unit test added for E45 (`diag::iqr_gene`) covers the even-length
-   quantile-interpolation case with its worked 10-value example but has
-   no matching odd-length case; Task 1's own report
-   (`.superpowers/sdd/round-7-experiments/task-1-report.md`) carries a
-   file-list-with-line-counts table for the new `wildfire_smc/` module
-   tree (2,731 lines across 11 files, was one 2,420-line file) but no
-   per-module test-count breakdown — cheap to add if a future task wants
-   it, not added here since no such table exists yet to extend.
+   one file (Task 2's own acceptance noted this and deferred splitting
+   it); `r7_common._run_map` duplicates roughly five of `r5_common.run`'s
+   own launch lines rather than calling it directly (the two report
+   shapes, `assim` vs. `map`, do not share a parser).
 8. **Crate coverage** was at ≈ 98.3 % coming into this round, below the
    99 % gate — addressed directly in this task, not left open (see
    "Configuration after this round," below, "Hygiene closed this
@@ -306,14 +334,21 @@ Five-seed means (E33): Bear 0.479, Brattain 0.416, Buck 0.590, Chimney
   engine's own sigma exactly as before.
 - `SMC_WIND_SOURCE=era5|station` — swaps the driver's per-window forcing
   from the scenario's ERA5 schedule to the station log's own vector mean
-  (E46). Default/unset (`era5`) is byte-identical to before this knob
-  existed; a window with no station rows in range falls back to that
+  (E46). Default/unset (`era5`) leaves every pre-existing field's value
+  unchanged; a window with no station rows in range falls back to that
   window's own ERA5 entry, counted in `station_fallback_windows`.
 - `SMC_CONTAIN_GROWTH_FLOOR` — overrides the containment operator's
-  `.max(1e-4)` growth floor (E49). Unset/default reproduces `1e-4`
-  byte-for-byte; the knob validates its input (any non-positive or
-  non-finite value panics with a named reason, fixed in `cff55c6` after
-  review) and echoes the floor it used into the report.
+  `.max(1e-4)` growth floor (E49). Unset/default reproduces the
+  operator's own pre-existing `1e-4` behaviour exactly; the knob
+  validates its input (any non-positive or non-finite value panics with
+  a named reason, fixed in `cff55c6` after review) and echoes the floor
+  it used into the report. **None of the three knobs above leaves the
+  report itself byte-identical to a pre-Round-7 one, even all unset
+  together:** `wind_source`, `station_fallback_windows` and
+  `contain_growth_floor` are three new fields the report now always
+  carries (see `modes::open::run`'s `Report` struct) — every
+  pre-existing field's *value* is unchanged, but the JSON shape gained
+  three keys.
 
 **Arm B itself (arrival kernel, rear-focus wind law, 4× clock, the
 `arrival_x4.json` prior, `wind_rot_deg` at ±90°) remains a tested,
@@ -329,10 +364,10 @@ being run.
 
 **Hygiene closed this round:** crate coverage restored to ≥ 99 % lines —
 98.67 % (200 missed of 15,078) before this task's own added tests,
-99.02 % (150 missed of 15,330) after (`make coverage-all`; command and
-the full uncovered-lines-by-file breakdown are in
-`.superpowers/sdd/round-7-experiments/task-9-report.md`, not repeated
-here). The 98.67 % "before" figure is lower than the ≈ 98.3 % this
+99.02 % (150 missed of 15,330) after (`make coverage-all`; the
+uncovered-lines-by-file breakdown behind these two figures is the
+`cargo llvm-cov --html` report that command produces locally, not
+committed). The 98.67 % "before" figure is lower than the ≈ 98.3 % this
 section's own item 8 and the Round 6 plan quoted, in the *wrong*
 direction from what "more code, same gate" would suggest at first
 glance — it isn't a regression: Tasks 1, 3, 5, 6 and 7 all added tested

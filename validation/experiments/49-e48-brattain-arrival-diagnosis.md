@@ -360,6 +360,23 @@ cost either way).
   fires, or is Brattain's clean top-3-overlap a coincidence of this one
   fire's growth curve? Not tested — this experiment is Brattain-only, by
   design (read-mostly, one fire, the fire the question was about). Open.
+- On the 139°-off window (day 5), a "ERA5 points the wrong way" story
+  would seem to predict a crosswind-heavy miss, not a downwind-heavy one
+  — yet the miss there is overwhelmingly counted `downwind_miss`
+  (post-hoc, added during the whole-branch review, no new numbers run).
+  The reconciling detail is what "downwind" means to
+  `diag::head_flank_decompose`: a cell counts as downwind whenever its
+  vector from the fixed ignition centroid has a positive dot product
+  with ERA5's own toward-bearing — a 180°-wide half-plane test around
+  ERA5's axis, not a narrow cone around it. A 139° rotation of that axis
+  still leaves most of the original half-plane overlapping the rotated
+  one (only a rotation approaching 180° would flip the classification
+  for most cells), so this classifier is too coarse to distinguish "the
+  fire grew toward the true wind" from "the fire grew toward ERA5's
+  wrong one" on a single ~139° window — both would read mostly
+  `downwind_miss` under ERA5's own axis. A narrower angular bucket (e.g.
+  quadrants instead of a half-plane) would be needed to test the
+  wrong-direction story directly. Open.
 
 **Verdict.** Finding, not a score-family test. Clause 1 of the
 pre-registered prediction ("ERA5 direction is right on the daily mean but

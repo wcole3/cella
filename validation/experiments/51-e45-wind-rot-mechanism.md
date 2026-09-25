@@ -561,6 +561,36 @@ degeneracy — which is exactly why the optional Arm B-diag batch was
 judged not to add discriminating power (see "How we scored it," above)
 and was not run.
 
+**Post-hoc, added during the whole-branch review — a third candidate
+reading, offered but not tested.** Read as one table rather than fire by
+fire: σ0 (mutation off, diversity kept) ties or beats Arm B on **five of
+the six fires** — it only loses clearly on Buck (−2.92 sd) — while ±20°
+(mutation on, range narrowed) loses on exactly the fires where Arm B's
+own posterior needs an offset or a spread wider than ±20° can hold:
+Chimney's median (−29.3°) sits entirely outside the range (Result 2,
+above), and Bear (−2.24 sd) and Buck (−2.62 sd) lose too even though
+their own medians (−7.6°, −11.1°) sit inside it — consistent with those
+two needing the wider birth-draw *spread* ±90° gives and ±20° denies,
+not a wider median. Read this way, the gene may be doing most of its
+work through the width of the per-member range the filter selects
+within at birth, not through the mutation step itself — mutation only
+clearly earns its keep on Buck, the one fire where σ0 costs more than
+1 sd. This does not make σ0 an inert control, though: the IQR series in
+Result 1 shows the population's spread collapsing sharply under σ0 on
+every fire, purely from resampling (Angular diversity / Resampling
+degeneracy in the glossary) — selection is still concentrating the gene
+toward whichever birth draws survive; only the *mutation* channel is
+off. So this reading is closer to "a wide range, selected within" than
+"no learning at all." This is one more candidate, offered post-hoc and
+not tested directly — no design run here isolates range width from
+mutation while holding the other fixed, so it does not change the
+verdict below, which stands on the two-fire (Chimney/Bear) contradiction
+the pre-registered design set out to test. A follow-up that varies range
+width alone (e.g. ±40°, ±60°), with mutation left at the engine default
+throughout, would test this candidate directly: if it is right, a wider
+range with mutation on should recover Chimney and Bear alike without
+needing σ0's own diversity-only framing.
+
 **Questions this raises.**
 
 - Would giving the ±20° arm's population *more* mutation pressure (a

@@ -175,24 +175,45 @@ arrival-kernel experiment (E45, E46, E47) is judged against from here
 on, also written into `exp44_arm_b_5seed_summary.json`'s `arm_b_sd`
 block:
 
-| Fire | Baseline mean | Baseline sd | Arm B (5-seed) mean | Arm B (5-seed) sd | Delta Arm B (5-seed) (sd) | verdict Arm B (5-seed) |
-|---|---|---|---|---|---|---|
-| Bear | 0.479 | 0.015 | 0.473 | 0.005 | −0.006 (−0.42 sd) | tie |
-| Brattain | 0.416 | 0.004 | 0.437 | 0.034 | +0.022 (+5.73 sd) | **beyond 2 sd (gain)** |
-| Buck | 0.590 | 0.039 | 0.640 | 0.005 | +0.049 (+1.27 sd) | beyond 1 sd (gain) |
-| Chimney | 0.434 | 0.012 | 0.489 | 0.031 | +0.055 (+4.70 sd) | **beyond 2 sd (gain)** |
-| Ferguson* | 0.344 | 0.007 | 0.386 | 0.014 | +0.042 (+5.69 sd) | **beyond 2 sd (gain)** |
-| Pier* | 0.535 | 0.003 | 0.521 | 0.023 | −0.014 (−4.60 sd) | **beyond 2 sd (loss)** |
+| Fire | Baseline mean | Baseline sd | Arm B (5-seed) mean | Arm B (5-seed) sd | Delta Arm B (5-seed) (sd) | verdict Arm B (5-seed) | SE of difference | Delta (SE) |
+|---|---|---|---|---|---|---|---|---|
+| Bear | 0.479 | 0.015 | 0.473 | 0.005 | −0.006 (−0.42 sd) | tie | 0.0070 | −0.88 |
+| Brattain | 0.416 | 0.004 | 0.437 | 0.034 | +0.022 (+5.73 sd) | **beyond 2 sd (gain)** | 0.0153 | +1.44 |
+| Buck | 0.590 | 0.039 | 0.640 | 0.005 | +0.049 (+1.27 sd) | beyond 1 sd (gain) | 0.0176 | +2.81 |
+| Chimney | 0.434 | 0.012 | 0.489 | 0.031 | +0.055 (+4.70 sd) | **beyond 2 sd (gain)** | 0.0147 | +3.74 |
+| Ferguson* | 0.344 | 0.007 | 0.386 | 0.014 | +0.042 (+5.69 sd) | **beyond 2 sd (gain)** | 0.0069 | +6.10 |
+| Pier* | 0.535 | 0.003 | 0.521 | 0.023 | −0.014 (−4.60 sd) | **beyond 2 sd (loss)** | 0.0103 | −1.37 |
 
 ![Six per-fire bar pairs, E33's five-seed mean against Arm B's own five-seed mean, each with its own sd whisker, against a shaded band one E33 sd wide either side of E33's own bar — Pier is the one bar that falls outside the band on the loss side.](figures/e44-arm-b-vs-e33.svg)
 
 "Baseline sd" is E33's own five-seed sd (the pre-registered tie bar for
 *this* experiment — TEST_PLAN v1.9's E44 entry names it explicitly as
 the noise floor for E44 itself; later experiments switch to Arm B's own
-sd, above). `*` = holdout pair. Table generated directly by
+sd, above). The two right-most columns, added during the whole-branch
+review (not part of the pre-registered table), are the Welch standard
+error of the difference (`sqrt(Arm B sd² / 5 + Baseline sd² / 5)`, both
+arms five-seed) and the delta expressed in that many SEs — a less
+noise-sensitive read than "Delta (sd)," which divides only by the
+baseline's own sd and ignores Arm B's own five-seed spread on that fire.
+Read this way, Pier's loss (≈ 1.4 SE) and Brattain's gain (≈ 1.4 SE) are
+close to the same size, where the sd-units column makes them look
+different (−4.60 sd vs. +5.73 sd) — because "Delta (sd)" divides by
+E33's sd alone (0.003 on Pier, 0.004 on Brattain, both tiny, so both
+deltas get inflated into large sd-multiples), while "Delta (SE)" also
+accounts for Arm B's own noise on each fire (sd 0.023 on Pier vs. 0.034
+on Brattain), which the sd-units column does not see at all. This does
+not overturn the stop rule (pre-registered in baseline-sd units, and
+Pier's mechanism clause failed independently — see the Verdict, below),
+but it does mean the sd-units column alone overstates how much more
+surprising Pier's loss is than Brattain's gain: in SE terms, the two are
+comparable. `*` = holdout pair. The first seven columns are generated
+directly by
 `r7_common.summary_table()` off `r7_common.fire_stats()` on the raw
 rows — the verdict wording ("tie" / "beyond 1 sd" / "**beyond 2 sd**")
-is `r7_common.verdict()`'s, unedited. Pier's own five seeds, plainly:
+is `r7_common.verdict()`'s, unedited; the two SE columns are the same
+function's `show_se=True` option (off by default, on only for this
+table), recomputed from `exp44_arm_b_5seed_summary.json`'s `arm_b_sd`
+block and `exp33_noise.json`, not copied from anywhere else. Pier's own five seeds, plainly:
 0.534, 0.524, 0.526, 0.538, 0.481 (seeds 0–4) — four of the five sit
 close together (0.524–0.538); seed 4 (0.481) pulls the mean down and
 alone accounts for most of the loss, but even without it the other four

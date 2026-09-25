@@ -109,7 +109,11 @@ task from a run that saw nothing. Tables that mix them say so.
 **Tooling**: `cella_lib/examples/wildfire_experiment.rs` (hooks
 `EXP_P0_SCALE`, `EXP_WIND_SCALE`, `EXP_WIND_ROT_DEG`, `EXP_SEED_BASE`, and
 later ones named in each file), `cella_lib/examples/wildfire_smc/` (Rounds
-4–5; a module tree since Round 7 Task 1, same CLI and report), and the
+4–5; a module tree since Round 7 Task 1, same CLI; every field the
+report carried before Round 7 is still there, unchanged in value, though
+the report itself has since gained three new fields — `wind_source`,
+`station_fallback_windows`, `contain_growth_floor` — so it is not
+byte-identical to a pre-Round-7 report), and the
 runners in `../scripts/experiments/`. Results land
 in the gitignored `../results/experiments/`. **Build root trap:** runners
 must call `cella_lib/target/release/examples/...`, not the repo-root
