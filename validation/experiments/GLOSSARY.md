@@ -304,6 +304,14 @@ a bug in this page.
   "contained" with probability sigmoid(a + b × ln growth): slow-growing
   members get caught, fast ones do not. Contained members set p0 to 0.
   From FSim (Finney 2011). Learned by the filter like any other knob.
+- **Growth floor (`contain_growth_floor`).** The floor the containment
+  operator clamps a period's growth ratio to before taking its `ln`, so a
+  flat or shrinking member never sends `ln growth` to `-∞`. Always
+  `1e-4` before E49 (`SMC_CONTAIN_GROWTH_FLOOR` unset/default reproduces
+  that byte-identically); E49 swept it on the four calibration fires as
+  the operator's one genuine fixed-value "threshold" — `GENE_CONTAIN_A`/
+  `GENE_CONTAIN_B` are free genes the filter fits per member, not a
+  single value a sweep could hold constant.
 - **Lock-in.** When every member of an ensemble is contained while the
   real fire still grows. Nothing can burn again, so the score freezes.
   Found in E33, repaired by `immigrant_reset` (E38).

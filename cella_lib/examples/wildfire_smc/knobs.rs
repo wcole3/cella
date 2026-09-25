@@ -140,6 +140,15 @@ pub(crate) struct Knobs {
     pub(crate) diag: bool,
     /// Round 7 Task 6 (E46): `SMC_WIND_SOURCE`. See [`WindSource`].
     pub(crate) wind_source: WindSource,
+    /// Round 7 Task 7 (E49): `SMC_CONTAIN_GROWTH_FLOOR`, an opt-in override
+    /// of the containment operator's growth floor
+    /// (`WildfireDriver::contain_growth_floor` — see that field's doc
+    /// comment for what it does). Unset parses to the operator's
+    /// pre-existing hard-coded value (`1e-4`,
+    /// `cella_lib::wildfire::driver::default_contain_growth_floor`'s
+    /// twin default here), so every report from before this knob existed
+    /// is reproduced byte-identically.
+    pub(crate) contain_growth_floor: f64,
 }
 
 impl Knobs {
@@ -181,6 +190,10 @@ impl Knobs {
             },
             diag: env_f64("SMC_DIAG", 0.0) > 0.0,
             wind_source: WindSource::from_env(),
+            contain_growth_floor: env_f64(
+                "SMC_CONTAIN_GROWTH_FLOOR",
+                cella_lib::wildfire::driver::default_contain_growth_floor(),
+            ),
         }
     }
 }
@@ -280,6 +293,7 @@ mod e30b_steps_scale_tests {
         let driver = WildfireDriver {
             steps_per_day,
             weather: vec![],
+            ..Default::default()
         };
         assert_eq!(
             driver.period_steps(),

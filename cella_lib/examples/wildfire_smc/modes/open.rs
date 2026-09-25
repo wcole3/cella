@@ -145,6 +145,7 @@ pub(crate) fn run(
             // One containment draw per simulated day.
             steps_per_day,
             weather: Vec::new(),
+            contain_growth_floor: knobs.contain_growth_floor,
         })),
     };
     let template = cfg

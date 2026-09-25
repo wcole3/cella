@@ -114,6 +114,7 @@ pub(crate) fn run_map(
         driver: Some(Box::new(WildfireDriver {
             steps_per_day,
             weather: weather_schedule(sc, rot),
+            ..Default::default()
         })),
         ..EvolveConfig::default()
     };
@@ -319,6 +320,7 @@ pub(crate) fn run_replay(
         driver: Some(Box::new(WildfireDriver {
             steps_per_day,
             weather: weather_schedule(sc, rot),
+            ..Default::default()
         })),
         ..EvolveConfig::default()
     };

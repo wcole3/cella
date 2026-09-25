@@ -95,10 +95,36 @@ pub struct WildfireDriver {
     /// keeps the model's own constant wind.
     #[serde(default)]
     pub weather: Vec<WeatherWindow>,
+    /// Round 7 Task 7 (E49): the floor `period_end` clamps a period's
+    /// growth ratio `(burned - before) / before` to before taking its
+    /// `ln` for the containment logit — the "containment threshold" this
+    /// experiment sweeps (`wildfire_smc`'s `SMC_CONTAIN_GROWTH_FLOOR`). A
+    /// member whose burned count did not grow at all this period (growth
+    /// 0) is floored to this value, so a *smaller* floor pushes `ln
+    /// growth` more negative and (since `contain_b` is always negative,
+    /// `Gene::float(GENE_CONTAIN_B, -2.0, -0.3, ...)`) makes a stalled
+    /// member's containment logit larger — more certain containment for
+    /// zero-growth members. `1e-4` (`default_contain_growth_floor`) is
+    /// the value the operator has always used; this field exists so a
+    /// caller can override it without changing that default. See
+    /// `MemberDriver::period_end` below.
+    #[serde(default = "default_contain_growth_floor")]
+    pub contain_growth_floor: f64,
 }
 
 fn default_steps_per_day() -> u64 {
     50
+}
+
+/// `period_end`'s pre-existing hard-coded growth floor (`1e-4`), pulled out
+/// to a named constant so [`WildfireDriver::contain_growth_floor`]'s serde
+/// default and this module's own uses agree by construction rather than by
+/// two copies of the literal staying in sync by hand. `pub` so
+/// `wildfire_smc`'s `SMC_CONTAIN_GROWTH_FLOOR` knob (Round 7 Task 7) can
+/// parse its own "unset" default from this same constant instead of a
+/// second copy of the literal.
+pub fn default_contain_growth_floor() -> f64 {
+    1e-4
 }
 
 impl Default for WildfireDriver {
@@ -106,6 +132,7 @@ impl Default for WildfireDriver {
         WildfireDriver {
             steps_per_day: default_steps_per_day(),
             weather: Vec::new(),
+            contain_growth_floor: default_contain_growth_floor(),
         }
     }
 }
@@ -236,7 +263,7 @@ impl MemberDriver for WildfireDriver {
         };
         let before = state.get(STATE_BURNED_AT_DAY_START).unwrap_or(0.0);
         if before > 0.0 && !state.flag(STATE_CONTAINED) {
-            let growth = ((burned as f64 - before) / before).max(1e-4);
+            let growth = ((burned as f64 - before) / before).max(self.contain_growth_floor);
             let logit = a + b * growth.ln();
             let p = 1.0 / (1.0 + (-logit).exp());
             if rng.uniform() < p {
@@ -551,6 +578,7 @@ mod tests {
         let driver = WildfireDriver {
             steps_per_day: 6,
             weather: vec![],
+            ..Default::default()
         };
         let cfg = EnsembleConfig {
             members: 6,
@@ -596,6 +624,7 @@ mod tests {
                 WildfireDriver {
                     steps_per_day: 3,
                     weather: vec![],
+                    ..Default::default()
                 },
             ),
         )
@@ -603,6 +632,69 @@ mod tests {
         plain.set_forcing(forcing(0.0, 0.0, 270.0)).unwrap();
         plain.step_n(9).unwrap();
         assert_eq!(plain.state_fraction(STATE_CONTAINED), 0.0);
+    }
+
+    /// Round 7 Task 7 (E49): `contain_growth_floor` is the floor
+    /// `period_end` applies to a period's growth ratio before taking its
+    /// `ln` for the containment logit. Pin `model.p0` to 0 so the seeded
+    /// cell can spread to no neighbours -- the tracked (burning +
+    /// burned-out) count is exactly 1 at every period boundary, so growth
+    /// is exactly 0 *before* the floor and the floor decides the whole
+    /// logit. With `contain_a = 0, contain_b = -2` (the driver's most
+    /// negative slope, `GENE_CONTAIN_B`'s range top of `-0.3` to
+    /// `-2.0`), a small floor (default `1e-4`, `ln ~ -9.2`) pushes the
+    /// logit strongly positive (~18.4, p ~ 1.0: essentially every member
+    /// contained); a large floor (`5.0`, `ln ~ 1.6`) pushes it strongly
+    /// negative (~-3.2, p ~ 0.04: essentially none). Same genes, same
+    /// seed, same two-period run -- only `contain_growth_floor` differs --
+    /// so this is the acceptance check that the knob (and not something
+    /// else) is what moves the outcome, and that the unset/default value
+    /// reproduces the operator's original, always-`1e-4` behaviour.
+    #[test]
+    fn contain_growth_floor_knob_moves_containment_for_a_stalled_member() {
+        let mut genes = fire_genes();
+        for g in &mut genes {
+            if g.key == "model.p0" {
+                *g = GeneSpec::range("model.p0", 0.0, 0.0);
+            }
+        }
+        genes.push(GeneSpec::range(GENE_CONTAIN_A, 0.0, 0.0));
+        genes.push(GeneSpec::range(GENE_CONTAIN_B, -2.0, -2.0));
+
+        let run_with_floor = |floor: f64| -> f64 {
+            let driver = WildfireDriver {
+                steps_per_day: 6,
+                weather: vec![],
+                contain_growth_floor: floor,
+            };
+            let cfg = EnsembleConfig {
+                members: 30,
+                genes: genes.clone(),
+                ..fire_config(30, driver)
+            };
+            let mut e = Ensemble::new(template(16, 16), &cfg).unwrap();
+            e.set_forcing(forcing(0.0, 0.0, 270.0)).unwrap();
+            // First period boundary: only records the starting size
+            // (before == 0 skips the containment draw).
+            e.step_n(6).unwrap();
+            assert_eq!(e.state_fraction(STATE_CONTAINED), 0.0);
+            // Second period boundary: p0 == 0 means the seeded cell has no
+            // neighbours to ignite, so burned/burning count is unchanged --
+            // growth is exactly 0 before the floor.
+            e.step_n(6).unwrap();
+            e.state_fraction(STATE_CONTAINED)
+        };
+
+        let default_floor = run_with_floor(default_contain_growth_floor());
+        assert!(
+            default_floor >= 0.9,
+            "default floor 1e-4 should contain almost every stalled member: {default_floor}"
+        );
+        let wide_floor = run_with_floor(5.0);
+        assert!(
+            wide_floor <= 0.15,
+            "a floor of 5.0 should contain almost no stalled member: {wide_floor}"
+        );
     }
 
     #[test]
@@ -621,6 +713,7 @@ mod tests {
                     from_deg: 180.0,
                 },
             ],
+            ..Default::default()
         };
         assert_eq!(driver.scheduled_wind(0.0), Some((2.0, 0.0)));
         assert_eq!(driver.scheduled_wind(23.9), Some((2.0, 0.0)));

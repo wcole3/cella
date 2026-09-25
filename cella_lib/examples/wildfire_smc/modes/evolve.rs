@@ -111,6 +111,7 @@ pub(crate) fn fit_first_days(
         driver: Some(Box::new(WildfireDriver {
             steps_per_day,
             weather: weather_schedule(sc, rot),
+            ..Default::default()
         })),
         ..EvolveConfig::default()
     };
