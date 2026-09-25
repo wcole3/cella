@@ -1442,4 +1442,58 @@ mod tests {
         let deser_sub: Result<Rule2DSubrule, _> = serde_json::from_str(bad_subrule_json);
         assert!(deser_sub.is_err());
     }
+
+    #[test]
+    fn detect_packed_2d_bails_out_when_the_first_subrules_criteria_is_inactive() {
+        // The packed fast path needs a real "active" type to count; a first
+        // subrule whose own criteria type *is* the inactive type (the
+        // 2D sibling of the 1D "active == inactive" rejection above) can
+        // never supply one.
+        let inactive = CellType::inactive();
+        let active = CellType::from("A");
+        let rule = Rule2D {
+            subrules: vec![Rule2DSubrule::new(
+                inactive,
+                inactive,
+                0,
+                CountOp::Gt,
+                1,
+                Neighborhood2D::Moore,
+                active,
+                None,
+                None,
+            )],
+        };
+        let plan = Rule2DPlan::with_inactive(&rule, 3, inactive);
+        assert!(
+            plan.packed.is_none(),
+            "criteria_type == inactive can never be the packed 'active' type"
+        );
+    }
+
+    #[test]
+    fn type_counter_sub_drops_the_entry_once_it_reaches_zero() {
+        let a = CellType::from("A");
+        let b = CellType::from("B");
+        let mut c = TypeCounter::new();
+        c.add(a);
+        c.add(a);
+        c.add(b);
+        // Absent types are a documented no-op.
+        c.sub(CellType::from("C"));
+        assert_eq!(c.iter().count(), 2);
+
+        c.sub(a);
+        assert_eq!(
+            c.iter().find(|(t, _)| **t == a).map(|(_, n)| *n),
+            Some(1),
+            "one A left"
+        );
+        c.sub(a);
+        assert!(
+            c.iter().all(|(t, _)| *t != a),
+            "the entry is dropped, not left at zero"
+        );
+        assert_eq!(c.iter().count(), 1, "only B remains");
+    }
 }

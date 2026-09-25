@@ -982,4 +982,56 @@ mod tests {
             "an inert-but-observed cell collapses to burned, not left as Water"
         );
     }
+
+    #[test]
+    fn missing_tau_gene_never_decays_and_partial_forcing_keeps_the_last_wind_speed() {
+        // No `tau_days` gene: `apply`'s decay match has nothing to read for
+        // it, so it takes its `_ => 1.0` arm and p0 never decays, however
+        // much simulated time passes.
+        let genes = vec![
+            GeneSpec::log_range("model.p0", 0.08, 0.6),
+            GeneSpec::range("model.burn_duration", 5.0, 20.0),
+            GeneSpec::range(GENE_WIND_SCALE, 1.0, 1.0),
+        ];
+        let cfg = EnsembleConfig {
+            members: 3,
+            genes,
+            track: vec!["Burning".into(), "BurnedOut".into()],
+            driver: Some(Box::new(WildfireDriver::default())),
+            ..EnsembleConfig::default()
+        };
+        let mut e = Ensemble::new(template(12, 12), &cfg).unwrap();
+        e.set_forcing(forcing(0.0, 4.0, 90.0)).unwrap();
+        let space = e.space().clone();
+        for m in e.members_mut() {
+            let genome = m.genome.clone();
+            let p0_gene = space.float(&genome, "model.p0").unwrap();
+            assert!((model_params(&mut m.sim).p0 - p0_gene).abs() < 1e-12);
+        }
+        // Ten simulated days later, still no tau_days gene: p0 must still
+        // be exactly the gene's own value, not decayed.
+        e.set_forcing(forcing(240.0, 4.0, 90.0)).unwrap();
+        for m in e.members_mut() {
+            let genome = m.genome.clone();
+            let p0_gene = space.float(&genome, "model.p0").unwrap();
+            assert!(
+                (model_params(&mut m.sim).p0 - p0_gene).abs() < 1e-9,
+                "no tau_days gene: p0 must never decay"
+            );
+        }
+
+        // A forcing that reports a wind bearing but no wind speed: the
+        // driver falls back to whichever speed the model currently holds
+        // (here, the 4.0 m/s the full forcing above wrote, with
+        // wind_scale pinned to 1.0) rather than discarding it.
+        let mut bearing_only = Forcing::new();
+        bearing_only.insert(FORCING_HOURS.into(), 264.0);
+        bearing_only.insert(FORCING_WIND_FROM.into(), 180.0);
+        e.set_forcing(bearing_only).unwrap();
+        for m in e.members_mut() {
+            let p = model_params(&mut m.sim);
+            assert_eq!(p.wind_speed, 4.0, "falls back to the last known speed");
+            assert_eq!(p.wind_from_deg, 180.0);
+        }
+    }
 }

@@ -1397,4 +1397,33 @@ mod tests {
         assert_eq!(g.cells(), &cells_before[..]);
         assert!(g.model.is_some());
     }
+
+    #[test]
+    fn reset_cells_rejects_the_wrong_length_and_otherwise_starts_fresh() {
+        let x = CellType::from("X");
+        let mut g = coin_grid(3, 2, 4);
+        assert!(g.step > 0);
+        let before_history_limit = g.history_limit;
+        assert!(
+            g.reset_cells(vec![x; 5])
+                .unwrap_err()
+                .to_string()
+                .contains("cells"),
+            "a length mismatch names the layer"
+        );
+        // The rejected write left the grid exactly as it was.
+        assert!(g.step > 0);
+
+        g.reset_cells(vec![x; 6]).unwrap();
+        assert_eq!(g.step, 0, "step returns to 0");
+        assert_eq!(
+            g.history_limit, before_history_limit,
+            "history_limit is unchanged"
+        );
+        for i in 0..6 {
+            assert_eq!(g.cell_age(i), 0, "ages are cleared");
+            assert!(g.cell_history(i).is_empty());
+        }
+        assert_eq!(g.cells(), &vec![x; 6][..]);
+    }
 }

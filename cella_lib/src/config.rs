@@ -1042,6 +1042,19 @@ mod tests {
     }
 
     #[test]
+    fn build_resumed_refuses_the_wrong_dimension_up_front() {
+        // Calling the 1D resume path on a saved 2D config (or vice versa)
+        // must not panic or reach for the wrong variant's fields -- both
+        // return `None` before looking at `snapshot` at all.
+        assert!(CellaConfig::D2(Config2D::default())
+            .build_grid1d_resumed()
+            .is_none());
+        assert!(CellaConfig::D1(Config1D::default())
+            .build_grid2d_resumed()
+            .is_none());
+    }
+
+    #[test]
     fn build_resumed_rejects_a_per_cell_history_longer_than_history_limit() {
         // A per-cell history longer than `history_limit` would overrun that
         // cell's slot in `state::soa_history`'s flat buffer (see the doc

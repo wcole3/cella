@@ -1295,4 +1295,163 @@ mod tests {
             None
         );
     }
+
+    /// `rule.subrules[i].randomness` is the only built-in Float knob, so it
+    /// is the only way to reach `kind_from_desc`'s own Float-branch
+    /// refusals (the Int branch's copies of the same three checks are
+    /// covered above via `rule.subrules[0].count`).
+    #[test]
+    fn float_knob_refusals_and_a_choice_knobs_default_options() {
+        let mut sim = life();
+        // `randomness` only shows up in the knob list once a subrule has a
+        // value for it (the module doc's "a write can turn randomness on");
+        // life()'s own fixture never sets it, so give the first subrule one.
+        sim.set_param("rule.subrules[0].randomness", ParamValue::Float(0.2))
+            .unwrap();
+        let bad_order = GeneSpace::resolve(
+            &[GeneSpec::range("rule.subrules[0].randomness", 0.9, 0.1)],
+            &sim,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert!(format!("{bad_order}").contains("lo > hi"), "{bad_order}");
+
+        let out_of_bounds = GeneSpace::resolve(
+            &[GeneSpec::range("rule.subrules[0].randomness", -0.1, 0.5)],
+            &sim,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            format!("{out_of_bounds}").contains("outside the knob's bounds"),
+            "{out_of_bounds}"
+        );
+
+        let bad_log = GeneSpace::resolve(
+            &[spec(
+                r#"{"key": "rule.subrules[0].randomness", "range": [0.0, 0.5], "scale": "log"}"#,
+            )],
+            &sim,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            format!("{bad_log}").contains("log scale needs lo > 0"),
+            "{bad_log}"
+        );
+
+        // A choice knob with no explicit "choices" takes every option the
+        // knob itself offers (as opposed to the narrowed-subset case the
+        // refusal table above already covers).
+        let all_ops =
+            GeneSpace::resolve(&[GeneSpec::new("rule.subrules[0].op")], &sim, &[], &[]).unwrap();
+        assert_eq!(
+            all_ops.genes()[0].kind,
+            GeneKind::Choice {
+                options: vec!["lt".into(), "gt".into(), "eq".into()]
+            }
+        );
+
+        // A free gene naming both `bits` and `choices` is as ambiguous as
+        // naming both `range` and `bits` (already covered above).
+        let both = GeneSpace::resolve(
+            &[spec(r#"{"key": "free3", "bits": 4, "choices": ["a", "b"]}"#)],
+            &sim,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            format!("{both}").contains("one of range, bits or choices"),
+            "{both}"
+        );
+    }
+
+    /// `GeneKind::Bool` has no built-in knob in this crate (only an
+    /// out-of-tree `ExternalModel` test fixture in `tests/external_model.rs`
+    /// declares one), so its four value operators -- otherwise identical in
+    /// shape to every other kind's, already covered above -- are exercised
+    /// directly here instead of through `GeneSpace::resolve`.
+    #[test]
+    fn bool_gene_values_sample_mutate_clamp_and_widen_to_a_number() {
+        let kind = GeneKind::Bool;
+        assert_eq!(midpoint(&kind), ParamValue::Bool(false));
+        assert_eq!(
+            clamp_value(&kind, &ParamValue::Bool(true)),
+            ParamValue::Bool(true)
+        );
+        // A value of the wrong shape falls back to the midpoint, same rule
+        // every other kind's clamp/mutate already follows.
+        assert_eq!(clamp_value(&kind, &ParamValue::Int(1)), ParamValue::Bool(false));
+
+        let mut rng = Rng::new(3);
+        let (mut saw_true, mut saw_false) = (false, false);
+        for _ in 0..50 {
+            match sample_kind(&kind, &mut rng) {
+                ParamValue::Bool(true) => saw_true = true,
+                ParamValue::Bool(false) => saw_false = true,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(saw_true && saw_false, "sample_kind should draw both");
+
+        let mut v = ParamValue::Bool(false);
+        let mut flipped = false;
+        for _ in 0..20 {
+            mutate_value(&kind, &mut v, 1.0, &mut rng);
+            if v == ParamValue::Bool(true) {
+                flipped = true;
+            }
+        }
+        assert!(flipped, "sigma 1.0 should flip a bool gene");
+        let mut wrong_shape = ParamValue::Int(7);
+        mutate_value(&kind, &mut wrong_shape, 1.0, &mut rng);
+        assert_eq!(
+            wrong_shape,
+            ParamValue::Bool(false),
+            "a wrong-shape value is replaced by the midpoint, not mutated"
+        );
+
+        // `GeneSpace::float` widens a Bool gene's value to 0.0/1.0, the same
+        // as it widens Int -- built by hand since no built-in knob is Bool.
+        let space = GeneSpace {
+            genes: vec![Gene {
+                key: "flag".into(),
+                kind,
+                sigma: None,
+            }],
+            targets: vec![Target::Free],
+            owned: vec![false],
+        };
+        assert_eq!(
+            space.float(&Genome(vec![ParamValue::Bool(true)]), "flag"),
+            Some(1.0)
+        );
+    }
+
+    /// `midpoint`'s Float-log, Int, and Bits branches are each exercised
+    /// elsewhere in an integration path already; this closes the direct,
+    /// per-kind check the way the Bool test above does for its own kind.
+    #[test]
+    fn midpoint_covers_every_kind_directly() {
+        match midpoint(&GeneKind::Float {
+            lo: 1.0,
+            hi: 100.0,
+            log: true,
+        }) {
+            ParamValue::Float(v) => assert!(
+                (v - 10.0).abs() < 1e-9,
+                "log midpoint of [1, 100] is 10 (got {v})"
+            ),
+            other => panic!("expected a float, got {other:?}"),
+        }
+        assert_eq!(
+            midpoint(&GeneKind::Int { lo: 2, hi: 8 }),
+            ParamValue::Int(5)
+        );
+        assert_eq!(midpoint(&GeneKind::Bits { len: 4 }), ParamValue::Bits(0));
+    }
 }

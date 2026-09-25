@@ -812,4 +812,56 @@ mod tests {
             "read-only model key"
         );
     }
+
+    #[test]
+    fn op_and_neighborhood_names_round_trip_every_variant() {
+        for (op, name) in [
+            (CountOp::Lt, "lt"),
+            (CountOp::Gt, "gt"),
+            (CountOp::Eq, "eq"),
+        ] {
+            assert_eq!(op_name(op), name);
+            assert_eq!(op_from_name(name), Some(op));
+        }
+        assert_eq!(op_from_name("nope"), None);
+
+        for (n, name) in [
+            (Neighborhood2D::Moore, "Moore"),
+            (Neighborhood2D::VonNeumann, "VonNeumann"),
+            (Neighborhood2D::Langton, "Langton"),
+            (Neighborhood2D::StraightLine, "StraightLine"),
+            (Neighborhood2D::Knight, "Knight"),
+        ] {
+            assert_eq!(neighborhood_name(n), name);
+            assert_eq!(neighborhood_from_name(name), Some(n));
+        }
+        assert_eq!(neighborhood_from_name("nope"), None);
+    }
+
+    #[test]
+    fn kind_1d_has_no_wolfram_code_kind_outside_n_1_to_3_and_a_bogus_2d_field_is_none() {
+        // n=0 is outside the 1..=3 window `wolfram_code`'s bit width needs;
+        // `kind_1d` reports it as absent rather than picking an arbitrary
+        // width (the same "field does not exist right now" convention the
+        // module doc describes for an unset optional field).
+        let x = CellType::from("X");
+        let out_of_range = Rule1DSubrule {
+            current_type: x,
+            criteria_type: x,
+            wolfram_code: 2,
+            n: 0,
+            randomness: None,
+            output_type: x,
+        };
+        assert_eq!(kind_1d(&out_of_range, "wolfram_code"), None);
+        // randomness does not depend on n, so it is still a real field.
+        assert!(kind_1d(&out_of_range, "randomness").is_some());
+
+        // A field name `get_rule2d_param` has never heard of comes back
+        // `None`, the same as an unset optional field but for a different
+        // reason (this one distinguishes "no such field" from the
+        // `randomness`-unset case the acceptance test above already covers).
+        let rule = life();
+        assert_eq!(get_rule2d_param(&rule, "rule.subrules[0].bogus"), None);
+    }
 }

@@ -1275,4 +1275,35 @@ mod tests {
             assert_eq!(g.cell_age(i), reference.cell_age(i), "age {i}");
         }
     }
+
+    #[test]
+    fn reset_cells_rejects_the_wrong_length_and_otherwise_starts_fresh() {
+        let x = CellType::from("X");
+        let mut g = coin_grid_1d(4, 2);
+        g.step();
+        g.step();
+        assert!(g.step > 0);
+        let before_history_limit = g.history_limit;
+        assert!(
+            g.reset_cells(vec![x; 3])
+                .unwrap_err()
+                .to_string()
+                .contains("cells"),
+            "a length mismatch names the layer"
+        );
+        // The rejected write left the grid exactly as it was.
+        assert!(g.step > 0);
+
+        g.reset_cells(vec![x, CellType::inactive(), x, x]).unwrap();
+        assert_eq!(g.step, 0, "step returns to 0");
+        assert_eq!(g.history_limit, before_history_limit, "history_limit is unchanged");
+        for i in 0..4 {
+            assert_eq!(g.cell_age(i), 0, "ages are cleared");
+            // A history buffer sized for history_limit > 0 exists again and
+            // starts empty (nothing recorded since the reset).
+            assert!(g.cell_history(i).is_empty());
+        }
+        assert_eq!(g.cell_type(0), x);
+        assert_eq!(g.cell_type(1), CellType::inactive());
+    }
 }
