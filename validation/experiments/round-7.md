@@ -275,7 +275,12 @@ In order:
    two report shapes, `assim` vs. `map`, do not share a parser); the IQR
    unit test added for E45 (`diag::iqr_gene`) covers the even-length
    quantile-interpolation case with its worked 10-value example but has
-   no matching odd-length case.
+   no matching odd-length case; Task 1's own report
+   (`.superpowers/sdd/round-7-experiments/task-1-report.md`) carries a
+   file-list-with-line-counts table for the new `wildfire_smc/` module
+   tree (2,731 lines across 11 files, was one 2,420-line file) but no
+   per-module test-count breakdown — cheap to add if a future task wants
+   it, not added here since no such table exists yet to extend.
 8. **Crate coverage** was at ≈ 98.3 % coming into this round, below the
    99 % gate — addressed directly in this task (see "Coverage," below),
    not left open.
