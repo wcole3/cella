@@ -184,6 +184,8 @@ block:
 | Ferguson* | 0.344 | 0.007 | 0.386 | 0.014 | +0.042 (+5.69 sd) | **beyond 2 sd (gain)** |
 | Pier* | 0.535 | 0.003 | 0.521 | 0.023 | −0.014 (−4.60 sd) | **beyond 2 sd (loss)** |
 
+![Six per-fire bar pairs, E33's five-seed mean against Arm B's own five-seed mean, each with its own sd whisker, against a shaded band one E33 sd wide either side of E33's own bar — Pier is the one bar that falls outside the band on the loss side.](figures/e44-arm-b-vs-e33.svg)
+
 "Baseline sd" is E33's own five-seed sd (the pre-registered tie bar for
 *this* experiment — TEST_PLAN v1.9's E44 entry names it explicitly as
 the noise floor for E44 itself; later experiments switch to Arm B's own

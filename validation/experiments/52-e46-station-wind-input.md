@@ -552,6 +552,8 @@ column's own governing baseline sd (E33's for (a), Arm B's for (b)/(c));
 "(c) vs (b)" uses Arm B's sd as the bar, per the pre-registered clause.
 Fallback windows: 0 on every fire, every arm (table above).
 
+![Six per-fire bar groups: E33 and Arm B (their own baselines), and the three station-wind arms (a: Bernoulli, b: arrival kernel gene off, c: arrival kernel gene on), each coloured by whether it clears its own baseline's sd — Ferguson's (a)/(b) gains and Chimney's (b) loss followed by (c)'s recovery are the two moves to look for.](figures/e46-three-arms.svg)
+
 **Prediction checked clause by clause (TEST_PLAN v1.9, §9, quoted
 verbatim).**
 

@@ -282,8 +282,9 @@ In order:
    per-module test-count breakdown — cheap to add if a future task wants
    it, not added here since no such table exists yet to extend.
 8. **Crate coverage** was at ≈ 98.3 % coming into this round, below the
-   99 % gate — addressed directly in this task (see "Coverage," below),
-   not left open.
+   99 % gate — addressed directly in this task, not left open (see
+   "Configuration after this round," below, "Hygiene closed this
+   round").
 
 ## Configuration after this round
 
@@ -326,11 +327,27 @@ fires; that itself would be a departure from this campaign's "nothing
 chosen per fire" rule and would need its own pre-registration before
 being run.
 
-**Hygiene closed this round:** crate coverage restored to ≥ 99 % lines
-(measured before and after; see "Coverage," below); a read-only
-bench-profile study added for the long-suite benchmarks, comparing the
-release profile against fat-LTO/`panic=abort`/`target-cpu=native`
-variants (`docs/performance.md`, "10. Bench profile study
-(2026-09-25)") — no baseline changed, no runner's `BIN` changed;
-`figures_r7.py` renders the round's own SVGs the way `figures_r6.py` did
-for Round 6.
+**Hygiene closed this round:** crate coverage restored to ≥ 99 % lines —
+98.67 % (200 missed of 15,078) before this task's own added tests,
+99.02 % (150 missed of 15,330) after (`make coverage-all`; command and
+the full uncovered-lines-by-file breakdown are in
+`.superpowers/sdd/round-7-experiments/task-9-report.md`, not repeated
+here). The 98.67 % "before" figure is lower than the ≈ 98.3 % this
+section's own item 8 and the Round 6 plan quoted, in the *wrong*
+direction from what "more code, same gate" would suggest at first
+glance — it isn't a regression: Tasks 1, 3, 5, 6 and 7 all added tested
+library and example code between when that ≈ 98.3 % figure was last
+measured and this task's own "before" run, so the total line count (and
+the count of both covered and uncovered lines) moved under it in the
+meantime; the two numbers are not the same measurement taken twice. A
+read-only bench-profile study was also added for the long-suite
+benchmarks, comparing the release profile against
+fat-LTO/`panic=abort`/`target-cpu=native` variants
+(`docs/performance.md`, "10. Bench profile study (2026-09-25)") — no
+baseline changed, no runner's `BIN` changed; `figures_r7.py` renders the
+round's own SVGs the way `figures_r6.py` did for Round 6, including the
+promotion test's own headline chart below — E45's and E46's own figures
+are in their own files (`51-e45-wind-rot-mechanism.md`,
+`52-e46-station-wind-input.md`).
+
+![Six per-fire bar pairs, E33's five-seed mean against Arm B's own five-seed mean, each with its own sd whisker, against a shaded band one E33 sd wide either side of E33's own bar — Pier is the one bar that falls outside the band on the loss side, the chart behind this round's stop-rule trip.](figures/e44-arm-b-vs-e33.svg)
