@@ -311,7 +311,23 @@ a bug in this page.
   that byte-identically); E49 swept it on the four calibration fires as
   the operator's one genuine fixed-value "threshold" — `GENE_CONTAIN_A`/
   `GENE_CONTAIN_B` are free genes the filter fits per member, not a
-  single value a sweep could hold constant.
+  single value a sweep could hold constant. E49's finding: the floor
+  never binds on these fires — members are contained while still
+  growing 5 % a day or more, so no draw ever sees growth near the floor.
+- **Containment draw.** One day's "is this member contained now?" roll
+  for one still-burning member: a random number compared with
+  sigmoid(a + b × ln growth). `SMC_DIAG=1` records each one
+  (`diag.contain_draws`: burned count before/after, raw growth before
+  the floor, `a`, `b`, outcome) — E49.
+- **Binds (a floor or cap binds).** A floor *binds* when the value it
+  clamps is actually below it, so the floor, not the value, is what gets
+  used. A floor that never binds has no effect at all, whatever number
+  it is set to.
+- **Hindsight curve vs in-run fraction (containment).** E42's model
+  containment curve applies each member's *final* genes to the real
+  fire's growth from day 1 — what the population the filter settled on
+  would have done. The in-run `contained_fraction` is what the members
+  actually rolled while the filter ran. E49 reports both.
 - **Lock-in.** When every member of an ensemble is contained while the
   real fire still grows. Nothing can burn again, so the score freezes.
   Found in E33, repaired by `immigrant_reset` (E38).
