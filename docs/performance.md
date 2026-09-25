@@ -1388,3 +1388,148 @@ adding the knob to `BASE_ENV` clears the bar this study set for changing
 that default. Full table, both runner-level repeats, and the noisy-cell
 data are in `validation/results/experiments/bench_ensemble_par.json`
 (gitignored, reproducible from `bench_ensemble_par.py`).
+
+## 10. Bench profile study (2026-09-25)
+
+**The question.** All of Round 7's experiment binaries
+(`validation/experiments/round-7.md`) were built with the plain
+`[profile.release]` every other release build in this repo uses (`lto =
+"thin"`, `codegen-units = 1`) — so every number in that round is
+comparable to every other, but none of them says whether a more
+aggressive profile would make the *next* round's batches faster. This is
+a **read-only comparison**: no baseline file changes, `tests/
+benchmarks_last.json` is never written (`CELLA_UPDATE_BENCH` is never
+set), and no runner's `BIN` changes.
+
+**What was added.** `[profile.bench]` in both `Cargo.toml` (root) and
+`cella_lib/Cargo.toml` — the same "two build roots, keep them in sync"
+rule `[profile.release]` already follows in both files:
+
+```toml
+[profile.bench]
+inherits = "release"
+lto = "fat"
+panic = "abort"
+```
+
+`target-cpu=native` is **not** baked into the profile — it is applied at
+build time via the `RUSTFLAGS` environment variable
+(`RUSTFLAGS="-C target-cpu=native" cargo build --profile bench ...`), not
+`.cargo/config.toml`, so it never silently affects a plain `cargo build`
+or `cargo test` and has to be asked for explicitly every time.
+
+**Method.** Five variants, each built and run once, plus two repeats of
+the plain release baseline to see how much the box's own noise moves the
+number on its own. Every build and run: `nice -n 10`, one at a time
+(never overlapping this task's own coverage run, which held the box
+first), load logged at launch. Benchmarks: the `#[ignore]`d suite in
+`cella_lib/tests/long_suite.rs`, run from `cella_lib/` —
+
+```
+cargo test --release --test long_suite -- --ignored --test-threads=1 --nocapture   # release, and variant (i)
+cargo test --profile bench --test long_suite -- --ignored --test-threads=1 --nocapture   # variants (ii), (iii)
+RUSTFLAGS="-C target-cpu=native" cargo test --profile bench --test long_suite -- --ignored --test-threads=1 --nocapture   # (iv), (v)
+```
+
+Two numbers per run: the outer wall time (`time`, includes process
+start-up and, for a variant's first run, nothing else — each variant was
+built with `cargo build --profile bench --tests` *before* being timed, so
+the timed run is pure test execution, not compilation) and the suite's
+own internal `zzz_benchmark_summary` "TOTAL (sum of averages)" line — the
+same aggregate `docs/performance.md`'s own headline figures elsewhere in
+this file use, printed by the harness itself without `CELLA_UPDATE_BENCH`
+set, so it reads and compares against the committed baseline but never
+writes it.
+
+**Two build-system details discovered while setting this up, neither a
+mistake in the study:**
+
+1. Cargo's built-in `bench` profile defaults to the *same output
+   directory* as `release` (`target/release/`) unless a custom
+   `dir-name` is set — it does not get its own `target/bench/`. So
+   whenever a variant's *effective* settings happen to match plain
+   release exactly, Cargo's fingerprint matches the already-built
+   release artifacts and it reuses them outright, reported as `Fresh`
+   for every crate (`cargo build --profile bench --test long_suite -v`),
+   not a fresh compile. That is exactly variant (i) (`inherits =
+   "release"`, nothing else) — it is not merely *expected* to match
+   release, it is confirmed to run the identical compiled binary release
+   already built. It is also, for a second reason (next point), variant
+   (iii).
+2. Cargo ignores `panic = "abort"` for the built-in `bench` profile when
+   it is exercised through `cargo test`/`cargo bench` — printed plainly
+   as `` warning: `panic` setting is ignored for `bench` profile `` —
+   because the test harness needs to unwind to catch a panicking test
+   and report it as a failure rather than aborting the whole run. With
+   `panic` ignored, variant (iii)'s (`+ panic = "abort"`) *effective*
+   settings are therefore also identical to release's, so it hits the
+   same cache-reuse path as (i) — confirmed the same way, `Fresh`
+   everywhere, 0.05 s. `panic = "abort"` only has a real effect outside
+   a test/bench harness (a plain `--release`-style binary or example),
+   which is not what this study's benchmarks run through.
+
+Net effect: the "release" rows and the (i)/(iii) rows below are not
+three independently-compiled binaries measured once each — they are
+**the same compiled binary**, run at different points in the session.
+That is a feature for this study, not a gap: it means the spread between
+release/(i)/(iii) is a clean same-binary noise measurement (the box's
+own run-to-run variance), which is exactly the yardstick every other
+variant needs to be read against. Only (ii), (iv) and (v) changed the
+effective profile enough to force a genuine recompile (confirmed by
+their own multi-second-to-90-second build times above, not a 0.05 s
+cache hit).
+
+**Results — wall time and the suite's own internal total, both variants
+compared against the release baseline's own two-repeat spread:**
+
+| Run | Wall (s) | Internal TOTAL (ms) | Ratio to release mean (TOTAL) | Load at launch |
+|---|---|---|---|---|
+| Release, repeat 1 | 13.76 | 1210.27 | — | 5.33 |
+| Release, repeat 2 | 12.14 | 1180.71 | — | 4.80 |
+| **(i) `[profile.bench]` inherits release, nothing else** | 12.59 | 1223.75 | 1.024 (2.4 % slower) | 4.07 |
+| **(ii) + `lto = "fat"`** | 13.32 | 1294.74 | 1.083 (8.3 % slower) | 3.69 |
+| **(iii) + `panic = "abort"`** (ignored by Cargo for this profile — see above; same binary as (i)) | 12.68 | 1235.08 | 1.033 (3.3 % slower) | 4.82 |
+| **(iv) + `RUSTFLAGS="-C target-cpu=native"`** | 13.42 | 1171.48 | 0.980 (2.0 % faster) | 7.67 |
+| **(v) fat LTO + panic=abort + target-cpu=native, all combined** | 13.11 | 1141.17 | 0.955 (4.5 % faster) | 5.73–6.62 |
+
+How to read it: "ratio to release mean" divides each variant's internal
+TOTAL by the release baseline's own two-repeat mean (1195.49 ms) — the
+internal figure is used for the ratio column rather than wall time
+because it is the suite's own per-benchmark sum, less sensitive to this
+shared box's process-launch jitter than an outer `time` call. The
+release baseline's own two repeats already move by 2.5 % against each
+other (1180.71 → 1210.27 ms) with nothing changed at all — that is this
+study's own noise floor, and every variant above sits inside or barely
+outside that band except (ii), which is the one variant clearly, robustly
+*slower* than release, not faster. (iv)'s run shares the box with a load
+spike to 7.67 (another process, not this study's own doing — see the
+global "never compare wall time across batches" rule this campaign
+already follows); its wall time is not trustworthy on its own, but its
+internal TOTAL (measured inside one process, not affected by what else
+the box is doing at launch) still lands at the fastest of the four real
+variants tested. Three representative individual benchmarks, release
+repeat 1 vs each variant (ms, avg of 10 runs each; the full 46-benchmark
+table is in each run's own captured log under `/tmp/bench-*.log`, not
+committed):
+
+| Benchmark | Release r1 | (i) | (ii) | (iii) | (iv) | (v) |
+|---|---|---|---|---|---|---|
+| `1d_large_rule30_2049_t1` | 17.31 | 16.98 | 18.33 | 17.67 | 18.19 | **15.95** |
+| `2d_large_vn_256_t1` | 76.02 | 78.38 | **85.23** | 79.79 | 78.97 | 80.20 |
+| `2d_wildfire_spotting_256_t1` | 69.88 | 69.13 | 70.37 | 66.39 | 70.49 | **60.94** |
+
+No single variant wins on every benchmark; `2d_large_vn_256` is slower
+under every variant tried, fat LTO (ii) worst of all, while the other two
+shown here are fastest under (v).
+
+**Recommendation.** Do not move the Round 7 experiment binaries (or any
+runner's `BIN`) to the bench profile: the only variant that would be
+worth the extra build time and the `panic = "abort"` caveat above — (v),
+all combined, ≈ 4.5 % faster on the suite's own internal total — is a
+real but modest gain that a second baseline repeat alone already moves
+by more than half of (2.5 % of 1195 ms ≈ 30 ms noise vs. (v)'s own ≈ 54 ms
+gain), and fat LTO on its own (ii) is measurably *slower*, not faster, so
+"just turn on more optimization flags" is not a safe default for this
+workload without re-measuring per change. `r5_common`/`r7_common`'s
+runners keep building and calling `cella_lib/target/release/examples/
+wildfire_smc`, unchanged.

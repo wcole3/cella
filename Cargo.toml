@@ -20,3 +20,14 @@ lasso2 = { version = "0.8.2", features = ["multi-threaded", "serialize"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Read-only bench-profile study (docs/performance.md, "Bench profile study").
+# Inherits release; fat LTO and panic=abort layer on top of it here. The
+# target-cpu=native variant is applied at build time via RUSTFLAGS (see that
+# section for the exact command), not baked into this profile, so it can be
+# toggled per invocation without editing this file. Mirrored in
+# cella_lib/Cargo.toml — keep the two in sync, same rule as [profile.release].
+[profile.bench]
+inherits = "release"
+lto = "fat"
+panic = "abort"
