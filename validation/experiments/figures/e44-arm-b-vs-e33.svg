@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 660" role="img" aria-labelledby="e44-title e44-desc">
+<title id="e44-title">E44 promotion test: Arm B vs E33, five seeds</title>
+<desc id="e44-desc">Six small multiples, one bar pair per fire: E33's five-seed mean consensus IoU against Arm B's own five-seed mean, each with its own sd whisker, against a shaded +-1 sd band around E33 (the stop rule's own tie bar). Pier's bar sits outside the band on the loss side; Brattain, Chimney and Ferguson sit outside it on the gain side.</desc>
+<defs><style>@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="72" y="83.1" width="288" height="9.0" fill="rgba(45,49,66,0.08)"/>
+<line x1="72" y1="232.0" x2="360" y2="232.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="235.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="72" y1="150.0" x2="360" y2="150.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="153.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.27</text>
+<line x1="72" y1="68.0" x2="360" y2="68.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="71.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.54</text>
+<text x="56" y="32" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Bear</text>
+<rect x="76.0" y="87.6" width="126.0" height="144.4" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="139.0" y1="92.1" x2="139.0" y2="83.1" stroke="#2d3142" stroke-width="1"/>
+<text x="139.0" y="83.5947995439426" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.479</text>
+<text x="139.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="212.0" y="89.5" width="126.0" height="142.5" fill="#7a8399" fill-opacity="0.35" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="275.0" y1="91.1" x2="275.0" y2="87.8" stroke="#2d3142" stroke-width="1"/>
+<text x="275.0" y="85.45259662693758" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.473</text>
+<text x="275.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="360" y="32" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.015</text>
+<rect x="416" y="90.9" width="288" height="2.7" fill="rgba(45,49,66,0.08)"/>
+<line x1="416" y1="232.0" x2="704" y2="232.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="235.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="416" y1="150.0" x2="704" y2="150.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="153.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.24</text>
+<line x1="416" y1="68.0" x2="704" y2="68.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="71.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.49</text>
+<text x="400" y="32" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Brattain</text>
+<rect x="420.0" y="92.2" width="126.0" height="139.8" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="483.0" y1="93.5" x2="483.0" y2="90.9" stroke="#2d3142" stroke-width="1"/>
+<text x="483.0" y="88.19972806347286" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.416</text>
+<text x="483.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="556.0" y="84.8" width="126.0" height="147.2" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="619.0" y1="96.2" x2="619.0" y2="73.4" stroke="#2d3142" stroke-width="1"/>
+<text x="619.0" y="80.82142422315499" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.437</text>
+<text x="619.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="704" y="32" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.004</text>
+<rect x="760" y="82.4" width="288" height="18.5" fill="rgba(45,49,66,0.08)"/>
+<line x1="760" y1="232.0" x2="1048" y2="232.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="235.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="760" y1="150.0" x2="1048" y2="150.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="153.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.34</text>
+<line x1="760" y1="68.0" x2="1048" y2="68.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="71.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.69</text>
+<text x="744" y="32" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Buck</text>
+<rect x="764.0" y="91.7" width="126.0" height="140.3" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="827.0" y1="100.9" x2="827.0" y2="82.4" stroke="#2d3142" stroke-width="1"/>
+<text x="827.0" y="87.65210391804635" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.590</text>
+<text x="827.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="900.0" y="79.9" width="126.0" height="152.1" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="963.0" y1="81.2" x2="963.0" y2="78.6" stroke="#2d3142" stroke-width="1"/>
+<text x="963.0" y="75.88916401136447" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.640</text>
+<text x="963.0" y="248" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="1048" y="32" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.039</text>
+<rect x="72" y="376.3" width="288" height="7.3" fill="rgba(45,49,66,0.08)"/>
+<line x1="72" y1="512.0" x2="360" y2="512.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="515.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="72" y1="430.0" x2="360" y2="430.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="433.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.27</text>
+<line x1="72" y1="348.0" x2="360" y2="348.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="68" y="351.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.54</text>
+<text x="56" y="312" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Chimney</text>
+<rect x="76.0" y="380.0" width="126.0" height="132.0" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="139.0" y1="383.5" x2="139.0" y2="376.4" stroke="#2d3142" stroke-width="1"/>
+<text x="139.0" y="375.9505574283525" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.434</text>
+<text x="139.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="212.0" y="363.2" width="126.0" height="148.8" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="275.0" y1="372.6" x2="275.0" y2="353.8" stroke="#2d3142" stroke-width="1"/>
+<text x="275.0" y="359.20390805905265" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.489</text>
+<text x="275.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="360" y="312" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.012</text>
+<rect x="416" y="380.1" width="288" height="5.3" fill="rgba(45,49,66,0.08)"/>
+<line x1="416" y1="512.0" x2="704" y2="512.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="515.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="416" y1="430.0" x2="704" y2="430.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="433.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.22</text>
+<line x1="416" y1="348.0" x2="704" y2="348.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="412" y="351.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.44</text>
+<text x="400" y="312" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Ferguson*</text>
+<rect x="420.0" y="382.7" width="126.0" height="129.3" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="483.0" y1="385.5" x2="483.0" y2="379.9" stroke="#2d3142" stroke-width="1"/>
+<text x="483.0" y="378.74497334046976" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.344</text>
+<text x="483.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="556.0" y="366.8" width="126.0" height="145.2" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="619.0" y1="371.9" x2="619.0" y2="361.7" stroke="#2d3142" stroke-width="1"/>
+<text x="619.0" y="362.80854303954084" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.386</text>
+<text x="619.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="704" y="312" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.007</text>
+<rect x="760" y="361.9" width="288" height="1.7" fill="rgba(45,49,66,0.08)"/>
+<line x1="760" y1="512.0" x2="1048" y2="512.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="515.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.00</text>
+<line x1="760" y1="430.0" x2="1048" y2="430.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="433.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.29</text>
+<line x1="760" y1="348.0" x2="1048" y2="348.0" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="756" y="351.0" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >0.59</text>
+<text x="744" y="312" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600" text-anchor="start" >Pier*</text>
+<rect x="764.0" y="362.8" width="126.0" height="149.2" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="827.0" y1="363.6" x2="827.0" y2="361.9" stroke="#2d3142" stroke-width="1"/>
+<text x="827.0" y="358.7866033258755" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.535</text>
+<text x="827.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >E33</text>
+<rect x="900.0" y="366.7" width="126.0" height="145.3" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<line x1="963.0" y1="373.1" x2="963.0" y2="360.4" stroke="#2d3142" stroke-width="1"/>
+<text x="963.0" y="362.71502819748076" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >0.521</text>
+<text x="963.0" y="528" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" >ARM B</text>
+<text x="1048" y="312" fill="#4f5d75" font-size="6.5" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="end" >sd(E33) 0.003</text>
+<text x="540" y="564" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="middle" letter-spacing="0.08em">MEAN CONSENSUS IOU, 5 SEEDS: E33 VS ARM B, +-1 SD (E33) BAND</text>
+<line x1="32" y1="624" x2="1048" y2="624" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="32" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="630" width="16" height="12" fill="rgba(45,49,66,0.08)"/>
+<text x="132" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >E33 +-1 sd</text>
+<rect x="230" y="630" width="16" height="12" fill="#2d3142" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<text x="250" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >E33 (5-seed mean)</text>
+<rect x="397" y="630" width="16" height="12" fill="#eb6c36" fill-opacity="0.85" stroke="#2d3142" stroke-width="0.6"/>
+<text x="417" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >Arm B, beyond E33 sd</text>
+<rect x="585" y="630" width="16" height="12" fill="#7a8399" fill-opacity="0.35" stroke="#2d3142" stroke-width="0.6"/>
+<text x="605" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >Arm B, tie</text>
+<line x1="711" y1="630" x2="711" y2="642" stroke="#2d3142" stroke-width="1"/>
+<text x="723" y="640" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" font-weight="400" text-anchor="start" >+-1 sd (that arm's own)</text>
+</svg>
