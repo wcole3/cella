@@ -1,5 +1,7 @@
 # Cella — Cellular Automata Engine
 
+![Cella GUI screenshot](cella.gif)
+
 Cella is a Rust project for simulating **1D and 2D cellular automata**. It is
 split into two crates:
 
@@ -7,8 +9,6 @@ split into two crates:
 |-------|-------------|
 | **`cella_lib`** | Core library — grids, rules, serialisation, multi-threaded stepping |
 | **`cella`** | Binary — interactive CLI menu **and** an egui-based GUI |
-
-![Cella GUI screenshot](cella.gif)
 
 ---
 

@@ -192,6 +192,13 @@ impl CellaApp {
                     ui.label(format!("Time: {:.2}s", total_secs));
                     ui.label(format!("Avg: {:.2} ms/step", avg_ms));
                 }
+                if let Some((done, total)) = self.export_progress() {
+                    ui.separator();
+                    ui.add(
+                        crate::gui::panels::toolbar::export_progress_bar(done, total)
+                            .desired_width(160.0),
+                    );
+                }
                 if let Some(msg) = &self.chrome.status_message {
                     ui.separator();
                     ui.label(egui::RichText::new(msg.clone()).italics());
@@ -312,6 +319,7 @@ impl eframe::App for CellaApp {
         self.ui_viewport(ui);
         self.ui_shortcuts_overlay(ctx);
         self.ui_snapshot_load_modal(ctx);
+        self.ui_export_modal(ctx);
         self.ui_notice_modal(ctx);
 
         // Everything the panels asked for lands here, after they were drawn.

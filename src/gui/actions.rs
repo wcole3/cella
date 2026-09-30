@@ -153,6 +153,10 @@ pub(in crate::gui) enum Action {
     ToggleRight,
     ToggleShortcuts,
     ExportGif,
+    /// The export modal's "Export": start the GIF with the options shown.
+    ConfirmExportGif,
+    /// The export modal's "Cancel" (or Escape / click outside).
+    CancelExportGif,
     SaveFinalState,
     /// Anything that touches the Explore worker or applies a found genome.
     Explore(ExploreAction),
@@ -368,6 +372,8 @@ impl CellaApp {
             Action::ToggleRight => self.chrome.right_open = !self.chrome.right_open,
             Action::ToggleShortcuts => self.chrome.show_shortcuts = !self.chrome.show_shortcuts,
             Action::ExportGif => self.export_gif_dialog(),
+            Action::ConfirmExportGif => self.confirm_export(),
+            Action::CancelExportGif => self.cancel_export(),
             Action::SaveFinalState => self.save_final_state(),
             Action::Explore(a) => self.apply_explore_action(a),
             Action::SurpriseMe { seed } => self.surprise_me(seed),

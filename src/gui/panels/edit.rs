@@ -27,7 +27,6 @@ pub(in crate::gui) fn neighborhood_name(nb: Neighborhood2D) -> &'static str {
         Neighborhood2D::Knight => "Knight (chess moves)",
     }
 }
-use std::sync::atomic::Ordering;
 
 impl CellaApp {
     pub(in crate::gui) fn ui_edit_tab(&mut self, ui: &mut egui::Ui) {
@@ -274,17 +273,7 @@ impl CellaApp {
             }
         });
         section(ui, "Export GIF", |ui| {
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut self.export.steps).range(1..=10_000));
-                ui.label("steps");
-                ui.add(egui::DragValue::new(&mut self.export.fps).range(1..=60));
-                ui.label("fps");
-            });
-            ui.checkbox(
-                &mut self.export.with_history_1d,
-                "1D: stack rows into a space-time image",
-            )
-            .on_hover_text("Applies to 1D GIF export; height limited by the 1D history limit.");
+            ui.label("Steps, frame rate and 1D row stacking are asked for after you pick a file.");
             let exporting = self.export.join.is_some();
             if ui
                 .add_enabled(!exporting, egui::Button::new("Export GIF\u{2026}"))
@@ -292,13 +281,8 @@ impl CellaApp {
             {
                 pending.push(Action::ExportGif);
             }
-            if let Some(p) = &self.export.progress {
-                let done = p.load(Ordering::Relaxed) as u32;
-                let total = self.export.total.max(1) as u32;
-                ui.add(
-                    egui::ProgressBar::new(done as f32 / total as f32)
-                        .text(format!("Exporting: {done} / {total}")),
-                );
+            if let Some((done, total)) = self.export_progress() {
+                ui.add(crate::gui::panels::toolbar::export_progress_bar(done, total));
             }
             if let Some(msg) = &self.export.message {
                 ui.label(msg.clone());

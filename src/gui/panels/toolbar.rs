@@ -12,6 +12,12 @@ use crate::gui::shortcuts::tooltip;
 use crate::gui::state::Pacing;
 use egui::Context;
 
+/// A progress bar reading "done/total" for a running GIF export.
+pub(in crate::gui) fn export_progress_bar(done: usize, total: usize) -> egui::ProgressBar {
+    egui::ProgressBar::new(crate::gui::export::progress_fraction(done, total))
+        .text(format!("{done}/{total}"))
+}
+
 /// The toolbar's icons. The proportional font family egui ships with (Ubuntu,
 /// Noto Emoji, emoji-icon-font) lacks many box and arrow symbols, and a glyph
 /// it cannot draw shows as an empty rectangle; icon buttons therefore render
@@ -204,8 +210,8 @@ impl CellaApp {
         if export_btn.clicked() {
             pending.push(Action::ExportGif);
         }
-        if exporting {
-            ui.label("Exporting\u{2026}");
+        if let Some((done, total)) = self.export_progress() {
+            ui.add(export_progress_bar(done, total).desired_width(120.0));
         }
         if icon_button(
             ui,
@@ -289,6 +295,58 @@ impl CellaApp {
         }
     }
 
+    /// The GIF export options: frame count, frame rate and (for 1D) row
+    /// stacking, asked for after the file is chosen. A modal like
+    /// `ui_snapshot_load_modal`: Escape or a click outside cancels. The
+    /// number fields are form drafts edited in place; the buttons queue
+    /// [`Action::ConfirmExportGif`] / [`Action::CancelExportGif`].
+    pub(in crate::gui) fn ui_export_modal(&mut self, ctx: &Context) {
+        let is_1d = matches!(self.scenario.dim, Some(crate::gui::app::Dim::D1));
+        let Some(pending) = &mut self.export.pending else {
+            return;
+        };
+        let with_history = &mut self.export.with_history_1d;
+        let mut choice = None;
+        let response = egui::Modal::new(egui::Id::new("export_modal")).show(ctx, |ui| {
+            ui.heading("Export GIF");
+            ui.label(pending.path.display().to_string());
+            ui.add_space(crate::gui::theme::SPACE_MD);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut pending.steps)
+                        .range(1..=crate::gui::export::MAX_EXPORT_STEPS),
+                );
+                ui.label("steps");
+                ui.add(
+                    egui::DragValue::new(&mut pending.fps)
+                        .range(1..=crate::gui::export::MAX_EXPORT_FPS),
+                );
+                ui.label("fps");
+            });
+            ui.checkbox(&mut pending.looping, "Loop forever")
+                .on_hover_text("Off: the GIF plays once and stops on its last frame.");
+            if is_1d {
+                ui.checkbox(with_history, "Stack rows into a space-time image")
+                    .on_hover_text("Height is limited by the 1D history limit.");
+            }
+            ui.add_space(crate::gui::theme::SPACE_MD);
+            ui.horizontal(|ui| {
+                if ui.button("Export").clicked() {
+                    choice = Some(Action::ConfirmExportGif);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(Action::CancelExportGif);
+                }
+            });
+        });
+        if response.should_close() {
+            choice.get_or_insert(Action::CancelExportGif);
+        }
+        if let Some(a) = choice {
+            self.push(a);
+        }
+    }
+
     /// The notice popup (see [`Notice`]). Waits while the snapshot-load
     /// question is open, so only one popup shows at a time.
     pub(in crate::gui) fn ui_notice_modal(&mut self, ctx: &Context) {
@@ -368,5 +426,30 @@ mod tests {
         app.chrome.show_shortcuts = true;
         egui::__run_test_ctx(|ctx| app.ui_shortcuts_overlay(ctx));
         let _ = ctx;
+    }
+
+    #[test]
+    fn the_export_modal_and_progress_bars_draw_headless() {
+        let mut app = test_app();
+        app.load_demo_life();
+        app.export.pending = Some(crate::gui::state::PendingExport {
+            path: "x.gif".into(),
+            steps: 5,
+            fps: 10,
+            looping: true,
+        });
+        egui::__run_test_ctx(|ctx| app.ui_export_modal(ctx));
+        assert!(app.actions.is_empty(), "nothing was clicked");
+        app.load_demo_1d_rule30();
+        egui::__run_test_ctx(|ctx| app.ui_export_modal(ctx));
+        app.export.pending = None;
+        egui::__run_test_ctx(|ctx| app.ui_export_modal(ctx));
+        app.export.progress = Some(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(2)));
+        app.export.total = 4;
+        egui::__run_test_ui(|ui| {
+            let ctx = ui.ctx().clone();
+            app.ui_top_controls(ui, &ctx);
+            app.ui_status_bar(ui);
+        });
     }
 }

@@ -214,10 +214,24 @@ impl Default for EditState {
     }
 }
 
-/// GIF export settings and the background thread doing the work.
-pub(in crate::gui) struct ExportState {
+/// A GIF export waiting on the options modal: where to write, and the frame
+/// count and rate the user is editing.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::gui) struct PendingExport {
+    pub(in crate::gui) path: std::path::PathBuf,
     pub(in crate::gui) steps: u32,
     pub(in crate::gui) fps: u32,
+    /// Whether the GIF loops forever (true) or plays once (false).
+    pub(in crate::gui) looping: bool,
+}
+
+/// GIF export settings and the background thread doing the work.
+#[derive(Default)]
+pub(in crate::gui) struct ExportState {
+    /// The file chosen and the options being edited in the export modal.
+    /// `Some` is what tells `ui_export_modal` (in `panels::toolbar`) to draw
+    /// it; it clears itself on Export or Cancel.
+    pub(in crate::gui) pending: Option<PendingExport>,
     /// For 1D exports, stack each step as a row to produce a space-time image.
     pub(in crate::gui) with_history_1d: bool,
     pub(in crate::gui) total: usize,
@@ -225,20 +239,6 @@ pub(in crate::gui) struct ExportState {
     pub(in crate::gui) progress: Option<Arc<AtomicUsize>>,
     pub(in crate::gui) join: Option<std::thread::JoinHandle<Result<(), String>>>,
     pub(in crate::gui) message: Option<String>,
-}
-
-impl Default for ExportState {
-    fn default() -> Self {
-        Self {
-            steps: 300,
-            fps: 12,
-            with_history_1d: false,
-            total: 0,
-            progress: None,
-            join: None,
-            message: None,
-        }
-    }
 }
 
 /// Per-type population series backing the statistics chart.

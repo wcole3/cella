@@ -5,7 +5,8 @@
 **/ascii/*
 
 snapshot.json
-cella.gif
+*.gif
+!cella.gif
 
 # Validation inputs are pulled by scripts, never committed (large / third-party
 # licensed). The harness code and docs in validation/ ARE committed.
