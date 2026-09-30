@@ -358,6 +358,7 @@ impl CellaApp {
             return;
         }
         let Some(path) = FileDialog::new()
+            .set_directory(std::env::current_dir().unwrap_or_default())
             .add_filter("gif", &["gif"])
             .set_file_name("cella.gif")
             .save_file()
