@@ -1,5 +1,12 @@
 {
   "version": "0.2.0",
+  "setupCommands": [
+    {
+    "description": "Disable target async",
+    "text": "set target-async off",
+    "ignoreFailures": true
+    }
+  ],
   "configurations": [
     {
       "type": "lldb",
