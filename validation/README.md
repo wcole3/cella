@@ -1,5 +1,8 @@
 # Wildfire Validation
 
+This is mostly personal interest. No one should currently be using this to model
+real fires.
+
 This directory holds the tooling for scoring cella's wildfire model against
 real, observed fires. The code and docs here are committed; the inputs and
 outputs (`data/`, `papers/`, `results/`, `.venv/`) are gitignored — they are
