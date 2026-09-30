@@ -2,8 +2,8 @@
 
 A plain-language introduction to genetic algorithms and their cousins,
 novelty search and MAP-Elites, for someone who has never met them. It ends
-with where each idea lives in `cella` (`docs/explore.md`), so the Evolve
-side of the Explore tab reads as English.
+with where each idea lives in `cella` ([explore.md](explore.md)), so the
+Evolve side of the Explore tab reads as English.
 
 ## 1. The one idea
 
@@ -147,15 +147,15 @@ searching a fixed landscape. `cella` uses one set of operators for both.
 
 | Word here | In `cella` |
 |---|---|
-| gene, genome | `GeneSpec` / `Genome`; `"genes"` in the `"evolve"` block (`docs/explore.md` §4) |
-| fitness | an `Objective` (metric + when + goal), or your own `Fitness` impl |
-| population, generations, elite, crossover, mutation, σ, immigrants | the same-named fields of `"evolve"` |
+| gene, genome | `GeneSpec` / `Genome`; `"genes"` in the `"evolve"` block ([explore.md §4](explore.md#4-pick-genes-which-knobs-may-vary)) |
+| fitness | an `Objective` (metric + when + goal, [§5](explore.md#5-pick-an-objective-how-a-run-is-measured)), or your own `Fitness` impl |
+| population, generations, elite, crossover, mutation, σ, immigrants | the same-named fields of `"evolve"` ([§8](explore.md#8-configure-evolution)) |
 | tournament / Boltzmann | `"selection": {"tournament": {"k": 3}}` / `{"boltzmann": {"beta": …}}` |
 | repeats (noise) | `repeats` |
 | random starts | `"initial": {"random": {...}}` |
 | density classification | `"metric": "density_classification"` |
-| novelty search | `"search": {"novelty": {"k": 15}}` |
-| MAP-Elites, descriptors, coverage, QD score | `"search": {"map_elites": …}`, `"descriptors"`, `ArchiveStats`, the Archive gallery in the Explore tab |
+| novelty search | `"search": {"novelty": {"k": 15}}` ([§10](explore.md#10-novelty-reward-being-different)) |
+| MAP-Elites, descriptors, coverage, QD score | `"search": {"map_elites": …}`, `"descriptors"`, `ArchiveStats`, the Archive section in the Explore tab ([§6](explore.md#6-descriptors-what-makes-two-rules-different), [§9](explore.md#9-illuminate-instead-of-optimise-map-elites)) |
 | hall of fame | `Evolution::hall_of_fame`, "Best genome" in the GUI |
 
 ## 8. Sources, in order of gentleness
@@ -167,7 +167,8 @@ searching a fixed landscape. `cella` uses one set of operators for both.
   Darwinian framing and the classic operators in a few screens.
   <https://www.cs.ucdavis.edu/~vemuri/classes/ecs271/Genetic%20Algorithms%20Short%20Tutorial.htm>
 - Mitchell, Crutchfield & Das, *Evolving Cellular Automata with Genetic
-  Algorithms: A Review of Recent Work*. The density-classification story.
+  Algorithms: A Review of Recent Work* (1996). The density-classification
+  story.
   <https://melaniemitchell.me/PapersContent/evca-review.pdf>
 - Mouret, *Quality Diversity Algorithms* (lab page). One paragraph on
   what QD is, the MAP-Elites paper, and a notebook tutorial.
@@ -176,7 +177,8 @@ searching a fixed landscape. `cella` uses one set of operators for both.
   The MAP-Elites paper; short and readable.
   <https://arxiv.org/abs/1504.04909>
 - Lehman & Stanley, *Abandoning Objectives: Evolution through the Search
-  for Novelty Alone* (2011). Why not chasing the objective can find more.
+  for Novelty Alone* (2011, *Evolutionary Computation* 19(2)). Why not
+  chasing the objective can find more.
   <https://gwern.net/doc/reinforcement-learning/exploration/2011-lehman.pdf> (mirror; the journal copy is paywalled)
 - Wikipedia, *Genetic algorithm*, for history and the many variants.
   <https://en.wikipedia.org/wiki/Genetic_algorithm>

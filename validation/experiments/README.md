@@ -13,13 +13,14 @@ any one of them cold:
   experiments that changed how this one should be read).
 
 Failed experiments stay (TEST_PLAN §8 rule 5). Every term is defined in
-**[GLOSSARY.md](GLOSSARY.md)**. Start with the six fires and the two score
-families below, then the table; open a file when you need its numbers.
+**[GLOSSARY.md](GLOSSARY.md)**. For the big picture in plain language, read
+[../ANALYSIS.md](../ANALYSIS.md) first. Here, start with the six fires and
+the two score families below, then the table; open a file when you need
+its numbers. Each round also has a summary file (`round-1.md` to
+`round-7.md`).
 
-> The prose of every file was rewritten for clarity on 2026-09-05.
-> Numbers, tables, dates and verdicts are unchanged from the originals
-> (checked by script). Round 1's raw results (E1–E8) are no longer on disk,
-> so those files carry only the numbers recorded at the time.
+Round 1's raw results (E1–E8) are no longer on disk, so those files carry
+only the numbers recorded at the time.
 
 ## The six fires
 
@@ -40,10 +41,12 @@ so its scores are the only unbiased test of anything tuned.
 ## Two score families
 
 Rounds 1–3 quote **single-run mean IoU**: one knob set, one run, the
-overlap with the truth on each day, averaged. Rounds 4–5 quote **forecast
-consensus IoU**: 32 runs with knobs drawn from a prior, a probability map
-per day, cells at ≥ 50 % taken as the forecast, scored against each day's
-mask *before* that mask is used to update the ensemble. The two are not
+overlap with the truth on each day, averaged. Rounds 4 onward quote
+**forecast consensus IoU**: 32 runs with knobs drawn from a prior, a
+probability map per day, cells at ≥ 50 % taken as the forecast, scored
+against each day's mask *before* that mask is used to update the
+ensemble (Rounds 6–7 also report nulls and diagnostics; see the
+"score family" column of the table). The two are not
 comparable. A single run is a lower bound on what the same model gives as
 an ensemble, and a forecast made after seeing yesterday is a different
 task from a run that saw nothing. Tables that mix them say so.
@@ -64,9 +67,9 @@ task from a run that saw nothing. Tables that mix them say so.
 | 6 | 2026-09-11/12 | nulls, state correction, a kernel that tells time: Ellipse null, posterior/ICS-209 check, gated reset, observed-perimeter state correction, spotting illumination, arrival-time kernel | unchanged (same as Round 5); every new mechanism (arrival kernel, `wind_rot_deg` gene, state correction, gated reset) is opt-in, off by default | mixed (deterministic nulls, forecast consensus IoU, illumination coverage) | wind's shape signal is mostly *sign*, not stretch; the validated arrival kernel loses to E33 as-tested but a one-seed pilot with a learned direction gene recovers it |
 | 7 | 2026-09-23/25 | the promotion test: full five-seed Arm B, the 4× clock's own wedge coverage, two mechanism ablations (diversity vs. learning), station wind as the driver input, and a containment-operator audit under the 4× clock | unchanged (same as Round 5/6); Arm B **REJECTED as tested** (stop rule trips on Pier); `SMC_DIAG`, `SMC_WIND_ROT_SIGMA`, `SMC_WIND_SOURCE`, `SMC_CONTAIN_GROWTH_FLOOR` all opt-in, off by default | mixed (five-seed forecast consensus IoU, a per-window diagnostic read, an operator audit + single-seed sweep) | Arm B beats E33 on four of six fires but loses to it on Pier by 4.60 sd, tripping the pre-registered stop rule; neither of two independent mechanism tests could state the gene's gain in one sentence (both fire-specific); the containment operator has no scaling bug — Chimney's earlier-round low contained fraction was one seed |
 
-![Timeline of the five rounds with the working configuration under each](figures/overview-configurations.svg)
+![Timeline of Rounds 1–5 with the working configuration under each (Rounds 6–7 left it unchanged)](figures/overview-configurations.svg)
 
-![Small multiples: score per fire across rounds against the Circle, with the score-family change marked](figures/overview-scores.svg)
+![Small multiples: score per fire across Rounds 1–5 against the Circle, with the score-family change marked](figures/overview-scores.svg)
 
 ## How to read any table here
 
@@ -75,7 +78,7 @@ task from a run that saw nothing. Tables that mix them say so.
 2. **Find the Circle.** Every score sits next to the area-matched null on
    the same fire. Beating it is the bar; beating persistence means little.
 3. **Check the score family.** Single-run mean IoU (Rounds 1–3) and
-   forecast consensus IoU (Rounds 4–5) do not compare.
+   forecast consensus IoU (Rounds 4 onward) do not compare.
 4. **Read the brackets.** `(×3.4)` is the area ratio: simulated burned
    area ÷ observed. A score that improved while the ratio fell from ×3 to
    ×1 improved by burning less, not by burning in better places.
@@ -109,9 +112,9 @@ task from a run that saw nothing. Tables that mix them say so.
 **Tooling**: `cella_lib/examples/wildfire_experiment.rs` (hooks
 `EXP_P0_SCALE`, `EXP_WIND_SCALE`, `EXP_WIND_ROT_DEG`, `EXP_SEED_BASE`, and
 later ones named in each file), `cella_lib/examples/wildfire_smc/` (Rounds
-4–5; a module tree since Round 7 Task 1, same CLI; every field the
-report carried before Round 7 is still there, unchanged in value, though
-the report itself has since gained three new fields — `wind_source`,
+4 onward; split into a module tree in Round 7 with the same CLI. Every
+field its report carried before Round 7 is unchanged in value, but the
+report has gained three new fields — `wind_source`,
 `station_fallback_windows`, `contain_growth_floor` — so it is not
 byte-identical to a pre-Round-7 report), and the
 runners in `../scripts/experiments/`. Results land
@@ -122,7 +125,8 @@ must call `cella_lib/target/release/examples/...`, not the repo-root
 **File order**: files are numbered in the order they were run, which is
 not always experiment-number order (E12 before E11, E19 before E17, E23
 before E22, E33 before E32). The front-speed note has no E number. E29
-and E30 were designed (research notes) and not yet run.
+(spread-event gating) was designed in the research notes below and has not
+been run.
 
 Research notes: [why fires slow down, what wind a fire feels, what
 suppression does](research-decline-wind-suppression.md) (2026-09-04),

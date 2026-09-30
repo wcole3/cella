@@ -2,16 +2,16 @@
 
 This is a plain-language introduction for someone who has never met the
 term. No statistics needed. It ends with how the ideas show up in `cella`
-(`docs/explore.md`), so the words in the Explore tab and the validation log
-stop being jargon.
+([explore.md](explore.md)), so the words in the Explore tab and the
+validation log stop being jargon.
 
 ## 1. The one idea
 
 **Monte Carlo** means: when a question is too tangled to work out with
 pencil and paper, *try it many times with random inputs and count what
 happens*. The name comes from the casino; the method comes from the 1940s,
-when physicists needed to know how neutrons wander through a reactor and
-could not solve the equations. Instead they simulated thousands of
+when physicists needed to know how neutrons wander through nuclear
+material and could not solve the equations. Instead they simulated thousands of
 individual neutrons taking random steps, and counted.
 
 Everything else in this page is a variation on "run it many times and
@@ -47,8 +47,9 @@ that takes some *inputs* (a seed, a few knobs like "how flammable is the
 fuel") and produces one *outcome* (a picture of what burned). If you knew
 the inputs exactly you would run it once. You never do. So:
 
-1. Write down what you believe about each input as a **range** ("p0 is
-   somewhere between 0.08 and 0.6, and I have no idea where inside that").
+1. Write down what you believe about each input as a **range** ("`p0`, the
+   model's base spread chance, is somewhere between 0.08 and 0.6, and I have
+   no idea where inside that").
    Statisticians call this the *prior*.
 2. Draw one value per input at random from those ranges. That is one
    **member** of the **ensemble**.
@@ -60,13 +61,16 @@ The output is no longer a picture but a **probability map**: "this cell
 burns in 70 % of the futures we can imagine". Weather forecasters have
 done exactly this since the 1990s (an *ensemble forecast*; the "spaghetti
 plots" of many hurricane tracks are one ensemble drawn on one map). The
-80 % chance of rain on your phone is a count of ensemble members.
+80 % chance of rain on your phone is, roughly, a count of ensemble
+members.
 
 Why is the count better than the single best guess? Because the members
 that go wrong in one direction are out-voted by members that go wrong in
-the other. In `cella`'s wildfire validation, 32 untuned members beat the
-carefully hand-tuned single run on four of six fires (experiment E24),
-having fitted nothing.
+the other. In `cella`'s wildfire validation, the 50 % consensus map of 32
+untuned members matched or beat the per-fire hand-tuned single run on four
+of six fires (experiment E24, scored by overlap), having fitted nothing. It
+beat the simple circle baseline (section 4) on overlap on only one of the
+six (Chimney); E24 has the full table.
 
 ## 4. How do you know a probability map is any good?
 
@@ -85,9 +89,9 @@ checks:
   overlap scores.
 
 Always compare against a **dumb baseline**: a map that says "everything
-within this radius burns". If the ensemble cannot beat a circle, the
-simulation adds nothing. `cella`'s log prints the circle's score on every
-line for exactly this reason.
+within this radius burns". If the ensemble cannot beat a circle on a given
+score, the simulation adds nothing by that measure. `cella`'s log prints
+the circle's score on every line for exactly this reason.
 
 ## 5. Learning from what you observe: the particle filter
 
@@ -103,8 +107,8 @@ learning step:
    means a handful of members take everything.
 2. **Resample.** Draw a new population of the same size, picking each
    member with probability proportional to its weight. Good members get
-   copied several times, bad ones vanish. Copies keep their parent's grid:
-   you cannot re-draw the past.
+   copied several times, bad ones vanish. By default copies keep their
+   parent's grid: you cannot re-draw the past.
 3. **Mutate.** Jitter each copy's knobs a little (σ, a share of each knob's
    range), so the copies are not identical twins.
 4. **Immigrate.** Replace a fraction (20 % by default) with fresh random
@@ -143,8 +147,8 @@ the same one.
 
 | Word here | In `cella` |
 |---|---|
-| range / prior for an input | a **gene** with a `range` (`docs/explore.md` §4) |
-| member, ensemble | `Ensemble`, `members` in the `"ensemble"` block |
+| range / prior for an input | a **gene** with a `range` ([explore.md §4](explore.md#4-pick-genes-which-knobs-may-vary)) |
+| member, ensemble | `Ensemble`, `members` in the `"ensemble"` block ([§7](explore.md#7-configure-an-ensemble)) |
 | count → probability map | `state_probability`, the probability layer (P) in the GUI |
 | dumb baseline | the "Circle" (area-matched radial null) in `validation/` |
 | Brier score, calibration | `mean_brier_ensemble` in the E24/E25 reports |
@@ -162,7 +166,7 @@ the same one.
   lab-bench version of the same idea for first-year students.
   <https://openbooks.library.umass.edu/p132-lab-manual/chapter/introduction-to-mc/>
 - Raychaudhuri, *Introduction to Monte Carlo Simulation*, Winter
-  Simulation Conference 2008. The standard eight-page tutorial: inputs as
+  Simulation Conference 2008. A short standard tutorial: inputs as
   distributions, sampling, output analysis.
   <https://www.informs-sim.org/wsc08papers/012.pdf>
 - Royal Meteorological Society, *How to interpret an ensemble forecast*.

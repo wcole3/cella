@@ -1,13 +1,19 @@
 # Cella Roadmap — GUI Performance, Pluggable Model UIs, and Usability
 
+> **Contributor notes.** This is a developer planning document for the GUI
+> work; you do not need it to use cella. To use the app or library, see
+> [the README](../README.md), [app.md](app.md), [lib.md](lib.md), or
+> [explore.md](explore.md). It is a dated working log: each section is marked
+> *(done)* or *(open)*, and finished phases stay in for their reasoning.
+
 This document is the plan for the next three phases of work on the `cella`
 binary crate (the GUI), plus one addition to `cella_lib`. It follows the same
-conventions as [`performance.md`](performance.md): sections are marked *(done)*
-or *(open)*, and **line numbers are deliberately omitted in favour of naming
-functions**, because line numbers drift as soon as anyone edits a file.
+conventions as [`performance.md`](performance.md): **line numbers are
+deliberately omitted in favour of naming functions**, because line numbers
+drift as soon as anyone edits a file.
 
 It is written to be picked up cold. If you have never touched this codebase,
-read [`app.md`](app.md) first — in particular its **Code Layout (Module Map)**
+read [`app.md`](app.md) first — in particular its [**GUI code layout**](app.md#for-contributors-gui-code-layout)
 section, which lists what lives in which `src/gui/` file.
 
 | Phase | Scope | Status |
@@ -16,7 +22,7 @@ section, which lists what lives in which `src/gui/` file.
 | 2 | GUI performance: measure, then fix three suspected defects | *(done)* — commits `e5c304d..8c1c1a7` |
 | 3 | Let external models describe their own parameters | *(done)* — commits `6d7e9b3..ad3654d` |
 | 4 | Usability and fun | *(mostly done)* — items 1, 2, 4, 5, 6, 7 landed in Phase 5; 3 and 8 open |
-| 5 | Workbench redesign + Explore (ensembles, evolution, illumination in the GUI) | *(done, click-through owed)* — branch `explore` |
+| 5 | Workbench redesign + Explore (ensembles, evolution, illumination in the GUI) | *(done, manual GUI verification pending)* |
 
 ## Background: why this order
 
@@ -85,7 +91,7 @@ Both of these were stated wrongly in the original plan, and both cost time:
 
 ### Outstanding: Phase 1 is compile-checked only
 
-**The manual click-through never ran.** The GUI cannot start in the development
+**The manual GUI walkthrough never ran.** The GUI cannot start in the development
 environment used for Phase 1:
 
 ```
@@ -95,7 +101,7 @@ GUI error: winit EventLoopError: Exit Failure: 1
 ```
 
 This is a WSLg/Mesa driver problem, not a code defect: the pristine
-pre-refactor build (checked out into a scratch `git worktree`) fails
+pre-refactor build (built from a separate checkout) fails
 identically. The failure happens inside `eframe::run_native`, before any
 application code runs.
 
@@ -459,7 +465,7 @@ Commits `6d7e9b3..ad3654d`.
   commands and checksums were not committed to this repo; the result
   itself — six byte-identical files, confirmed by diff and MD5 — is
   restated here in full rather than linked.)
-- **Still owed**: the manual GL checks in §5 for §3.4 (the wildfire-demo
+- **Still pending**: the manual GL checks in §5 for §3.4 (the wildfire-demo
   panel walkthrough and the "no model" negative case) have not been run —
   this environment cannot launch the GUI (see §1's WSLg/Mesa blocker). The
   walkthrough must include one check the headless tests can only approximate:
@@ -847,9 +853,9 @@ existing file-dialog code.
 
 ---
 
-## 5. Phase 5 — workbench and Explore *(done, click-through owed)*
+## 5. Phase 5 — workbench and Explore *(done, manual GUI verification pending)*
 
-Landed September 2026 on branch `explore` (library commits first, then GUI
+Landed September 2026 (library commits first, then GUI
 commits `beddbcf..a520994`, docs last). Scope:
 
 - **Library** (`cella_lib`): `rng` module; grid `seed` and counter-based
@@ -877,7 +883,7 @@ the worker; the reducer handles every action in the shortcut table; the
 snapshot suite is unchanged; E31 replicates E25/E28 through the generic
 engine (`validation/experiments/33-e31-generic-engine-replication.md`).
 
-**Validation kept going on this branch after Phase 5 landed.** Round 5
+**Validation kept going after Phase 5 landed.** Round 5
 (2026-09-05) checked the methods themselves (noise floor, ensemble size,
 operators, prior width, filter vs. offline fit, shape reachability).
 Round 6 (2026-09-11/12) added a wind-oriented null, a state-correction
@@ -904,7 +910,7 @@ fraction on one fire was a single unlucky seed, not a broken threshold.
 The recommended configuration is unchanged from Round 5/6. Full write-up:
 [`validation/experiments/round-7.md`](../validation/experiments/round-7.md).
 
-**Acceptance still owed — the manual GL checklist** (this machine cannot
+**Acceptance still pending — the manual GL checklist** (the development machine cannot
 open a window; see §6):
 
 1. Every shortcut in `?`, once with a `TextEdit` focused (nothing should

@@ -1,45 +1,102 @@
-# Cella — Cellular Automata Engine
+# Cella
 
 ![Cella GUI screenshot](cella.gif)
 
-Cella is a Rust project for simulating **1D and 2D cellular automata**. It is
-split into two crates:
+Cella is a Rust toolkit for cellular automata (CA): grids of cells that
+change step by step according to simple local rules, like Conway's Game of
+Life. It has four layers, each usable on its own:
 
-| Crate | Description |
-|-------|-------------|
-| **`cella_lib`** | Core library — grids, rules, serialisation, multi-threaded stepping |
-| **`cella`** | Binary — interactive CLI menu **and** an egui-based GUI |
+- **An engine** for 1D and 2D rule-based CAs, with multi-threaded stepping
+  and JSON configs you can save, share and resume.
+- **A plugin seam** (`ExternalModel`) for replacing the built-in rules with
+  your own transition code. A wildfire spread model ships as the worked
+  example.
+- **An Explore module** that runs any rule or model many times
+  (ensembles), searches for good settings (evolution) and maps the range of
+  behaviors a rule family can produce (MAP-Elites).
+- **A GUI workbench** (egui) and a small **CLI demo menu** on top of all of
+  it.
+
+It is for people who want to play with CA rules, build a model on a fast
+grid engine, or study how a stochastic (random-element) model behaves across
+many runs.
+
+**Wildfire disclaimer.** The wildfire model and the scoring tools in
+[`validation/`](validation/README.md) are a personal-interest project.
+They must not be used to model or predict real fires.
 
 ---
 
-## Quick Start
+## Features
+
+- 1D Wolfram-style rules (any code, any radius) and 2D neighborhood-count
+  rules (Moore, Von Neumann, Langton, StraightLine, Knight), with
+  multi-state cells and optional per-rule randomness.
+- Deterministic results: the same config and seed give the same run, on any
+  thread count.
+- JSON configs: load, save, and resume a run part-way through.
+- Plugin models: implement `ExternalModel` in your own crate and tag it
+  with `typetag`. Configs then load it by name, and the engine and Explore
+  drive it with no changes to Cella. To use it in the GUI, link your crate
+  into the `cella` binary.
+- Explore: Monte Carlo ensembles (probability maps), genetic-algorithm
+  evolution, novelty search and MAP-Elites, for any rule or model.
+- GUI: live rule editor, paint/stamp tools, zoom and pan, population
+  charts, per-type colors, GIF export, and an Explore tab.
+- Wildfire example model with a validation pipeline that scores it against
+  observed fires, including null baselines (see `validation/`).
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- **Rust.** Install via [rustup](https://rustup.rs). The GUI crates
+  (`eframe`/`egui` 0.35) require Rust **1.92 or newer**. `cella_lib` alone
+  uses the 2024 edition, so it needs at least 1.85. The project is developed
+  on recent stable.
+- **Linux desktop libraries** for the GUI. `eframe` needs the usual X11 or
+  Wayland and OpenGL development packages. `rfd`, which draws the file
+  open/save dialogs, needs `xdg-desktop-portal` or `zenity`. On Debian or
+  Ubuntu, `sudo apt install zenity` covers the dialogs.
+- **WSL users:** without a desktop session the "Load Config JSON..." button
+  silently does nothing. Install `zenity`, or skip the dialog by passing a
+  config on the command line (next section). Details are in
+  [docs/app.md, "Troubleshooting"](docs/app.md#troubleshooting).
+- **Python 3** is only needed for the data-conversion scripts in
+  `validation/`. It is not needed to build or run Cella.
+
+### Build and run
 
 ```bash
-# Build everything
+# Build the binary (first build downloads and compiles dependencies)
 cargo build --release
 
 # Launch the GUI
 cargo run --release -- --gui
 
+# Launch the GUI with a config already open (also the WSL workaround)
+cargo run --release -- --gui --config configs/life.json
+
 # Launch the CLI demo menu
 cargo run --release
 ```
 
-### GUI Window Size
+Window size is optional:
 
 ```bash
 cargo run --release -- --gui --size=1280x720
 cargo run --release -- --gui --width=1920 --height=1080
 ```
 
-If only `--width` or `--height` is given the other dimension is inferred with
-a 16∶9 aspect ratio.
+If only `--width` or `--height` is given, the other is computed for a 16:9
+window.
 
----
+### CLI demo menu
 
-## CLI Demo Menu
-
-Running without `--gui` opens an interactive menu:
+Without `--gui`, the binary shows a numbered menu and prints results to the
+terminal:
 
 ```
 Cella demos (CLI):
@@ -55,7 +112,10 @@ Cella demos (CLI):
 0) Exit
 ```
 
-### Running a JSON Config from the CLI
+Option 6 is a placeholder: it only prints a "not yet implemented" message,
+because Langton's ant needs a moving agent and the engine has none.
+
+To run a config file, pick option 5:
 
 ```
 Select an option: 5
@@ -63,21 +123,44 @@ Enter path to JSON config: configs/life.json
 Enter number of steps to run [10]: 20
 ```
 
-Pre-built configs ship in the `configs/` directory (Game of Life, Rule 30,
-multi-state cycles, various neighborhood types, etc.).
+Ready-made configs are in [`configs/`](configs/): Life, Rule 30, multi-state
+cycles, other neighborhoods, wildfire demos, and Explore setups.
 
 ---
 
-## Using `cella_lib` as a Library
+## Documentation map
 
-Add the dependency to your `Cargo.toml`:
+| Document | Contents |
+|----------|----------|
+| [Application guide](docs/app.md) | CLI, GUI workbench tour, editing, Explore tab, config guide, troubleshooting |
+| [Library guide](docs/lib.md) | Architecture, module reference, rule system, external models, serialization, threading |
+| [Explore guide](docs/explore.md) | Ensembles, evolution and MAP-Elites for any rule or model; how to read results honestly |
+| [Primer: Monte Carlo](docs/primer-monte-carlo.md) | Plain-language: why run a simulation many times, probability maps, particle filters, seeds |
+| [Primer: Genetic Algorithms](docs/primer-genetic-algorithms.md) | Plain-language: populations, selection, mutation, novelty search, MAP-Elites |
+| [Validation README](validation/README.md) | Scoring the wildfire model against real fires; start with [ANALYSIS.md](validation/ANALYSIS.md) |
+| [Performance review](docs/performance.md) | Developer notes: engine internals, optimizations, known issues |
+| [Roadmap](docs/roadmap.md) | Developer notes: GUI and plugin-UI work plan, with status per phase |
+
+Rust API docs: run `cd cella_lib && cargo doc --open` for the library.
+(`make doc` documents only the `cella` binary crate, because `cella_lib` is
+a separate build root; see "Building and testing".)
+
+---
+
+## Using `cella_lib` as a library
+
+Add the dependency to your `Cargo.toml`, pointing `path` at your checkout of
+this repo:
 
 ```toml
 [dependencies]
-cella_lib = { path = "cella_lib" }
+cella_lib = { path = "../cella/cella_lib" }
 ```
 
-### Minimal Rust Example — Conway's Game of Life
+Both samples below are checked to compile against the current API. The
+first reads `configs/life.json`, so run it from the repo root.
+
+### Conway's Game of Life from a config
 
 ```rust
 use cella_lib::*;
@@ -109,7 +192,7 @@ fn main() {
 }
 ```
 
-### Minimal Rust Example — 1D Rule 30
+### 1D Rule 30 in the terminal
 
 ```rust
 use cella_lib::*;
@@ -147,30 +230,34 @@ fn main() {
 }
 ```
 
----
+To plug in your own transition code, see "External Models" in
+[docs/lib.md](docs/lib.md). The shipped example is the wildfire model in
+`cella_lib/src/wildfire/`; the trait lives in `cella_lib/src/external.rs`.
 
-## Thread Configuration
+### Thread count
 
-Create (or edit) a `cella.properties` file at the project root:
+The engine steps grids in parallel. To set the worker count, create a
+`cella.properties` file in the directory you run from (the repo root has
+one already):
 
 ```properties
-# Number of worker threads for grid stepping.
-# Set to 1 to disable parallelism.
+# Number of worker threads for grid stepping. 1 disables parallelism.
 threads=4
 ```
 
-If the file is absent the engine uses
-`std::thread::available_parallelism()` (typically the number of logical
-CPUs).
+Without the file, the engine uses `std::thread::available_parallelism()`,
+usually the number of logical CPUs.
 
 ---
 
-## JSON Configuration Format
+## Config format
 
-Configs are JSON files with a `"dim"` discriminator (`"1d"` or `"2d"`).
+A config is a JSON file with a `"dim"` field (`"1d"` or `"2d"`), a size, an
+`initial` list of cell types, and a `rule` made of subrules. A subrule says
+"a cell of type A, seeing at least N neighbors of type B, becomes type C".
 
 <details>
-<summary>2D example — Game of Life</summary>
+<summary>2D example — Game of Life (<code>configs/life.json</code>)</summary>
 
 ```json
 {
@@ -198,7 +285,7 @@ Configs are JSON files with a `"dim"` discriminator (`"1d"` or `"2d"`).
 </details>
 
 <details>
-<summary>1D example — Wolfram Rule 30</summary>
+<summary>1D example — Wolfram Rule 30 (<code>configs/1d_rule30_center.json</code>)</summary>
 
 ```json
 {
@@ -221,114 +308,86 @@ Configs are JSON files with a `"dim"` discriminator (`"1d"` or `"2d"`).
 
 </details>
 
-2D subrule notes: `op` (`"lt"`/`"gt"`/`"eq"`) is **inclusive** for `gt`/`lt`
-("at least" / "at most"); `neighborhood` is one of `"Moore"`, `"VonNeumann"`,
-`"Langton"`, `"StraightLine"`, `"Knight"`; an optional `"limit"` field turns
-`gt`/`lt` into an inclusive between-range (e.g. `"count":2, "op":"gt",
-"limit":3` = survive with 2–3 neighbors). `"randomness"` and `"limit"` may be
-omitted.
+(The `"..."` entries stand in for the full list in the real files. In JSON
+`wolfram_code` is a string; in the Rust API it is a number.)
 
-See the [`configs/`](configs/) directory for complete working examples.
+2D subrule notes: `op` (`"lt"`/`"gt"`/`"eq"`) is **inclusive** for `gt` and
+`lt` ("at least" / "at most"). `neighborhood` is one of `"Moore"`,
+`"VonNeumann"`, `"Langton"`, `"StraightLine"`, `"Knight"`. An optional
+`"limit"` turns `gt`/`lt` into an inclusive between-range (for example
+`"count":2, "op":"gt", "limit":3` means "survive with 2 to 3 neighbors").
+`"randomness"` and `"limit"` may be omitted.
 
----
-
-## GUI Features
-
-The egui GUI (launched with `--gui`) provides:
-
-- **Preset demos** — Game of Life, Rule 30, three-state cycles, specialized neighborhoods (StraightLine, Langton, Knight, …)
-- **Live rule editor** — add/remove subrules, change operators, neighborhoods, and ranges
-- **Grid viewport** — zoomable, pannable cell grid with click-to-paint drawing
-- **Playback controls** — play/pause, step, adjustable speed
-- **Resize & reset** — change grid dimensions mid-run; cells, model and step carry on
-- **Color customisation** — per-type color picker plus configurable Inactive/background color
-- **Statistics panel** — live population counts and line charts (via `egui_plot`)
-- **Import / Export** — load/save JSON configs, resuming a run mid-simulation on load if it was saved past step 0; export animated GIFs
-- **Font scaling** — adjustable UI text size
+The full field guide, plus the optional `model`, `colors`, `snapshot`,
+`ensemble` and `evolve` blocks, is in
+[docs/app.md, "Config file guide"](docs/app.md#config-file-guide) and
+[docs/lib.md](docs/lib.md).
 
 ---
 
-## Detailed Documentation
+## Building and testing
 
-| Document | Contents |
-|----------|----------|
-| [Library Documentation](docs/lib.md) | Architecture, module reference, rule system, serialisation, threading |
-| [Application Documentation](docs/app.md) | CLI usage, GUI workbench tour, editing, layers, Explore tab, configuration guide |
-| [Explore Guide](docs/explore.md) | Ensembles, evolution and MAP-Elites for any rule or model; genes, metrics, drivers, CLI, honest reading of results |
-| [Primer: Monte Carlo](docs/primer-monte-carlo.md) | Plain-language: why run a simulation many times, probability maps, Brier score, particle filters, seeds |
-| [Primer: Genetic Algorithms](docs/primer-genetic-algorithms.md) | Plain-language: populations, selection, crossover, mutation, what goes wrong, novelty search and MAP-Elites |
-| [Performance Review](docs/performance.md) | Engine internals, optimizations, known issues, recommendations, Hashlife notes |
+The `Makefile` wraps the common commands (each target has a one-line
+comment above it):
 
-### Generating Rust API Docs
+| Command | What it does |
+|---------|--------------|
+| `make build` / `make build-release` | Build the `cella` binary |
+| `make run` / `make run-gui` | Run the CLI menu / the GUI at 1024x768 |
+| `make clippy` | Lint everything with warnings as errors (the lint gate) |
+| `make fmt` / `make fmt-check` | Format / check formatting |
+| `make test` | Fast tests: non-ignored `cella_lib` tests plus the `wildfire_smc` example tests |
+| `make test-all` | Also runs the slow `#[ignore]`d tests |
+| `make coverage` | Line coverage for `cella_lib` (needs `cargo install cargo-llvm-cov`) |
 
-```bash
-# Library docs (opens in browser)
-cargo doc --open -p cella_lib
+**`cella_lib` is its own Cargo build root.** The root `Cargo.toml` depends
+on it by path but does not list it as a workspace member. In practice:
 
-# Full workspace docs
-cargo doc --open
-```
+- A bare `cargo test` at the repo root tests only the `cella` binary, not
+  the library. The library tests run with `cd cella_lib && cargo test`,
+  which is what `make test` does for you.
+- `cella_lib` has its own `target/` directory and its own copy of the
+  release profile, so it builds separately from the root.
+- Its examples (`cella_lib/examples/`) are built and run from inside
+  `cella_lib/`, for example `cd cella_lib && cargo run --release --example
+  explore`.
+
+Before sending a change, run `make clippy` and `make test`. More on test
+environment variables, snapshots and benchmarks is in
+[docs/lib.md, "Building and testing"](docs/lib.md#building-and-testing).
 
 ---
 
-## Project Layout
+## Project layout
 
 ```
 cella/
-├── Cargo.toml              # Workspace root (binary crate)
-├── cella.properties        # Thread configuration
-├── configs/                # Pre-built JSON scenario files
-│   ├── life.json
-│   ├── 1d_rule30_center.json
-│   ├── 2d_life_like_moore.json
-│   └── ...
-├── docs/
-│   ├── lib.md              # Library reference
-│   ├── app.md              # Application guide
-│   ├── explore.md          # Ensembles / evolution / illumination guide
-│   ├── primer-monte-carlo.md          # Beginner primer
-│   ├── primer-genetic-algorithms.md   # Beginner primer
-│   └── performance.md      # Performance review & roadmap
-├── src/                    # Binary crate
-│   ├── main.rs             # Entry point (CLI menu / --gui)
-│   ├── gui.rs              # GUI module shim
-│   ├── gui/
-│   │   ├── app.rs          # egui application (CellaApp)
-│   │   ├── render.rs       # Color palette
-│   │   └── export.rs       # GIF export
-│   └── demos/
-│       ├── mod.rs           # Demo helpers & re-exports
-│       ├── one_d.rs         # 1D demo builders & runners
-│       └── two_d.rs         # 2D demo builders & runners
-├── cella_lib/              # Library crate (its own Cargo build root)
-│   ├── Cargo.toml
+├── Cargo.toml          # Binary crate (the `cella` app)
+├── Makefile            # build / lint / test shortcuts
+├── cella.properties    # Thread count
+├── configs/            # Ready-made JSON scenarios
+├── docs/               # Guides (see the documentation map above)
+├── src/                # Binary crate
+│   ├── main.rs         #   Entry point: CLI menu or --gui
+│   ├── demos/          #   CLI demos
+│   └── gui/            #   egui workbench (app, panels, explore, export, ...)
+├── cella_lib/          # Library crate (its own Cargo build root)
 │   ├── src/
-│   │   ├── lib.rs           # Public API & re-exports
-│   │   ├── types.rs         # CellType, CellState
-│   │   ├── rules.rs         # Rule1D, Rule2D, subrules, neighborhoods
-│   │   ├── grid1d.rs        # Grid1D
-│   │   ├── grid2d.rs        # Grid2D
-│   │   ├── state.rs         # GridState: in-memory grid snapshot (not a file format)
-│   │   ├── config.rs        # JSON config: loading, building, save/resume
-│   │   ├── threads.rs       # Thread configuration
-│   │   ├── chunking.rs      # (private) per-worker output slices
-│   │   ├── rng.rs           # cell_rand: the one source of randomness
-│   │   ├── tunables.rs      # One key grammar over every knob
-│   │   ├── external.rs      # ExternalModel plugin seam
-│   │   ├── explore/         # Ensembles, evolution, illumination (model-agnostic)
-│   │   │   ├── mod.rs
-│   │   │   ├── sim.rs, metrics.rs, genome.rs, driver.rs
-│   │   │   └── ensemble.rs, evolve.rs, archive.rs
-│   │   └── wildfire/        # NOT engine code — the worked example model.
-│   │       ├── mod.rs       #   WildfireModel: an ExternalModel
-│   │       ├── driver.rs    #   WildfireDriver: a MemberDriver
-│   │       └── wind_field.rs # Terrain wind downscaling for the model
-│   ├── examples/            # wildfire_validate, wildfire_smc, explore, ...
-│   └── tests/               # Integration & snapshot tests
+│   │   ├── grid1d.rs, grid2d.rs, rules.rs   # Grids and rule system
+│   │   ├── config.rs, state.rs              # JSON configs, save/resume
+│   │   ├── external.rs                      # ExternalModel plugin seam
+│   │   ├── explore/                         # Ensembles, evolution, MAP-Elites
+│   │   └── wildfire/                        # Worked-example model (not engine code)
+│   ├── examples/       #   explore, wildfire_validate, wildfire_smc, ...
+│   └── tests/          #   Integration and snapshot tests
+└── validation/         # Scoring the wildfire model against real fires
 ```
+
+The full module map for the library is in [docs/lib.md](docs/lib.md); for
+the GUI, in [docs/app.md](docs/app.md#for-contributors-gui-code-layout).
 
 ---
 
 ## License
 
-See the repository for license details.
+MIT — see [LICENSE](LICENSE).

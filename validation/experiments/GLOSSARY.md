@@ -1,17 +1,32 @@
 # Glossary for the experiment log
 
 Every experiment file links here. Terms are grouped, not alphabetical, so
-that reading one group top to bottom teaches the idea. Each entry is one
-to three sentences. If a term you meet in a file is missing here, that is
-a bug in this page.
+that reading one group top to bottom teaches the idea. Most entries are one
+to three sentences; a few from the later rounds (6 and 7) are longer
+because they carry exact definitions. If a term you meet in a file is
+missing here, that is a bug in this page. For the plain-language story,
+read [../ANALYSIS.md](../ANALYSIS.md) first.
 
 ## The fires and the data
 
 - **The six fires.** Six real US fires with daily satellite burn maps:
   Bear 2020, Brattain 2020, Buck 2017, Chimney 2016, Ferguson 2018, Pier
   2017. The table in [README.md](README.md) describes each one.
+- **Round.** A batch of related experiments run together, numbered 1 to 7
+  in the order they were run. Each round has a summary file (`round-N.md`)
+  and a row group in the experiment table.
+- **Cellular automaton (CA).** The kind of fire model being tested: the
+  landscape is a grid of cells, each in a state (unburned fuel, burning,
+  burned out, unburnable), and a fixed local rule decides each tick which
+  cells change state based on their neighbors.
+- **Fuel model (FBFM40) / LANDFIRE.** LANDFIRE is the US map of vegetation
+  and terrain the scenarios are built from. FBFM40 is its 40-class code
+  for how a cell's vegetation burns (grass, shrub, timber litter, ...);
+  the converter groups the codes into six named fuel classes.
 - **Calibration fires.** Bear, Brattain, Buck, Chimney. The four fires we
   are allowed to tune on. Fixed before any result was collected.
+  **Calibration** means adjusting the model's knobs (see "The fire
+  model's knobs" below) until its output fits observed fires.
 - **Holdout fires.** Ferguson and Pier. Never used to choose a setting.
   Their scores are the only unbiased test of anything we tuned. Marked
   with `*` or "(holdout)" in tables.
@@ -25,7 +40,9 @@ a bug in this page.
   never burned. All masks are derived from this one field.
 - **Spatial accuracy.** The truth's own resolution, 375 m for this
   dataset. No score should be read as more precise than that.
-- **ERA5.** A global weather reanalysis. Our wind input for every
+- **ERA5.** A global weather reanalysis (past observations blended into a
+  gridded, gap-free record, at roughly 31 km resolution). Our wind input
+  for every
   committed scenario: one daily average wind for the whole map. Gentle
   (0.1–3 m/s) and, on Chimney's run days, pointing the wrong way.
 - **Station weather (NOAA ISD).** Hourly wind, temperature and humidity
@@ -89,7 +106,8 @@ a bug in this page.
   means the model knows *where*. Printed beside every score.
 - **Persistence.** A dumber forecaster: the ignition never grows. A model
   below persistence is destroying information.
-- **The Ellipse (wind-oriented, area-matched null).** A third dumb
+- **The Ellipse (wind-oriented, area-matched null; "oval" in
+  ANALYSIS.md).** A third dumb
   forecaster, next to the Circle: instead of growing a plain disc, it
   grows an ellipse stretched along the window's wind, sized each day to
   the observed burned area exactly, same as the Circle. It answers a
@@ -135,7 +153,13 @@ a bug in this page.
 
 ## The fire model's knobs
 
-- **p0.** Base chance per tick that fire jumps to a neighbouring cell.
+The entries **Spread rule**, **Arrival tick**, **Wind law**, **Wind
+source**, **Wind-direction offset gene**, **Arm B** and **SMC_DIAG**
+describe Round 6 and 7 options (all off by default), and are the densest
+on this page. Skip them on a first read.
+
+- **p0.** Base chance per tick (one model step; see **Tick** below) that
+  fire jumps to a neighbouring cell.
   The main speed and size knob. Textbook value 0.58; our fires want
   0.1–0.4. **Only true under `spread: "bernoulli"`.** Under
   `spread: "arrival"` the same number is read as a *rate* in cells per
@@ -155,7 +179,8 @@ a bug in this page.
   `exp(c1 × speed)` in the downwind direction, with c1 = 0.045 and
   c2 = 0.131 from Alexandridis 2008. At 1 m/s it is a 5 % nudge. It
   changes speed a little and shape almost not at all (E19, E37).
-- **Spread rule (`model.spread`).** Which mechanism decides *when* a
+- **Spread rule (`model.spread`; the "arrival-time kernel" of
+  ANALYSIS.md is its `"arrival"` setting).** Which mechanism decides *when* a
   fuel cell catches fire. `"bernoulli"` (default): every tick, every
   unburned neighbour of a burning cell rolls independent dice, one per
   burning neighbour, at a *probability*. A probability saturates at 1,
@@ -295,7 +320,8 @@ a bug in this page.
   `SMC_STEPS_SCALE=4` (200 ticks/day) raises the cap to 6 km/day, keeping
   one observation window at one day of forcing by scaling the driver's
   `steps_per_day` from the same field.
-- **Percolation cliff.** Below a threshold p0 the fire fizzles; above it,
+- **Percolation cliff (the "knife edge" in ANALYSIS.md).** Below a
+  threshold p0 the fire fizzles; above it,
   it burns everything reachable. Real fires sit in the narrow band
   between. A small p0 change swings the burned area many-fold.
 - **Recipe.** A named set of knob values. **E1 recipe**: each fire's best
@@ -433,7 +459,7 @@ a bug in this page.
   birth for the rest of the run (resampling still copies it, so
   selection still acts on it — only mutation stops). `SMC_WIND_ROT_
   SIGMA` (E45) is this mechanism applied to `wind_rot_deg`, isolating
-  angular diversity from learning (see Angular diversity, below).
+  angular diversity from learning (see Angular diversity, above).
 - **Immigrants.** Share of children (20 % by default) that get fresh
   knobs from the prior instead of a parent's. Keeps the crowd from
   becoming clones. They inherit their parent's *state* (grid, contained

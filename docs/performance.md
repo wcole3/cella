@@ -1,7 +1,14 @@
 # Cella Performance Review
 
+> **Contributor notes.** This is a developer document about how fast the
+> `cella_lib` engine is and why; you do not need it to use cella. To use the
+> app or library, start with [the README](../README.md), [app.md](app.md),
+> [lib.md](lib.md), or [explore.md](explore.md) (ensembles and search). This
+> file is a dated working log: sections are marked *(done)* or *(open)*, and
+> it keeps the measurements behind each decision.
+
 A review of the `cella_lib` simulation engine, originally written against the
-SoA/double-buffer refactor (branch `qwen-test`, July 2026) and **updated after
+struct-of-arrays (SoA) / double-buffer refactor (July 2026) and **updated after
 acting on it**. It covers the current architecture and its optimizations, the
 correctness issues found, what was implemented and measured, and what remains.
 
@@ -785,7 +792,7 @@ pass).
 
 ---
 
-## 8. Experiment Log (2026-08-14 optimization session)
+## 8. Experiment Log (2026-08-14 optimization run)
 
 Protocol: `CELLA_BENCH=1 CELLA_BENCH_RUNS=10 cargo test --release --test
 long_suite -- --ignored --test-threads=1 --nocapture <filter>`, comparing
@@ -1418,7 +1425,7 @@ build time via the `RUSTFLAGS` environment variable
 `.cargo/config.toml`, so it never silently affects a plain `cargo build`
 or `cargo test` and has to be asked for explicitly every time.
 
-**Renamed after this study ran (whole-branch review).** The profile above
+**Renamed after this study ran (during review).** The profile above
 is what this study actually measured, under Cargo's *built-in* `bench`
 name — which, per the first "build-system detail" below, defaults to the
 *same* output directory as `release` (`target/release/`, no separate
@@ -1491,7 +1498,7 @@ mistake in the study:**
 
 Net effect: the "release" rows and the (i)/(iii) rows below are not
 three independently-compiled binaries measured once each — they are
-**the same compiled binary**, run at different points in the session.
+**the same compiled binary**, run at different points in the run.
 That is a feature for this study, not a gap: it means the spread between
 release/(i)/(iii) is a clean same-binary noise measurement (the box's
 own run-to-run variance), which is exactly the yardstick every other
@@ -1499,7 +1506,7 @@ variant needs to be read against. Only (ii), (iv) and (v) changed the
 effective profile enough to force a genuine recompile (confirmed by
 their own multi-second-to-90-second compile time when built, not a
 0.05 s cache hit — the exact per-variant build durations were logged
-during the session but were not carried into a table in this file).
+during the run but were not carried into a table in this file).
 
 **Results — wall time and the suite's own internal total, both variants
 compared against the release baseline's own two-repeat spread:**

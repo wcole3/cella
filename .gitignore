@@ -14,8 +14,9 @@ validation/data/
 validation/papers/
 validation/results/
 validation/.venv/
-# superpowers SDD scratch workspace
+# Local planning scratch space (not part of the project)
 .superpowers/
+docs/superpowers/
 .mcp.json
 __pycache__/
 .firecrawl/

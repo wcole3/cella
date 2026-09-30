@@ -16,6 +16,35 @@ New to the words *Monte Carlo*, *particle filter*, *genetic algorithm* or
 [primer-monte-carlo.md](primer-monte-carlo.md) and
 [primer-genetic-algorithms.md](primer-genetic-algorithms.md).
 
+**Quick start.** Two ways in, both from a clone of the repo:
+
+- *GUI:* run `cargo run --release -- --gui --config
+  configs/2d_wildfire_ensemble.json`, open the **Explore** tab on the
+  right, pick **Monte Carlo**, and press **Start** (section 14).
+- *Command line:* `cd cella_lib && cargo run --release --example explore --
+  ../configs/2d_map_elites_life_classes.json evolve map.json` (section 9
+  walks through what it produces; section 11 lists every option).
+
+Contents:
+
+1. [Why one run is not enough](#1-why-one-run-is-not-enough)
+2. [Which one do I want?](#2-which-one-do-i-want)
+3. [The `seed` field](#3-the-seed-field)
+4. [Pick genes: which knobs may vary](#4-pick-genes-which-knobs-may-vary)
+5. [Pick an objective: how a run is measured](#5-pick-an-objective-how-a-run-is-measured)
+6. [Descriptors: what makes two rules different](#6-descriptors-what-makes-two-rules-different)
+7. [Configure an ensemble](#7-configure-an-ensemble)
+8. [Configure evolution](#8-configure-evolution)
+9. [Illuminate instead of optimise (MAP-Elites)](#9-illuminate-instead-of-optimise-map-elites)
+10. [Novelty: reward being different](#10-novelty-reward-being-different)
+11. [Run it from Rust and the command line](#11-run-it-from-rust-and-the-command-line)
+12. [Read results honestly](#12-read-results-honestly)
+13. [Write a driver for your model](#13-write-a-driver-for-your-model)
+14. [The GUI Explore tab](#14-the-gui-explore-tab)
+15. [Saving Explore settings](#15-saving-explore-settings)
+16. [Old `ensemble` blocks (before September 2026)](#16-old-ensemble-blocks-before-september-2026)
+17. [Current limits](#17-current-limits)
+
 ## 1. Why one run is not enough
 
 A single run is one roll of the dice with one guess at the knobs. Change
@@ -53,7 +82,7 @@ three sections once; the rest is picking numbers.
 
 ## 3. The `seed` field
 
-Every config now has a top-level `"seed"` (default 0). Two runs with the
+Every config has a top-level `"seed"` (default 0). Two runs with the
 same config and the same seed produce the *same cells*, step for step, on
 one thread or eight. This includes rules with `randomness` and the wildfire
 model: randomness is drawn from a counter (`seed`, step, cell index, stream)
@@ -105,7 +134,7 @@ the knob's declared bounds:
 | `scale` | `"linear"` | `"log"` when the range spans orders of magnitude (0.001 … 0.5): every decade then gets equal attention. Needs a positive low end. |
 | `bits` | the table's width | Only for `wolfram_code`; must equal `2^(2n+1)` for the subrule's radius. |
 | `choices` | all options | A subset of the knob's options. |
-| `sigma` | the block's `sigma` | Per-gene mutation size when one knob should move more or less than the others. |
+| `sigma` | the block's `sigma` | Per-gene mutation size when one knob should move more or less than the others. `0` is allowed here (and only here) and stops mutation from moving that gene. |
 
 **How the operators treat each kind.** *Sample*: uniform in the range (or
 uniform per decade for log), uniform over options, each bit a coin flip.
@@ -117,29 +146,33 @@ flips one or two bits of a 128-bit table. Everything is clamped back into
 range. *Crossover*: each gene from one parent or the other at random; a bit
 string is cut at one point instead.
 
-**The repair rule.** Turning knobs independently can produce a subrule that
-does not make sense: `limit` set while `op` became `eq`, or `limit` below
-`count` with `op = gt`. When a genome is written, `limit` is dropped for
-`eq`, raised to `count` for `gt`, and lowered to `count` for `lt`. Anything
-else the rule's own `validate()` refuses scores as the worst possible and
-is counted in the report's `invalid` column. One more thing to know: a
-`count` is checked against the neighbourhood *as it is when written*, so a
-genome that also changes `range` or `neighborhood` can leave `count` above
-the new neighbourhood size. That is legal (the subrule just never fires);
-the next mutation clamps it.
+**Invalid combinations.** Turning knobs independently can produce a
+subrule that does not make sense: `limit` set while `op` became `eq`, or
+`limit` below `count` with `op = gt` (or above it with `lt`). Nothing
+repairs these. The write is refused, the candidate scores as the worst
+possible, and it is counted in the `invalid` column of the report (an
+invalid genome can never win). If many candidates are invalid, narrow the
+ranges so the combinations stay legal. One more thing to know: a `count` is
+checked against the neighbourhood *as it is when written*, so a genome that
+also changes `range` or `neighborhood` can leave `count` above the new
+neighbourhood size. That is legal (the subrule just never fires); the next
+mutation clamps it.
 
-**What is refused, and why** (one line each in the error):
+**What is refused, and why.** Every error starts with `gene '<key>':` and
+says what is wrong in words:
 
 | You wrote | The error says |
 |---|---|
-| a key nothing declares | `unknown key`, with the list of known keys |
-| a range outside the knob's bounds | `range … outside declared bounds` |
-| a read-only knob (the wildfire seed) | `read-only` |
-| `bits` on a knob that is not a bit table, or the wrong width | `bits` mismatch |
-| a `choices` entry the knob does not offer | `illegal choice` |
-| a free gene with no driver, or one the driver does not know | `free gene … needs a driver` |
-| `lo > hi`, or `log` with `lo ≤ 0` | `lo > hi` / `log needs lo > 0` |
-| the same key twice | `duplicate key` |
+| a `rule.`/`model.` key nothing declares | `unknown knob (known: …)`, listing the real keys |
+| a `[*]` key no subrule has | `no subrule has that field` |
+| a range outside the knob's bounds | `range […] is outside the knob's bounds […]` |
+| a read-only knob (the wildfire seed) | `that knob is read-only` |
+| `bits` on a knob that is not a bit table, or the wrong width | `'bits' only applies to a bit-string knob` / `bits must be N for this knob` |
+| a `choices` entry the knob does not offer | `'x' is not one of: …` |
+| a free gene with no driver | `not a rule or model knob, and no driver is declared …` |
+| a free gene the driver does not know | `the driver does not know this gene (known: …)` |
+| `lo > hi`, or `log` with `lo ≤ 0` | `range […] has lo > hi` / `log scale needs lo > 0` |
+| the same key twice | `listed twice` |
 
 ## 5. Pick an objective: how a run is measured
 
@@ -153,7 +186,7 @@ metric plus *when* to measure it and *which way is good*:
 | Field | Default | Meaning |
 |---|---|---|
 | `metric` | required | one of the names below |
-| `types` | — | the cell types the metric counts (`fraction`, `target_mask`, `series`, and the shape metrics) |
+| `types` | — | the cell types the metric counts (`fraction`, `target_mask`, `series`, and the shape metrics). `density_classification` takes exactly two, `[a, b]`. |
 | `when` | `"end"` | `"end"` (after the last step), `{"step": k}` (at step `k`), or `"mean"` (averaged over every step) |
 | `goal` | `"maximise"` | `"maximise"`, `"minimise"`, or `{"target": v}` (score is `−|value − v|`, so 0 is perfect) |
 
@@ -174,24 +207,29 @@ The metrics, and when to reach for each:
   it when* you have an observed picture: a satellite perimeter, or the grid
   you painted in the GUI ("Match the current grid").
 - **`series`** — root-mean-square error between the fraction of `types`
-  per step and a `target` list. *Use it when* you know the curve, not just
-  the end state.
+  per step and a `target` list (use `"goal": "minimise"`). *Use it when*
+  you know the curve, not just the end state.
 - **`density_classification`** — the classic 1D task: start from a random
-  row at a random density, and score 1 if the row ends all-majority. Draws
-  its own initial rows, fresh every generation. *Use it when* you want to
-  evolve a rule that *computes* something.
+  row at a random density, and score 1 if the row ends all-majority. It
+  draws its own initial rows (a new one per generation and repeat) and
+  ignores the block's `initial`. *Use it when* you want to evolve a rule
+  that *computes* something.
 - **`bbox_fraction`**, **`elongation`**, **`centroid_speed`**, **`growth`**,
   **`period`** — shape measures described in §6. They also work as objectives
   (`centroid_speed` maximised finds gliders).
 
 A metric can be measured every step (`"when": "mean"`, `series`,
-`centroid_speed`, `period`) or once. Measuring every step costs a scan of
-the grid per step; on a 256×256 grid that doubles the run time, so leave
+`lifetime`, `centroid_speed`, `period`) or once. Measuring every step costs
+a scan of the grid per step; on a 256×256 grid that doubles the run time, so leave
 `when` at `"end"` unless the curve matters.
 
+A misspelled extra field inside `objective` is ignored, not refused (the
+metric's own fields sit flat next to `goal` and `when`), so check the
+`metric` name and its fields carefully.
+
 **Rust users** are not limited to this list: anything implementing
-`explore::Fitness` (`sample`, `every_step`, `score`) can be passed to
-`Evolution::with_fitness`.
+`explore::Fitness` (required: `sample`, `aggregate`; optional: `every_step`,
+`score`) can be passed to `Evolution::with_fitness`.
 
 ## 6. Descriptors: what makes two rules different
 
@@ -226,8 +264,9 @@ The shape metrics exist for this:
   travels: gliders, wind-driven fires.
 - **`growth`** — final fraction minus initial fraction, −1 … 1. Positive
   = expanding, negative = dying out.
-- **`period`** — the smallest cycle length in the last `window` states (0
-  when none repeats). Oscillators show up here.
+- **`period`** — the smallest cycle length in the last `window` states
+  (`window` defaults to 64; 0 when none repeats). Oscillators show up
+  here.
 
 The classic picture: **activity × entropy** separates Wolfram's four
 classes. Class 1 (dies) sits at low activity, low entropy; class 2
@@ -258,9 +297,9 @@ rules.
 | `sigma` | 0.2 | Mutation size after learning (§4). |
 | `immigrants` | 0.2 | Share of the population re-drawn from scratch after each learning step. Keeps diversity: with 0 the population can converge on one wrong idea and never recover. |
 | `crossover` | 0 | Chance a resampled child takes each gene from either of two parents before mutation. Off by default: the classic particle filter copies one parent. Experiment E34 measures whether it helps. |
-| `immigrant_reset` | false | Give immigrants a fresh driver state instead of their parent's. For the wildfire driver that means an immigrant is uncontained and takes `p0` from its own genome, so a population in which every member has stopped can start again (E33 found the lock-in; E38 tests the fix). Needs the `model.p0` gene. |
-| `immigrant_reset_gate` | none | Gate on `immigrant_reset`: reset an immigrant only if the *area ratio* at the last `assimilate` call (mean member burned area over observed burned area) is below this value — evidence the population is under-predicting, not just any immigrant. Set it and the plain `immigrant_reset` bool stops mattering. `None` (the default) leaves the bool in charge unmodified: E38's behaviour reproduces bit-for-bit. E39 tests whether the gate keeps E38's Buck fix without its Pier cost. |
-| `state_correction` | `None` | Which children get their *grid* rebuilt from the observation, not just their state: `None` (every run before E40 — a clone of a resampled parent, like any other child), `Immigrants` (E40 — only the immigrants), or `All` (E40b — every resampled child, keeping its own learned genome). Rebuilding is via [`MemberDriver::seed_from_observation`](#13-write-a-driver-for-your-model) — state correction, not just a fresh flag — and always gives a corrected child a fresh, uncontained driver state (`immigrant_reset`/`immigrant_reset_gate` are not consulted for it). E40 tested whether `Immigrants` repairs what E39's gate could not; a lagged-null check found E40's *consensus* still loses badly to a trivial "yesterday's mask" forecast, since 80% of the population is still uncorrected. E40b (`All`) narrows that gap a lot but does not close it — it still loses to the lagged nulls on 96.6% of windows where the fire grew. |
+| `immigrant_reset` | false | Give immigrants a fresh driver state instead of their parent's. For the wildfire driver that means an immigrant is uncontained and takes `p0` from its own genome, so a population in which every member has stopped can start again (E33 found the lock-in; E38 tests the fix). Needs the `model.p0` gene. The last three options (`immigrant_reset`, `immigrant_reset_gate`, `state_correction`) exist for the wildfire experiments; leave them at their defaults for anything else. |
+| `immigrant_reset_gate` | none | Gate on `immigrant_reset`: reset an immigrant only if the *area ratio* at the last `assimilate` call (mean member burned area over observed burned area) is below this value — evidence the population is under-predicting, not just any immigrant. Set it and the plain `immigrant_reset` bool stops mattering. Leave it out (the default) and the bool decides alone, which reproduces E38 bit-for-bit. E39 tests whether the gate keeps E38's Buck fix without its Pier cost. |
+| `state_correction` | `"none"` | Which children get their *grid* rebuilt from the observation, not just their genome: `"none"` (each child is a clone of a resampled parent, as in every run before E40), `"immigrants"` (E40: only the immigrants), or `"all"` (E40b: every resampled child, keeping its own learned genome). The rebuild is the driver's [`seed_from_observation`](#13-write-a-driver-for-your-model), and it always gives the child a fresh, uncontained driver state (`immigrant_reset` and its gate are not consulted for it). E40 tested whether `"immigrants"` repairs what E39's gate could not; a lagged-null check found its *consensus* still loses badly to a trivial "yesterday's mask" forecast, since 80% of the population is still uncorrected. E40b (`"all"`) narrows that gap a lot but does not close it: it still loses to the lagged nulls on 96.6% of windows where the fire grew. |
 | `driver` | none | A model-specific helper (§13); the wildfire one applies wind schedules and decides when a member is contained. Leave it out for rules. |
 
 What you get back (see the CLI report and the Rust API in §11):
@@ -296,7 +335,7 @@ collapse; raise `immigrants` or lower `beta`.
 
 | Field | Default | How to choose |
 |---|---|---|
-| `population` | 24 | More = broader search per generation, more cost. 24–48 is plenty for a handful of genes; the 1D 128-bit table wants 40+. |
+| `population` | 24 | More = broader search per generation, more cost. 24–48 is plenty for a handful of genes; the 1D 128-bit table wants 40+. (For `map_elites` this is unused: `batch` sets the children per generation.) |
 | `generations` | 30 | When the best score stops moving for ten generations you are done. |
 | `steps` | 100 | How long each candidate is simulated. Long enough for the behaviour you score to appear. |
 | `repeats` | 3 | Seeds averaged per candidate. 1 for a deterministic rule with a fixed start; 3–5 for anything random; 20 for `density_classification`, where each repeat is a new random row. |
@@ -306,10 +345,10 @@ collapse; raise `immigrants` or lower `beta`.
 | `sigma` | 0.2 | Size of a nudge (§4). |
 | `immigrants` | 0.1 | Share of fresh random genomes per generation. |
 | `selection` | tournament of 3 | `{"tournament": {"k": n}}` picks the best of `n` random genomes; `{"boltzmann": {"beta": b}}` weights by `e^(β score)`. Tournament is robust to the scale of the score; use it. |
-| `initial` | `"fixed"` | `"fixed"` starts every run from the config's `initial` cells; `{"random": {"types": [...], "weights": [...]}}` draws a fresh random grid per generation (the same one for every candidate in that generation, so they compete fairly). |
+| `initial` | `"fixed"` | `"fixed"` starts every run from the config's `initial` cells; `{"random": {"types": [...], "weights": [...]}}` draws a fresh random grid for each generation and repeat (the same one for every candidate, so they compete fairly; omit `weights` for equal odds). |
 | `search` | `"objective"` | §9 and §10. |
 | `descriptors` | none | §6; required for `map_elites` and `novelty`. |
-| `thumbnails` | true | Keep a small picture of each elite for the GUI gallery and `EXPLORE_THUMBS=1`. |
+| `thumbnails` | true | Keep a small picture of each elite (MAP-Elites and novelty only) for the GUI and `EXPLORE_THUMBS=1`. |
 | `driver`, `forcing` | none | §13. |
 
 **Cost.** One generation costs `population × repeats × steps` grid steps.
@@ -343,7 +382,7 @@ child scores higher. The population *is* the archive.
 | Field | Default | How to choose |
 |---|---|---|
 | `batch` | 32 | Children per generation. |
-| `iso_line` | true | Children are made from *two* elites: a Gaussian nudge plus a step along the line between them. This follows the archive's shape; plain mutation (`false`) is fine for one or two genes. |
+| `iso_line` | false | `true` makes each child from *two* elites: a Gaussian nudge plus a step along the line between them, which follows the archive's shape. The default, plain mutation, is fine for one or two genes; `configs/2d_map_elites_life_classes.json` turns it on. |
 | `objective` | optional | Leave it out and every elite scores 0: pure **illumination**, "show me one example of everything". |
 
 Readouts:
@@ -354,6 +393,9 @@ Readouts:
   bound). Rises when new cells fill *and* when existing cells improve. With
   no objective it equals the elite count.
 - **`obj_max`, `obj_mean`** — the best and average elite fitness.
+- **`out_of_range`** — candidates whose descriptor fell outside an axis
+  range and were clamped to the edge cell. Many of these mean a `range` is
+  wrong.
 
 **Walk-through: the Wolfram-class map.** Run
 
@@ -382,12 +424,13 @@ archive). Anything far from everything is kept in the archive. The
 threshold to enter adapts: it rises by 20 % when more than a tenth of a
 generation gets in, and drops by 5 % when nobody does, so the archive grows
 at a steady rate whatever the scale of your descriptors. The archive caps
-at 2 000 entries (older ones are replaced at random).
+at 2 000 entries; once full, newcomers replace random old entries with
+shrinking odds (reservoir sampling), so it stays a fair sample.
 
 | Field | Default | How to choose |
 |---|---|---|
 | `k` | 15 | Neighbours averaged. Smaller = spikier, rewards isolated oddities; larger = smoother. |
-| `threshold` | adaptive | Set a number to freeze it; leave it out. |
+| `threshold` | adaptive | Starting value of the entry threshold. Leave it out to start from `0.1 × √(number of axes)`; either way it keeps adapting as described above. |
 
 Novelty search still needs an `objective` field to report *something* as
 "best" in the log, but it does not steer. `configs/1d_novelty_rule_space.json`
@@ -402,12 +445,14 @@ and its archive is a catalogue of what radius-1 rules can look like.
 use cella_lib::config::CellaConfig;
 use cella_lib::explore::Sim;
 
+// In a function returning Result<_, Box<dyn std::error::Error>>.
 let cfg = CellaConfig::from_file("configs/2d_wildfire_ensemble.json")?;
 let mut ens = cfg.build_ensemble().expect("config has an ensemble block")?;
 ens.step_n(200)?;
-let prob: Vec<f32> = ens.state_probability(ens.track());   // one value per cell
+let track = ens.track().to_vec();                           // the tracked cell types
+let prob: Vec<f32> = ens.state_probability(&track);         // one value per cell
 let observed: Vec<bool> = /* what you saw */;
-let report = ens.assimilate(&observed, ens.track())?;       // scores, effective_sample_size, immigrants
+let report = ens.assimilate(&observed, &track)?;            // scores, effective_sample_size, immigrants
 println!("p0 now {:?}", ens.genome_stats("model.p0"));
 
 let mut evo = cfg.build_evolution().expect("config has an evolve block")?;
@@ -418,9 +463,10 @@ evo.apply_best(&mut sim)?;                                   // write the winner
 
 Without a config: `Ensemble::new(sim, &EnsembleConfig { .. })`,
 `Evolution::new(sim, &EvolveConfig { .. })`, or `Evolution::with_fitness`
-for your own `Fitness`. `Sim` wraps a `Grid1D` or `Grid2D` and exposes
-`step`, `cells`, `params`/`get_param`/`set_param`, `mask(types)`,
-`thumbnail(max_side)`.
+for your own `Fitness` (both configs implement `Default`, so
+`..Default::default()` fills what you leave out). `Sim` wraps a `Grid1D` or
+`Grid2D` and exposes `step`, `cells`, `params`/`get_param`/`set_param`,
+`mask(types)`, `thumbnail(max_side)`.
 
 **Command line.** `cella_lib/examples/explore.rs` runs either block of any
 config:
@@ -450,21 +496,23 @@ MAP-Elites/novelty the archive (dims, ranges, labels, per-generation
 statistics, final cells).
 
 The wildfire validation runner `cella_lib/examples/wildfire_smc/` (a small
-module tree, not a single file — see [lib.md](lib.md)'s module map) is the
-same engine with the fire's weather schedule and observation series wired
-in; its command line and report fields did not change when the engine was
-generalised (experiment E31 checks that).
+module tree, not a single file; see the module map in
+[lib.md](lib.md#module-map)) is the same engine with the fire's weather
+schedule and observation series wired in; its command line and report
+fields did not change when the engine was generalised (experiment E31
+checks that).
 
 Two more modes of that runner show what the engines are good for beyond
-forecasting. `wildfire_smc <dir> 32 evolve out.json` fits the genes to
-the first observed days with a GA and then forecasts forward
-(experiment E36: the day-by-day filter beat it on every fire).
-`wildfire_smc <dir> 32 map out.json` runs MAP-Elites with no objective over
-the spread knobs, with growth × elongation as the axes, and plots the real
-fire in the same coordinates (E37): a **reachability test**. If the
-observed fire sits outside the shaded region, no calibration can reach it
-and the model itself has to change. That is a use of illumination worth
-copying for any model: before tuning, ask what the knobs can produce at all.
+forecasting. Run it as `cargo run --release --example wildfire_smc --
+<scenario_dir> <members> <mode> <out.json>`. Mode `evolve` (with 32 members)
+fits the genes to the first observed days with a GA and then forecasts
+forward (experiment E36: the day-by-day filter beat it on every fire). Mode
+`map` runs MAP-Elites with no objective over the spread knobs, with growth
+× elongation as the axes, and plots the real fire in the same coordinates
+(E37): a **reachability test**. If the observed fire sits outside the shaded
+region, no calibration can reach it and the model itself has to change. That
+is a use of illumination worth copying for any model: before tuning, ask
+what the knobs can produce at all.
 
 ## 12. Read results honestly
 
@@ -535,8 +583,8 @@ pub trait MemberDriver: Send + Sync + Debug {
 - `state` is a per-member scratch map (`MemberState`) that survives steps
   and resampling copies.
 - `seed_from_observation` runs on a child only when `state_correction`
-  applies to it (§3) — the immigrants under `Immigrants`, everyone under
-  `All`: rebuild its grid from the observation the last `assimilate` call
+  applies to it (§7) — the immigrants under `"immigrants"`, everyone under
+  `"all"`: rebuild its grid from the observation the last `assimilate` call
   just scored, instead of letting it inherit a parent's. `observed` is a
   throwaway grid the engine builds by cloning a member —
   `observed.cells()[i] != observed.inactive()` means "cell `i` was
@@ -547,17 +595,19 @@ pub trait MemberDriver: Send + Sync + Debug {
 
 **`WildfireDriver`, line by line** (`cella_lib/src/wildfire/driver.rs`):
 
-1. *Fields.* `steps_per_day` (50) and an optional `weather` list of
-   `{hours, speed_ms, from_deg}` windows. Empty = the model's constant
-   wind.
+1. *Fields.* `steps_per_day` (50), an optional `weather` list of
+   `{hours, speed_ms, from_deg}` windows (empty = the model's constant
+   wind), and `contain_growth_floor` (1e-4, see step 6).
 2. *`free_genes`.* `wind_scale` 0…1.5, `tau_days` 2…100 (log),
-   `contain_a` −6…−1, `contain_b` −2…−0.3. A config that lists
-   `{"key": "wind_scale"}` gets these bounds.
+   `contain_a` −6…−1, `contain_b` −2…−0.3, `wind_rot_deg` −90…90 (degrees
+   added to the wind direction). A config that lists `{"key": "wind_scale"}`
+   gets these bounds.
 3. *`owned_keys`.* `["model.p0"]`.
 4. *`apply`.* Works out the hour: from `forcing["hours"]` if present, else
    `step / steps_per_day × 24`. Picks the wind: forcing wins, then the
-   schedule window whose `hours` is the latest not after now, then the
-   model's own. Multiplies the speed by the `wind_scale` gene. Captures the
+   schedule window whose `hours` is the latest not after now (the first
+   window if none has started), then the model's own. Multiplies the speed
+   by the `wind_scale` gene and adds `wind_rot_deg` to the direction. Captures the
    member's base `p0` once into `state["p0_base"]` (the genome's `model.p0`
    if it has one). Computes `decay = e^(−hours / (24 τ))` when the
    `tau_days` gene is present, 1 otherwise. Sets
@@ -566,8 +616,10 @@ pub trait MemberDriver: Send + Sync + Debug {
 5. *`period_steps`.* `Some(steps_per_day)`: once a simulated day.
 6. *`period_end`.* Only when both `contain_*` genes exist. Counts burning
    plus burned cells, compares with `state["burned_at_day_start"]`, and
-   contains the member with probability `1 / (1 + e^(−(a + b ln growth)))`
-   — slow days are likely to be the last (FSim's rule, experiment E28). A
+   contains the member with probability `1 / (1 + e^(−(a + b ln growth)))`,
+   where `growth` is the day's relative growth, floored at
+   `contain_growth_floor` so a stalled day stays finite. Slow days are
+   likely to be the last (FSim's rule, experiment E28). A
    contained member sets `state["contained"] = 1` and `p0 = 0`, and keeps
    its cells. Then stores today's count for tomorrow.
 7. *`seed_from_observation`* (E40). Reads `observed`'s cells the
@@ -583,8 +635,9 @@ pub trait MemberDriver: Send + Sync + Debug {
 
 Downcasting `sim.model_mut()` to the concrete model is allowed inside a
 driver (it is the model's own crate); it is never done inside `explore/`.
-The test module at the bottom of the file shows an ensemble running with
-the driver, a forced wind bending the map, and containment stopping members.
+The test module at the bottom of the file shows genes written through the
+driver, an ensemble whose members disagree, containment stopping members,
+and `seed_from_observation` marking the rim.
 
 Your own driver needs: a struct with `Serialize`/`Deserialize`,
 `#[typetag::serde(name = "yours")] impl MemberDriver for Yours`, and the
@@ -656,10 +709,13 @@ A couple of things to know:
   tick genes for the mode you actually want the edit to land in before
   saving.
 
-## 16. Migrating from the September 2026 `ensemble` block
+## 16. Old `ensemble` blocks (before September 2026)
 
-The first ensemble block (`prior`, wildfire only) is gone. Old files fail
-with an unknown-field error pointing here. Translate the prior into genes:
+This only matters for config files written before the September 2026
+change; the old format never shipped in a release, so most people can skip
+it. The first ensemble block took a wildfire-only `prior` section. That
+section is gone, and a file that still has one fails to load with a serde
+"unknown field `prior`" error. Translate each prior entry into a gene:
 
 | Old (`prior`) | New (`genes`) |
 |---|---|
@@ -672,7 +728,9 @@ with an unknown-field error pointing here. Translate the prior into genes:
 
 `configs/2d_wildfire_ensemble.json` is the translated demo.
 
-## 17. Limits (September 2026)
+## 17. Current limits
+
+As of September 2026:
 
 - Members are full grid clones (the wildfire slope table is shared). A
   shared-landscape member type would cut memory further.
@@ -683,5 +741,5 @@ with an unknown-field error pointing here. Translate the prior into genes:
 - One objective at a time. Multi-objective (Pareto) search is a natural
   next step on the same `Fitness` seam.
 - The GUI Explore tab has been exercised headless (widgets draw, workers
-  round-trip); a click-through on a machine with working GL is still owed
-  (roadmap Phase 5).
+  round-trip), but has had little hands-on testing on machines with
+  different OpenGL setups.

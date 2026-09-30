@@ -1,19 +1,24 @@
-# Validation Data Formats (v1)
+# Validation Data Formats (current version: v2)
 
-Every data source — daily satellite masks, 3-hourly isochrone shapefiles,
-hourly GOES perimeters, timestamped point observations — is converted into
-**one canonical scenario layout** so the harness, the metrics, and the
-calibration loop never need source-specific code. Converters absorb the mess;
-everything downstream reads exactly this.
+A *scenario* is one fire, packaged as a folder of JSON files. Data sources
+differ a lot (daily satellite masks, 3-hourly isochrone shapefiles, hourly
+GOES perimeters, timestamped point observations), so each one is converted
+into **one canonical scenario layout**. The harness, the metrics, and the
+calibration loop then never need source-specific code: converters absorb
+the mess, and everything downstream reads exactly this.
 
 ```
 validation/data/scenarios/<scenario-id>/
-├── scenario.json   # identity, provenance, grid, time base
-├── config.json     # cella input: a normal CellaConfig (2d + wildfire model)
-└── truth.json      # observed fire arrival, on the same grid
+├── scenario.json        # identity, provenance, grid, time base, wind
+├── config.json          # cella input: a normal CellaConfig (2d + wildfire model)
+├── truth.json           # observed fire arrival, on the same grid
+├── station_hourly.json  # optional: hourly station weather (wind_station.py)
+└── containment.json     # optional: ICS-209 percent contained (experiments)
 ```
 
+The first three files are required; the harness reads only those.
 `<scenario-id>` is `<fire>_<year>` (e.g. `Bear_2020`, `Dogrib_2001`).
+The two optional files are described at the end of this page.
 
 ## Design decisions, and why
 
@@ -70,7 +75,8 @@ schema change.
   "format_version": 2,
   "id": "Bear_2020",
   "grid": { "width": 748, "height": 619, "cell_size_m": 30.0,
-            "crs": "EPSG:3310", "origin": [-99441.97, 205010.71] },
+            "crs": "EPSG:3310",          // projected coordinate system of the source
+            "origin": [-99441.97, 196407.05] },  // x, y of the source's bounding-box corner in that CRS
   "t0_utc": "2020-08-19T00:00:00Z",
   "provenance": {
     "source": "PyTorchFire six-fire pack (dataset.hdf5)",
@@ -81,41 +87,49 @@ schema change.
     "converter_git": "<hash>",
     "simplifications": [
       "wind = domain-mean ERA5 u/v per day (per-cell field discarded)",
-      "FBFM40 codes grouped into 6 named classes with first-guess veg_factors"
+      "FBFM40 codes grouped into 6 named classes with first-guess veg_factors",
+      "canopy cover / LAI layers unused (density left uniform)",
+      "arrival quantized to daily observation times"
     ],
     // Required (TEST_PLAN §2.1): what the weather feed is and how it was
     // bent into the schedule below. Free text per key, but every key present.
     "weather": {
-      "source": "ERA5 reanalysis via the six-fire pack",
-      "variables": "u/v 10 m wind (m/s), 2 m temperature, total precipitation",
+      "source": "ERA5 reanalysis as packaged in the six-fire HDF5",
+      "variables": "u/v 10 m wind (m/s), 2 m temperature (K), total precipitation (m)",
       "wind_height_m": 10.0,
-      "native_resolution": "~31 km grid, daily values",
-      "averaging": "domain mean of u and v per day, then hypot -> speed (vector mean, not speed mean)",
+      "native_resolution": "~31 km grid, one value per day",
+      "averaging": "domain mean of u and v per day, then hypot -> speed (vector mean; a swinging wind averages toward calm)",
       "source_direction_convention": "u eastward / v northward components",
-      "conversion": "from_deg = atan2(-u, -v) from north, clockwise",
-      "grid_orientation_check": "LANDFIRE aspect vs elevation gradient: cos +0.96 for row 0 = north on all six fires"
+      "conversion": "from_deg = degrees(atan2(-u, -v)) mod 360, clockwise from north",
+      "grid_orientation_check": "LANDFIRE aspect vs elevation gradient, cos +0.96 for row 0 = north on all six fires (2026-09-01)"
     }
   },
   // Wind schedule the harness applies between observation windows:
   // from_deg = compass bearing the wind blows FROM, 0 = north, clockwise
   // (the weather-report convention; v1 files used "dir_deg" = grid angle
   // the wind blew toward, 0 = +x, and are rejected by v2 readers).
-  "wind": [ { "hours": 0.0, "speed_ms": 2.3, "from_deg": 51.2 }, ... ],
-  "steps_per_hour": 2.0833   // simulation ticks per hour of real time
+  "wind": [ { "hours": 0.0, "speed_ms": 0.967, "from_deg": 197.63 }, ... ],
+  "steps_per_hour": 2.0833   // simulation ticks per hour of real time (50 per day)
 }
 ```
 
-`steps_per_hour` makes the tick↔wall-clock mapping explicit and per-scenario
-(the six-fire pack follows the papers' 50 ticks/day). It is a *declared
-conversion constant*, not a tuning knob — changing it is a calibration
-decision and goes through the test plan.
+`steps_per_hour` makes the tick-to-wall-clock mapping explicit and
+per-scenario (the six-fire pack follows the papers' 50 ticks/day). A *tick*
+is one simulation step. It is a *declared conversion constant*, not a
+tuning knob: changing it is a calibration decision and goes through the
+test plan.
 
 ## `config.json`
 
-Unchanged cella `CellaConfig` (dim 2d, empty subrules, wildfire model with
-ignition cells pre-set from the observations at `t0`). The harness overrides
-`seed` per ensemble member and wind per schedule entry; everything else in
-here is part of the parameter set under evaluation.
+A normal cella `CellaConfig` (`"dim": "2d"`, empty `rule.subrules`, a
+`model.wildfire` block, and an `initial` cell list with the ignition cells
+pre-set from the observations at `t0`). The wildfire block holds `params`
+(`p0`, `fuels`, `c1`, `c2`, `slope_a`, `burn_duration`, `spotting`, the
+starting wind, ...) and `env` (`elevation` and an empty `density` layer).
+The harness overrides `seed` per ensemble member and wind per schedule
+entry; everything else in here is part of the parameter set under
+evaluation. See [`WildfireParams`](../cella_lib/src/wildfire/mod.rs) for
+every field.
 
 ## `truth.json`
 
@@ -130,7 +144,7 @@ here is part of the parameter set under evaluation.
   //   -1    : never observed burned during the record
   "arrival_hours": [ ... ],
   "spatial_accuracy_m": 375.0,
-  "accuracy_note": "VIIRS-derived daily masks; arrival quantized to the observation days"
+  "accuracy_note": "VIIRS-derived daily cumulative masks; arrival quantized to observation days"
 }
 ```
 
@@ -156,10 +170,47 @@ arrival metric reports it alongside.
 
 | Source | Script | Status |
 |---|---|---|
-| PyTorchFire six-fire HDF5 | `scripts/convert_pytorchfire.py` | emits v1 |
+| PyTorchFire six-fire HDF5 | `scripts/convert_pytorchfire.py` | working; emits v2 |
 | Isochrone polygons (PT-FireSprd, GOFER, NIROPS, FIRIS) | `scripts/rasterize_isochrones.py` | planned — one shared tool; needs input-layer assembly per region before full scenarios exist |
 | Dogrib `.asc` (Cell2Fire instance) | planned | inputs are drop-in; observed-perimeter truth still to be sourced (Prometheus sample data) |
 | Camp Fire NIST points | planned | needs point → arrival-surface interpolation; scenario will carry large `spatial_accuracy_m` variation |
+
+## Optional extra files
+
+Neither file is read by the harness (`wildfire_validate`); experiment
+runners use them.
+
+**`station_hourly.json`** (written by `scripts/wind_station.py`): hourly
+observed weather from the nearest NOAA ISD station.
+
+```jsonc
+{
+  "format_version": 1,
+  "fire": "Bear_2020",
+  "station": { "isd_id": "...", "name": "...", "lat": 39.494, "lon": -121.622,
+               "elev_m": "...", "distance_km": 57.9, "raw_wind_coverage": 0.76 },
+  "provenance": { /* same shape as scenario.json, with a weather block that
+                     also carries a free-text "caveat" */ },
+  // One row per hour since t0; gaps interpolated:
+  "rows": [ { "hours": 0.0, "from_deg": 200.0, "speed_ms": 2.1,
+              "temp_c": 39.4, "rh_pct": 28.0 }, ... ]
+}
+```
+
+**`containment.json`**: the daily "percent contained" from the
+ICS-209-PLUS incident reports, used by experiments E21, E42 and E49. No
+committed script creates it.
+
+```jsonc
+{
+  "format_version": 1,
+  "fire": "Bear_2020",
+  "incident_id": "...", "incident_name": "North Complex",
+  "provenance": { "source": "ICS-209-PLUS ...", "license": "CC BY 4.0", ... },
+  "rows": [ { "hours": -26.0, "pct_contained": 2.0, "acres": 50.65,
+              "personnel": 29.0 }, ... ]   // hours are since scenario t0
+}
+```
 
 ## Changelog
 

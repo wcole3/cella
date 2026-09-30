@@ -13,6 +13,58 @@ That sounds bad — and it is the point. Our rule is that the goal is the
 best answer, not a flattering score. A shortcoming we can see and measure
 is a to-do list. A shortcoming hidden by a friendly metric is a landmine.
 
+This is a personal-interest research project, not a tool for modeling real
+fires.
+
+## Contents
+
+- [1. What we are actually testing](#1-what-we-are-actually-testing)
+- [2. The scores, in plain words](#2-the-scores-in-plain-words)
+- [3. The two dummy forecasters: our honesty floor](#3-the-two-dummy-forecasters-our-honesty-floor)
+- [4. The starting scorecard (uncalibrated, August 2026)](#4-the-starting-scorecard-uncalibrated-august-2026)
+- [5. What was wrong with the model at the start](#5-what-was-wrong-with-the-model-at-the-start)
+- [5a. The September 1 wind audit](#5a-the-september-1-wind-audit)
+- [5b. September 2: real weather, and a way to stop](#5b-september-2-real-weather-and-a-way-to-stop)
+- [5c. September 4: many runs at once, and a fire that learns as it burns](#5c-september-4-many-runs-at-once-and-a-fire-that-learns-as-it-burns)
+- [5d. September 5: checking the machinery itself](#5d-september-5-checking-the-machinery-itself)
+- [5e. September 11-12: nulls, state correction, and a kernel that tells time](#5e-september-11-12-nulls-state-correction-and-a-kernel-that-tells-time)
+- [5f. September 23-25: the promotion test, and why it didn't pass](#5f-september-23-25-the-promotion-test-and-why-it-didnt-pass)
+- [6. Reading any future results table: a checklist](#6-reading-any-future-results-table-a-checklist)
+- [7. The rules that keep us honest](#7-the-rules-that-keep-us-honest)
+
+Sections 4 and 5 describe the untuned starting point. Sections 5a-5f are
+a dated log of what each batch of experiments (a "round") changed, oldest
+first. You do not have to read the log to know where things stand; the
+next section sums it up.
+
+## Where things stand now
+
+Everything here is restated from the sections listed in brackets.
+
+- **The starting point was bad.** With textbook settings the model burns
+  far too much and beats the Circle (the dummy "draw a disc of the right size" forecaster,
+  section 3) on only 1 of 6 fires [section 4].
+- **What helped: making the fire stop, and running
+  many versions at once.** A fitted slow-down lifted the
+  never-tuned Pier fire from 0.32 to 0.51 [5b]. Running 32 versions that
+  learn from each day's observed perimeter brought the gap to the Circle
+  down to 0.03-0.07 on five fires and took Ferguson from 0.13 to 0.34
+  [5c]. The learning ensemble with a containment rule is the
+  recommended model.
+- **Even so, the recommended model beats the Circle on only one of the six
+  fires** [5f]. The late-fire stall and the fast-fire speed problem
+  were left open in Round 4 [5c], and the daily wind input is weak and
+  sometimes points the wrong way [5a].
+- **Big fires always come out round.** Brattain, Ferguson and Pier are
+  long, so no tuning of the current model draws them. Ember spotting moves
+  that limit on Ferguson, maybe on Pier, not on Brattain [5d, 5e].
+- **Giving the model yesterday's real map helps, but is not a forecast
+  product.** The trivial guess "same as yesterday" still beats it on every
+  fire [5e].
+- **The latest test failed.** A new spread rule with a learned wind
+  direction (Round 7) lost on Pier under a rule written before the run,
+  so it was not adopted. The recommended model did not change [5f].
+
 ---
 
 ## 1. What we are actually testing
@@ -52,15 +104,15 @@ track the two failure directions separately:
   neighborhood nobody warned.
 - **False-alarm rate** — of the land the model predicted would burn, what
   fraction never actually did? False alarms erode trust and waste
-  resources. Our current model's false-alarm rate is about 0.88 — 88% of
-  what it paints as burned did not burn.
+  resources. The untuned model's false-alarm rate (section 4) is about 0.88:
+  88% of what it paints as burned did not burn.
 
 **Arrival-time error** — for land that both maps agree burned, how many
 hours off was the model about *when* the fire got there? A model can draw
 the right final map but be uselessly late or early at every point along
 the way; this catches that.
 
-## 3. The two dummy forecasters — our honesty floor
+## 3. The two dummy forecasters: our honesty floor
 
 Scores mean nothing in a vacuum. Is 0.28 good? To answer that, every
 single scoring run also scores two deliberately brainless "models" on the
@@ -85,7 +137,7 @@ cannot beat the Circle, its physics is currently adding nothing over a
 child's crayon guess.** That is a harsh bar, and it is exactly the bar an
 honest evaluation needs.
 
-## 4. The current scorecard (uncalibrated, August 2026)
+## 4. The starting scorecard (uncalibrated, August 2026)
 
 These are the out-of-the-box results, before any tuning — textbook
 parameter values taken straight from the research literature.
@@ -142,7 +194,7 @@ straight edges — those are firefighter containment lines, physics the
 model doesn't have (§5). Maps show one representative run (seed 0);
 table scores are 3-run averages.*
 
-## 5. What is wrong with the model today
+## 5. What was wrong with the model at the start
 
 **Shortcoming 1 — it burns far too much.** With textbook settings, the
 model predicted roughly 400 km² burned on Bear 2020; the real fire burned
@@ -211,7 +263,7 @@ wind-driven fire in the set. When a fire's shape is dictated by strong
 wind, knowing the wind direction beats knowing nothing — evidence the
 model's wind physics contributes something even before tuning.
 
-## 5a. What the September 2026 audit added
+## 5a. The September 1 wind audit
 
 Two more things we now know, in plain words. Details and numbers are in
 [experiments/](experiments/README.md) Round 2.
@@ -262,7 +314,7 @@ have (a daily temperature proxy) is already worth +0.06 on Buck 2017
 and never hurts; stronger day-to-day drivers (hourly wind, humidity)
 are the next thing to build.
 
-## 5b. What the September 2 experiments added
+## 5b. September 2: real weather, and a way to stop
 
 **Real weather is now an input — but the nearest weather station is not
 on the fire.** We can pull hourly wind, temperature and humidity from
@@ -402,7 +454,7 @@ mechanism that costs nothing, not because it scores higher.
   the next model change: after it, those three fires must fall inside
   the map.
 
-## 5e. September 11–12: nulls, state correction, and a kernel that tells time
+## 5e. September 11-12: nulls, state correction, and a kernel that tells time
 
 Details in [experiments/](experiments/README.md) E41–E43, E30a, E30, E30b
 and Round 6, and every term in
@@ -486,7 +538,7 @@ Nothing here should be read as fixed for production use yet — every new
 option above ships turned off by default until it has been proven on
 enough independent runs.
 
-## 5f. September 23–25: the promotion test, and why it didn't pass
+## 5f. September 23-25: the promotion test, and why it didn't pass
 
 Details in [experiments/](experiments/README.md) E48, E44, E45, E46, E49
 and [round-7.md](experiments/round-7.md), and every term in
@@ -596,7 +648,7 @@ still don't understand. Nothing about the model we recommend for real use
 changed this round — every option this round tested stays off by
 default, the same rule Round 6 followed.
 
-## 6. Reading any future results table — a checklist
+## 6. Reading any future results table: a checklist
 
 1. **Compare the model to the Circle first.** Beating persistence means
    almost nothing. Beating the Circle is the only evidence of real

@@ -2,6 +2,8 @@
 name = "cella"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+rust-version = "1.92"
 
 [dependencies]
 cella_lib = { path = "./cella_lib" }
