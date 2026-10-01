@@ -1,8 +1,13 @@
 [package]
 name = "cella_lib"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
+description = "A library for 1D and 2D cellular automata"
+readme = "README.md"
+repository = "https://github.com/wcole3/cella"
+keywords = ["automata", "cellular", "wildfire", "simulation"]
+categories = ["science", "simulation"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

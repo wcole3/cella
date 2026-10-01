@@ -83,6 +83,11 @@ cargo run --release -- --gui --config configs/life.json
 cargo run --release
 ```
 
+The Cargo package is named `cella_gui` (the name `cella` is taken on
+crates.io), but the program it builds is still called `cella`, so the
+release build ends up at `target/release/cella`. Use `--package cella_gui`
+if a Cargo command asks which package you mean.
+
 Window size is optional:
 
 ```bash
@@ -133,6 +138,7 @@ cycles, other neighborhoods, wildfire demos, and Explore setups.
 | Document | Contents |
 |----------|----------|
 | [Application guide](docs/app.md) | CLI, GUI workbench tour, editing, Explore tab, config guide, troubleshooting |
+| [Library README](cella_lib/README.md) | Using `cella_lib` in your own crate: install, code samples, bundled examples |
 | [Library guide](docs/lib.md) | Architecture, module reference, rule system, external models, serialization, threading |
 | [Explore guide](docs/explore.md) | Ensembles, evolution and MAP-Elites for any rule or model; how to read results honestly |
 | [Primer: Monte Carlo](docs/primer-monte-carlo.md) | Plain-language: why run a simulation many times, probability maps, particle filters, seeds |
@@ -142,97 +148,18 @@ cycles, other neighborhoods, wildfire demos, and Explore setups.
 | [Roadmap](docs/roadmap.md) | Developer notes: GUI and plugin-UI work plan, with status per phase |
 
 Rust API docs: run `cd cella_lib && cargo doc --open` for the library.
-(`make doc` documents only the `cella` binary crate, because `cella_lib` is
+(`make doc` documents only the `cella_gui` package, because `cella_lib` is
 a separate build root; see "Building and testing".)
 
 ---
 
 ## Using `cella_lib` as a library
 
-Add the dependency to your `Cargo.toml`, pointing `path` at your checkout of
-this repo:
-
-```toml
-[dependencies]
-cella_lib = { path = "../cella/cella_lib" }
-```
-
-Both samples below are checked to compile against the current API. The
-first reads `configs/life.json`, so run it from the repo root.
-
-### Conway's Game of Life from a config
-
-```rust
-use cella_lib::*;
-use cella_lib::config::CellaConfig;
-
-fn main() {
-    // Load a pre-made config
-    let cfg = CellaConfig::from_file("configs/life.json").unwrap();
-    let mut grid = cfg.build_grid2d().unwrap();
-    // Capture the Reset target before stepping: the grid's own starting
-    // cells, at step 0.
-    let initial = GridState::from_grid2d(&grid);
-
-    for _ in 0..50 {
-        grid.step();
-    }
-    // counts_current is keyed by the interned type handle (Spur)
-    let alive = CellType::from("Alive");
-    println!("Step {} — Alive cells: {}",
-        grid.step,
-        grid.counts_current.get(&alive.0).unwrap_or(&0));
-
-    // Save for later: the file is a config again (same shape as life.json),
-    // plus a `snapshot` block holding the run in progress since we're past
-    // step 0. Reset still works after loading this back, because `initial`
-    // is the cells captured above, not wherever `grid` ended up.
-    let out = CellaConfig::save_2d(&initial, &grid, Default::default());
-    out.to_file_pretty("snapshot.json").unwrap();
-}
-```
-
-### 1D Rule 30 in the terminal
-
-```rust
-use cella_lib::*;
-
-fn main() {
-    // CellType is an interned symbol — construct via From<&str>
-    let x = CellType::from("X");
-    let inactive = CellType::inactive();
-
-    let rule = Rule1D { subrules: vec![
-        Rule1DSubrule {
-            current_type: x.clone(), criteria_type: x.clone(),
-            wolfram_code: 30, n: 1, randomness: None,
-            output_type: x.clone(),
-        },
-        Rule1DSubrule {
-            current_type: inactive.clone(), criteria_type: x.clone(),
-            wolfram_code: 30, n: 1, randomness: None,
-            output_type: x.clone(),
-        },
-    ]};
-
-    let width = 81;
-    let mut init = vec![inactive; width];
-    init[width / 2] = x.clone();
-
-    let mut grid = Grid1D::new(width, 5, init, rule);
-    for _ in 0..40 {
-        grid.step();
-        let line: String = (0..width)
-            .map(|i| if grid.cell_type(i) == x { '#' } else { '.' })
-            .collect();
-        println!("{}", line);
-    }
-}
-```
-
-To plug in your own transition code, see "External Models" in
-[docs/lib.md](docs/lib.md). The shipped example is the wildfire model in
-`cella_lib/src/wildfire/`; the trait lives in `cella_lib/src/external.rs`.
+The engine is its own crate, `cella_lib`, which you can use in your own
+programs without the GUI. Its README covers installation, code samples
+(Game of Life from a config, Rule 30 in the terminal), plugging in your own
+model, and the bundled example programs:
+**[cella_lib/README.md](cella_lib/README.md)**.
 
 ### Thread count
 
@@ -362,7 +289,7 @@ environment variables, snapshots and benchmarks is in
 
 ```
 cella/
-├── Cargo.toml          # Binary crate (the `cella` app)
+├── Cargo.toml          # `cella_gui` package (builds the `cella` app)
 ├── Makefile            # build / lint / test shortcuts
 ├── cella.properties    # Thread count
 ├── configs/            # Ready-made JSON scenarios

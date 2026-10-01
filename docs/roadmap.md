@@ -54,7 +54,7 @@ Commit `b092beb`, "restructure gui app to be more structured".
 - The click-to-cell arithmetic, previously written out four separate times, is
   now one pure function `cell_index_at` in `src/gui/interact.rs`, with unit
   tests.
-- Tests went from 10 to 18 (`cargo test --package cella --bin cella`).
+- Tests went from 10 to 18 (`cargo test --package cella_gui --bin cella`).
 
 ### Field paths changed — this matters when reading older notes
 
@@ -371,7 +371,7 @@ GUI.) Neither crate has a `benches/` directory. So:
 - Add an `#[ignore]`d timing test next to the existing `runs_for` helper in
   `src/gui/painter.rs` — it already builds a `RowPainter` with no egui context
   — and run it with
-  `cargo test --release --package cella --bin cella -- --ignored paint_bench`.
+  `cargo test --release --package cella_gui --bin cella -- --ignored paint_bench`.
   Use a synthetic 2000-cell row with a handful of types, painted 900 times, so
   the number stands for a full 1600×900 window at `scale = 1`. Print
   milliseconds per frame.
@@ -946,7 +946,7 @@ open a window; see §6):
 ```bash
 # The `cella` binary
 cargo clippy --workspace -- -D warnings
-cargo test  --package cella --bin cella
+cargo test  --package cella_gui --bin cella
 
 # The library — separate build root, must be run from its own directory
 cd cella_lib && CELLA_ASCII=0 cargo test --package cella_lib

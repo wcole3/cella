@@ -5,7 +5,7 @@
       "label": "Run cella",
       "type": "shell",
       "command": "cargo",
-      "args": ["run", "--package", "cella", "--bin", "cella", "--profile", "dev"],
+      "args": ["run", "--package", "cella_gui", "--bin", "cella", "--profile", "dev"],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": ["$rustc"],
       "group": "build"
@@ -14,7 +14,7 @@
       "label": "Run cella GUI",
       "type": "shell",
       "command": "cargo",
-      "args": ["run", "--package", "cella", "--bin", "cella", "--", "--gui", "--size", "1024x768"],
+      "args": ["run", "--package", "cella_gui", "--bin", "cella", "--", "--gui", "--size", "1024x768"],
       "options": {
         "cwd": "${workspaceFolder}",
         "env": { "WINIT_UNIX_BACKEND": "x11", "WAYLAND_DISPLAY": "" }

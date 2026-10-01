@@ -13,7 +13,7 @@
       "request": "launch",
       "name": "Debug: Run cella",
       "cargo": {
-        "args": ["build", "--package", "cella", "--bin", "cella", "--profile", "dev"],
+        "args": ["build", "--package", "cella_gui", "--bin", "cella", "--profile", "dev"],
         "filter": { "name": "cella", "kind": "bin" }
       },
       "args": [],
@@ -24,7 +24,7 @@
       "request": "launch",
       "name": "Debug: Run cella GUI",
       "cargo": {
-        "args": ["build", "--package", "cella", "--bin", "cella"],
+        "args": ["build", "--package", "cella_gui", "--bin", "cella"],
         "filter": { "name": "cella", "kind": "bin" }
       },
       "args": ["--gui", "--size", "1024x768"],

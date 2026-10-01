@@ -9,21 +9,21 @@ all: build
 
 ## Debug build
 build:
-	cargo build --package cella --bin cella
+	cargo build --package cella_gui --bin cella
 
 ## Release build
 build-release:
-	cargo build --package cella --bin cella --release
+	cargo build --package cella_gui --bin cella --release
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 ## Run the application (CLI / default mode)
 run:
-	cargo run --package cella --bin cella
+	cargo run --package cella_gui --bin cella
 
 ## Run the application with the GUI at 1024x768
 run-gui:
-	cargo run --package cella --bin cella -- --gui --size 1024x768
+	cargo run --package cella_gui --bin cella -- --gui --size 1024x768
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 

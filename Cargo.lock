@@ -649,8 +649,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "cella"
-version = "0.1.0"
+name = "cella_gui"
+version = "1.0.0"
 dependencies = [
  "cella_lib",
  "eframe",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "cella_lib"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "lasso2",
  "memoize",

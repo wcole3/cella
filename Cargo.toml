@@ -1,12 +1,23 @@
 [package]
-name = "cella"
-version = "0.1.0"
+name = "cella_gui"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.92"
+description = "A GUI for the Cella cellular automata library"
+readme = "README.md"
+repository = "https://github.com/wcole3/cella"
+keywords = ["automata", "cellular", "wildfire", "simulation", "gui"]
+categories = ["science", "simulation", "gui"]
+
+# The package is `cella_gui` because `cella` is taken on crates.io, but the
+# executable keeps the short name: `cargo install cella_gui` installs `cella`.
+[[bin]]
+name = "cella"
+path = "src/main.rs"
 
 [dependencies]
-cella_lib = { path = "./cella_lib" }
+cella_lib = { path = "./cella_lib", version = "1.0.0" }
 eframe = { version = "0.35.0", default-features = true }
 egui = "0.35.0"
 egui_plot = "0.36.0"
