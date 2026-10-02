@@ -538,6 +538,18 @@ impl WildfireModel {
     /// Used in [`Self::step_chunk_arrival`] as a multiplier on a cell's
     /// travel *cost* (ticks per cell), so `> 1` makes this cell slower to
     /// catch from any direction and `< 1` faster.
+    ///
+    /// **Why `#[inline(never)]`.** `ln`, `cos` and `exp` have no side
+    /// effects, so the compiler is allowed to run them early, "just in case".
+    /// When this function was inlined, LLVM moved the whole Box-Muller
+    /// calculation (three expensive libm calls) out of the "this cell has a
+    /// burning neighbour" branch and ran it for *every* fuel cell on *every*
+    /// step. That was over half of the arrival rule's run time (profiled with
+    /// `perf`: libm was about 56 % of samples). Keeping the call out of line
+    /// means it only runs when the code really asks for it. Measured on a
+    /// 512x512 grid: about 100 ns per cell-step down to about 18 ns, roughly
+    /// 5.7x faster, with identical results (this function is pure).
+    #[inline(never)]
     fn arrival_jitter(&self, idx: usize) -> f32 {
         let sigma = self.params.arrival_jitter;
         if sigma <= 0.0 {
