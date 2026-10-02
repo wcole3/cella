@@ -1402,8 +1402,17 @@ fn zzz_benchmark_summary() {
 // stochastic runs snapshot-stable and thread-count-independent) --------
 
 /// 256x256 mixed-fuel landscape with an elevation ramp, moderate wind, and a
-/// centre ignition. `spotting` adds firebrand events on top.
+/// centre ignition. `spotting` adds firebrand events on top. Uses the default
+/// `"bernoulli"` spread rule.
 fn wildfire_grid_256(spotting: bool) -> Grid2D {
+    wildfire_grid_256_with_spread(spotting, "bernoulli")
+}
+
+/// Same landscape as [`wildfire_grid_256`], but the caller picks the spread
+/// rule (`"bernoulli"` or `"arrival"`). Keeping one builder means the arrival
+/// scenarios are guaranteed to use exactly the same fuels, wind, slope and
+/// ignition as the Bernoulli ones, so their timings are comparable.
+fn wildfire_grid_256_with_spread(spotting: bool, spread: &str) -> Grid2D {
     use cella_lib::wildfire::{
         FuelClass, SpottingParams, WildfireEnv, WildfireModel, WildfireParams, cell_rand,
     };
@@ -1454,7 +1463,7 @@ fn wildfire_grid_256(spotting: bool) -> Grid2D {
         }),
         burning_name: None,
         burned_name: None,
-        spread: "bernoulli".into(),
+        spread: spread.into(),
         arrival_jitter: 0.2,
         wind_law: "exponential".into(),
     };
@@ -1592,6 +1601,34 @@ fn stress_2d_wildfire_spotting() {
     run_benchmark_2d("2d_wildfire_spotting_256", &g, 200);
 }
 
+/// Arrival-spread wildfire on the same 256x256 landscape. The arrival rule
+/// visits every cell every step (about 20x the cost of the Bernoulli rule), so
+/// these scenarios run only 30 steps: that keeps one run near 200 ms at one
+/// thread instead of the ~1.2 s that 200 steps would take.
+const ARRIVAL_STEPS: usize = 30;
+
+fn stress_2d_wildfire_arrival() {
+    let g = wildfire_grid_256_with_spread(false, "arrival");
+    if ascii_enabled() {
+        print_ascii_2d("2d_wildfire_arrival_256: initial", &g);
+    }
+    if configs_export_enabled() {
+        export_config_2d("2d_wildfire_arrival_256", &g);
+    }
+    run_benchmark_2d("2d_wildfire_arrival_256", &g, ARRIVAL_STEPS);
+}
+
+fn stress_2d_wildfire_arrival_spotting() {
+    let g = wildfire_grid_256_with_spread(true, "arrival");
+    if ascii_enabled() {
+        print_ascii_2d("2d_wildfire_arrival_spotting_256: initial", &g);
+    }
+    if configs_export_enabled() {
+        export_config_2d("2d_wildfire_arrival_spotting_256", &g);
+    }
+    run_benchmark_2d("2d_wildfire_arrival_spotting_256", &g, ARRIVAL_STEPS);
+}
+
 #[test]
 #[ignore]
 fn stress_1d_randomness_512_t1() {
@@ -1677,6 +1714,50 @@ fn stress_2d_wildfire_spotting_t4() {
 fn stress_2d_wildfire_spotting_t8() {
     set_thread_override(8);
     stress_2d_wildfire_spotting();
+    clear_thread_override();
+}
+
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_t1() {
+    set_thread_override(1);
+    stress_2d_wildfire_arrival();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_t4() {
+    set_thread_override(4);
+    stress_2d_wildfire_arrival();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_t8() {
+    set_thread_override(8);
+    stress_2d_wildfire_arrival();
+    clear_thread_override();
+}
+
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_spotting_t1() {
+    set_thread_override(1);
+    stress_2d_wildfire_arrival_spotting();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_spotting_t4() {
+    set_thread_override(4);
+    stress_2d_wildfire_arrival_spotting();
+    clear_thread_override();
+}
+#[test]
+#[ignore]
+fn stress_2d_wildfire_arrival_spotting_t8() {
+    set_thread_override(8);
+    stress_2d_wildfire_arrival_spotting();
     clear_thread_override();
 }
 

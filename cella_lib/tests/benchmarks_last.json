@@ -606,5 +606,53 @@
     "median": 46.832525000000004,
     "outliers": 0,
     "load1": 1.64
+  },
+  "2d_wildfire_arrival_256_t4": {
+    "avg": 92.64338070000001,
+    "std_dev": 5.35900263227101,
+    "min": 85.922485,
+    "median": 92.1254045,
+    "outliers": 0,
+    "load1": 1.29
+  },
+  "2d_wildfire_arrival_spotting_256_t8": {
+    "avg": 87.96863160000001,
+    "std_dev": 3.4769583378662237,
+    "min": 84.112648,
+    "median": 86.6806365,
+    "outliers": 1,
+    "load1": 1.29
+  },
+  "2d_wildfire_arrival_spotting_256_t4": {
+    "avg": 93.78180119999999,
+    "std_dev": 4.4805232997785165,
+    "min": 83.092711,
+    "median": 94.21796499999999,
+    "outliers": 0,
+    "load1": 1.29
+  },
+  "2d_wildfire_arrival_256_t8": {
+    "avg": 85.7601417,
+    "std_dev": 3.950933009013239,
+    "min": 80.058937,
+    "median": 85.705521,
+    "outliers": 0,
+    "load1": 1.26
+  },
+  "2d_wildfire_arrival_256_t1": {
+    "avg": 203.16469009999997,
+    "std_dev": 14.512910869266229,
+    "min": 183.540738,
+    "median": 197.460806,
+    "outliers": 0,
+    "load1": 1.29
+  },
+  "2d_wildfire_arrival_spotting_256_t1": {
+    "avg": 200.36180310000003,
+    "std_dev": 15.257002149031052,
+    "min": 173.465438,
+    "median": 199.394261,
+    "outliers": 0,
+    "load1": 1.22
   }
 }

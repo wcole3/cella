@@ -1026,6 +1026,7 @@ mod tests {
 
     #[test]
     fn out_of_bounds_n3_history_full_and_parallel_step_paths() {
+        let _guard = crate::threads::lock_override_for_test();
         let a = CellType::from("A");
         let b = CellType::from("B");
 

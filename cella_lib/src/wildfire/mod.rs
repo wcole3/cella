@@ -3198,6 +3198,7 @@ mod tests {
 
     #[test]
     fn arrival_rule_is_deterministic_across_1_4_and_8_threads() {
+        let _guard = crate::threads::lock_override_for_test();
         use crate::threads::{clear_thread_override, set_thread_override};
         let (w, h) = (24usize, 24usize);
         let f = CellType::new("Forest");
@@ -3562,6 +3563,112 @@ mod tests {
         assert_eq!(f32::from_bits(after[43 * 70 + 69]), f32::INFINITY);
         for _ in 0..5 {
             g.step(); // no panic; slope/wind tables fit the new size
+        }
+    }
+
+    // -------- Arrival-array exactness (DS-005) --------
+
+    // Why this test exists. The long-suite snapshots (`tests/snapshots/`)
+    // hash only each cell's *type* and *age*. The arrival rule also keeps a
+    // hidden number per cell, the time the fire is predicted to reach it
+    // (`derived.arrival`). Two versions of the stepper could produce the same
+    // types and ages while storing different arrival times, and no snapshot
+    // would notice. These tests hash that hidden array too, so a speed-up of
+    // `step_chunk_arrival` can be proven to change nothing at all.
+
+    /// FNV-1a hash of the arrival array. FNV-1a is a tiny checksum: it mixes
+    /// every byte into a 64-bit number, so any change to any byte gives a
+    /// different number. We feed it each `f32`'s raw bits (not its value), so
+    /// even tiny differences such as `-0.0` versus `0.0` change the hash.
+    fn arrival_hash(m: &WildfireModel) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for a in &m.derived.arrival {
+            for b in a.load(Ordering::Relaxed).to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Runs one arrival scenario for `steps` steps and returns
+    /// (hash of cell types, hash of the arrival array).
+    fn arrival_scenario(variant: u8, threads: usize, steps: usize) -> (u64, u64) {
+        let (w, h) = (96usize, 80usize);
+        let mut init = vec![CellType::new("Forest"); w * h];
+        for (idx, c) in init.iter_mut().enumerate() {
+            match cell_rand(5, 0, idx as u64, 9) {
+                v if v < 0.25 => *c = CellType::new("Shrub"),
+                v if v < 0.30 => *c = CellType::inactive(),
+                _ => {}
+            }
+        }
+        init[(h / 2) * w + w / 2] = CellType::new("Burning");
+        init[10 * w + 10] = CellType::new("Burning");
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.fuels.push(FuelClass { name: "Shrub".into(), veg_factor: 0.6 });
+        p.wind_speed = 8.0;
+        p.burn_duration = 3;
+        p.p0 = 0.58;
+        let mut env = WildfireEnv::default();
+        env.elevation = (0..w * h).map(|i| (i % w) as f32 * 1.5 + (i / w) as f32 * 0.4).collect();
+        if variant == 1 {
+            p.spotting = Some(SpottingParams {
+                p_spot: 0.02, median_distance: 8.0, sigma: 0.4, angle_jitter_deg: 25.0,
+            });
+        }
+        if variant == 2 {
+            env.wind_u = (0..w * h).map(|i| 4.0 + (i % 7) as f32).collect();
+            env.wind_v = (0..w * h).map(|i| -3.0 + (i / w % 5) as f32).collect();
+        }
+        let mut g = crate::Grid2D::new(w, h, 0, init, crate::Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(WildfireModel::new(p, env))).unwrap();
+        crate::threads::set_thread_override(threads);
+        for _ in 0..steps {
+            g.step();
+        }
+        crate::threads::clear_thread_override();
+        let mut th: u64 = 0xcbf2_9ce4_8422_2325;
+        for i in 0..w * h {
+            for b in g.cell_type(i).as_str().bytes() {
+                th ^= u64::from(b);
+                th = th.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        (th, arrival_hash(wildfire(&mut g)))
+    }
+
+    /// Pinned results (cell-type hash, arrival-array hash) after 60 steps for
+    /// variants 0 (uniform wind), 1 (plus spotting) and 2 (per-cell wind
+    /// field). They were recorded on the code *before* any arrival speed-up.
+    ///
+    /// These numbers depend on the C math library (`libm`, glibc on Linux):
+    /// the arrival times use `exp`, `ln` and `cos`, whose last bits can differ
+    /// between libm versions. The existing wildfire snapshots have the same
+    /// property. If this fails on a different machine or OS while every other
+    /// check passes, suspect libm first, then re-record on a trusted build.
+    const ARRIVAL_GOLDEN: [(u64, u64); 3] = [
+        (0xa9418d679fa8d43c, 0x838ced1f54791462),
+        (0x5f71cb24cdb448ca, 0x2fc265523972e385),
+        (0x994d73419eb5cd63, 0xc2a6d3d294d85cb7),
+    ];
+
+    /// The arrival array and cell types must match the pinned hashes, and
+    /// must be the same at 1, 4 and 8 threads.
+    #[test]
+    fn arrival_array_golden_hashes() {
+        let _guard = crate::threads::lock_override_for_test();
+        for (variant, golden) in ARRIVAL_GOLDEN.iter().enumerate() {
+            let one = arrival_scenario(variant as u8, 1, 60);
+            for threads in [4, 8] {
+                assert_eq!(
+                    one,
+                    arrival_scenario(variant as u8, threads, 60),
+                    "variant {variant}: {threads} threads differ from 1 thread"
+                );
+            }
+            assert_eq!(one, *golden, "variant {variant}: differs from the pinned hashes");
         }
     }
 }

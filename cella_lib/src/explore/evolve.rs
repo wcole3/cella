@@ -1391,6 +1391,7 @@ mod tests {
 
     #[test]
     fn runs_are_identical_across_thread_counts() {
+        let _guard = crate::threads::lock_override_for_test();
         let cfg = small(EvolveConfig {
             genes: life_genes(),
             objective: Some(fraction_target(0.3)),
@@ -1673,6 +1674,7 @@ mod tests {
 
     #[test]
     fn novelty_search_grows_an_archive_and_adapts_its_threshold() {
+        let _guard = crate::threads::lock_override_for_test();
         let cfg = EvolveConfig {
             population: 10,
             steps: 24,

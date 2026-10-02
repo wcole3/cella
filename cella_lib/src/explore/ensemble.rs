@@ -794,12 +794,6 @@ mod tests {
     use crate::rng::cell_rand;
     use crate::rules::{CountOp, Neighborhood2D, Rule2D, Rule2DSubrule};
 
-    /// `cargo test` runs tests in one process with many threads; the
-    /// thread-count, member-parallelism and min-work overrides below are
-    /// process-global (see `crate::threads`), so any test that touches one
-    /// must hold this lock for the tests to be safe to run concurrently.
-    static GLOBAL_OVERRIDE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// Life with a chance that a birth is skipped, on a seeded random soup.
     fn soup(w: usize, h: usize) -> Sim {
         let alive = CellType::from("Alive");
@@ -986,7 +980,7 @@ mod tests {
 
     #[test]
     fn stepping_is_identical_across_thread_counts() {
-        let _guard = GLOBAL_OVERRIDE_GUARD.lock().unwrap();
+        let _guard = crate::threads::lock_override_for_test();
         use crate::threads::{clear_thread_override, set_thread_override};
         let run = |threads: usize| {
             set_thread_override(threads);
@@ -1006,7 +1000,7 @@ mod tests {
     /// knobs must not be able to break it, on either axis or the two together.
     #[test]
     fn stepping_is_identical_across_member_par_and_min_work() {
-        let _guard = GLOBAL_OVERRIDE_GUARD.lock().unwrap();
+        let _guard = crate::threads::lock_override_for_test();
         use crate::threads::{
             MIN_WORK_PER_CHUNK, clear_member_par_override, clear_min_work_per_chunk_override,
             clear_thread_override, set_member_par_override, set_min_work_per_chunk_override,

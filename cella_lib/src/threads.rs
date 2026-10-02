@@ -267,6 +267,25 @@ pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
     built
 }
 
+/// Test-only lock for the process-global overrides above.
+///
+/// `cargo test` runs tests on many threads in one process, but
+/// [`set_thread_override`] and friends change a single global. If two tests
+/// set it at once, one can clear it while the other is mid-run, and a "4
+/// thread" run silently becomes a default-thread run. Every in-crate test
+/// that sets an override must hold this guard for its whole body.
+#[cfg(test)]
+static OVERRIDE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Take [`OVERRIDE_TEST_LOCK`]. A test that panics while holding the lock
+/// "poisons" it; we ignore that so one failure does not fail every later test.
+#[cfg(test)]
+pub(crate) fn lock_override_for_test() -> std::sync::MutexGuard<'static, ()> {
+    OVERRIDE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -941,6 +941,7 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-10-02 | 82 | 3 056.14 | DS-005 phase 1: arrival benches *(set)* (`2d_wildfire_arrival_256` and `2d_wildfire_arrival_spotting_256`, each at t1/t4/t8, 30 steps; the 76 pre-existing entries are untouched and still sum to **2 292.46**; the six new entries add 763.68) |
 | *(this change)* | 2026-10-01 | 76 | 2 292.46 | DS-004 harness hardening: 30 new entries *(set)* (6 randomness entries that had snapshots but no baseline, plus `1d_rule30_65536`/`262144`, the `history_limit` sweep, `2d_cyclic12_128` and the four `2d_straddle_*` sizes); baseline entries now also carry `min`/`median`/`outliers`/`load1`. Engine unchanged: the 46 pre-existing entries sum to **944.65** (+4.2 % vs 906.93 on means, but their sum of mins is 901.54, −0.6 %: the mean-based difference is mostly outlier noise, which is what the new protocol exists to expose) |
 | *(this change)* | 2026-08-14 | 46 | 906.93 | §8 round 4: wildfire fire-front mask (E8, −49/−53 %) |
 | *(this change)* | 2026-08-14 | 46 | 1 134.49 | §8 round 3: 2D bit-plane fast path (E7, life-like −58/−59 %); comparable-40 total **580.67** |
