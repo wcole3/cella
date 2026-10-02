@@ -1,6 +1,6 @@
 .PHONY: all build build-release run run-gui check clippy fmt fmt-check doc clean \
 		test test-all test-all-single test-all-single-run \
-		coverage coverage-all test-create-snapshots test-update-benchmarks
+		coverage coverage-all test-create-snapshots test-update-benchmarks bench-ab
 
 # ── Default ───────────────────────────────────────────────────────────────────
 all: build
@@ -93,6 +93,15 @@ test-create-snapshots:
 ## Update benchmark baseline files
 test-update-benchmarks:
 	cd cella_lib && CELLA_UPDATE_BENCH=1 cargo test --package cella_lib -- --include-ignored --test-threads=1
+
+## Interleaved A/B timing: git ref A vs the working tree.
+## Usage: make bench-ab A=<git ref> FILTER='<libtest name filter>' [ROUNDS=8] [RUNS=10]
+## See scripts/bench_ab.py and docs/performance.md section 4.
+ROUNDS ?= 8
+RUNS ?= 10
+bench-ab:
+	@test -n "$(A)" -a -n "$(FILTER)" || { echo "usage: make bench-ab A=<git ref> FILTER='<name filter>' [ROUNDS=8] [RUNS=10]"; exit 2; }
+	python3 scripts/bench_ab.py --a "$(A)" --filter "$(FILTER)" --rounds $(ROUNDS) --runs $(RUNS)
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 

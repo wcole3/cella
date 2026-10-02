@@ -15,7 +15,8 @@ correctness issues found, what was implemented and measured, and what remains.
 **Status: the §2 correctness fixes and the §3.1–§3.3, §3.6–§3.11 performance
 items have been implemented and measured, and most of §3.12 too.** §3.4 was
 deliberately not done and §3.5 was folded into §3.12. Still open: §3.13, §3.14,
-the last §3.12 item, and the benchmark/criterion work in §4. Sections marked
+and the last §3.12 item. (The benchmark harness in §4 was hardened instead of
+moving to criterion.) Sections marked
 *(done)* describe shipped code; sections marked *(open)* are still
 recommendations. §7 records the performance decisions baked into the
 wildfire/external-model work. Line references are omitted in favour of naming
@@ -611,55 +612,316 @@ then.
 
 ## 4. Benchmarking Notes
 
-The harness is serviceable but its limits were the binding constraint on the last
-20 % of this work:
+Two kinds of check protect the engine, and they are deliberately separate:
 
-- `Instant`-based timing with mean ± std over `CELLA_BENCH_RUNS` runs; no warmup
-  discard, no outlier rejection, no significance test. On this machine the noise
-  band is roughly **±5–8 %**, which is the same size as several of the effects
-  worth chasing. Two A/B rounds during this work produced conclusions that
-  reversed on re-measurement.
-- Practical workaround used here: `CELLA_BENCH=1` with a test-name filter prints
-  every run, and taking the **minimum** across runs is far more stable than the
-  mean for comparing two builds. A filtered 1D-only run completes in ~25 s, which
-  makes real A/B iteration possible.
-- Benchmarks are `#[ignore]`d tests, so they build in the `test` profile unless
-  the invocation overrides it. **Always pass `--release`.**
-- `tests/benchmarks_last.json` was refreshed as part of this work, so the `Δ`
-  column is once again meaningful. It had been stale enough that every delta read
-  as a large improvement regardless of the change.
+- **Snapshots** (correctness): after a fixed number of steps, the final grid is
+  reduced to a 64-bit FNV-1a hash and compared to a golden file in
+  `tests/snapshots/`. If an optimization changes even one cell, the hash changes
+  and the test fails. This is cheap, exact and not noisy, and it is what gave
+  confidence that all of §3 preserved behaviour exactly.
+- **Timings** (speed): each scenario is run many times and the wall-clock times
+  are compared with a stored baseline (`tests/benchmarks_last.json`). This is
+  the noisy one, and the rest of this section is about making it trustworthy.
 
-Recommendation, now stronger than in the original review: move the timing
-benchmarks to `criterion` or `divan` benches (`cella_lib/benches/`), keeping the
-FNV snapshot tests exactly as they are — the snapshot mechanism is genuinely good
-regression armor, is orthogonal to timing, and was the thing that gave confidence
-that all of §3 preserved behaviour exactly.
+Both live in `cella_lib/tests/long_suite.rs`. The timing benches are
+`#[ignore]`d tests (`run_benchmark_1d` / `run_benchmark_2d`), so a plain
+`cargo test` skips them. They also build in the `test` profile unless told
+otherwise, so **always pass `--release`**.
 
-### Criterion migration plan
+### Why the old harness was not enough
 
-Criterion over divan: its `--save-baseline` / `--baseline` comparison with
-outlier rejection and significance testing is precisely the cure for the
-"two A/B rounds reversed on re-measurement" problem above. (A divan bench
-target with `AllocProfiler` is a worthwhile follow-on for counting the §3.12
-per-step allocations exactly; the `unsafe` involved lives inside divan, not
-this crate.) Shape:
+The first version printed mean ± standard deviation over 10 runs and nothing
+else. On this WSL2 machine the run-to-run noise on the mean is roughly
+**±5–8 %**, which is the same size as several of the effects worth chasing.
+Two A/B rounds during the §3/§8 work produced conclusions that reversed when
+re-measured. The reason is that timing noise is **one-sided**: another process,
+the WSL2 host or a CPU clock dip can only make a run *slower* than the true
+cost, never faster. A few slow runs drag the mean up, while the fastest run
+stays close to the truth. Three missing pieces followed from that: no warm-up
+(the first run is always slow), no way to see which runs were suspect, and no
+way to tell "the machine was busy" from "the code got slower".
 
-- `[dev-dependencies] criterion` + a `[[bench]] name = "engine"` target with
-  `harness = false`; port the grid builders from `long_suite.rs` (timing only —
-  snapshots stay where they are).
-- New scenarios closing gaps 5.4/5.5/5.8 while we are there: a 1D case wide
-  enough to reach the work threshold (`1d_rule30_65536`), a randomness-0.5
-  subrule case (finally measures §3.3), a `history_limit` 0/1/7 sweep
-  (measures the §3.8 divide removal), a 12-type counts-heavy case (tests the
-  §3.4 decision), sizes straddling `MIN_WORK_PER_CHUNK` (feeds §3.14), and an
-  RNG micro-bench (`SmallRng` sequential draws vs the stateless
-  `wildfire::cell_rand` hash).
-- A/B protocol: `cargo bench -p cella_lib -- --save-baseline main` on HEAD,
-  apply the change, `cargo bench -p cella_lib -- --baseline main <filter>`;
-  accept on a significant improvement in the target benches with no
-  significant regression elsewhere, and gate every engine change on the FNV
-  snapshots staying byte-identical. The legacy `CELLA_BENCH=1` min-of-runs
-  protocol remains as a cross-check.
+### Criterion was tried and rejected
+
+The obvious fix was to move the timings to `criterion`, the standard Rust
+benchmarking crate (it does its own outlier rejection and significance tests).
+A spike on this machine measured both approaches side by side:
+
+| | legacy harness, **min of 10** | criterion |
+|---|---|---|
+| Spread across 3 repeats of the *same* code | **0.4–2.5 %** | up to **70 %** under load |
+| False positives ("regression" reported when nothing changed) | not applicable (no test) | **14 %** on a quiet box, **57 %** on a loaded one |
+| Wall time for the same scenarios | 1× | about **15× slower** |
+
+Criterion's statistics assume a quiet, stable machine; on a shared WSL2 box its
+adaptive sampling was both slower and *less* repeatable than "run it 10 times
+and take the fastest". So the decision (user, 2026-10) was to **harden the
+legacy harness instead** and keep the FNV snapshots exactly as they are. There
+is no `cella_lib/benches/` target and no `criterion` dependency.
+
+### The benchmark protocol
+
+Each `run_benchmark_*` call now does the following (all of it lives in
+`long_suite.rs`, with doc comments at the top of that file):
+
+1. **Warm-up.** One untimed run first (`CELLA_BENCH_WARMUP`, default 1; set it
+   to 0 to switch it off). *Why:* the first run pays for cold CPU caches, page
+   faults and clock ramp-up, so it is systematically slow. The warm-up run also
+   does the ASCII dump and the snapshot check, so those never sit inside a timed
+   region.
+2. **Timed runs.** `CELLA_BENCH_RUNS` runs (default 10), each on a fresh clone
+   of the initial grid.
+3. **Statistics per bench**, all in milliseconds:
+   - **mean ± std** over *all* timed runs. These are computed exactly as before
+     so every row of the history table below stays comparable with older rows.
+   - **min**: the fastest run. Because noise only slows runs down, this is the
+     best estimate of the true cost and the number to trust for A/B decisions.
+   - **median**: the middle run when sorted (average of the two middle runs if
+     the count is even). Less jumpy than the mean, more representative than the
+     min.
+4. **Outlier report.** Runs that look unlike the rest are *listed*, never
+   removed. "Outlier" here means outside the fence
+   `median ± max(3 × 1.4826 × MAD, 2 % of the median)`.
+   - **MAD** (median absolute deviation) is the median of `|run − median|`: the
+     typical distance of a run from the middle run, computed with medians so a
+     couple of wild runs cannot inflate it. The constant 1.4826 rescales it to
+     be comparable to a standard deviation on bell-curve data, so "3 ×" reads
+     like "3 sigma".
+   - *Why MAD and not the other common rule (Tukey's fence, quartiles ± 1.5 ×
+     **IQR**, where the IQR is the distance between the 25th and 75th
+     percentile run):* with only ~10 runs the quartiles are interpolated between
+     a handful of points and one slow run already moves them. MAD tolerates up
+     to half the runs being bad.
+   - The 2 % floor stops a very quiet bench (MAD close to zero) from flagging a
+     run that is only 1 % off: real, but harmless. With fewer than 5 runs
+     nothing is flagged.
+   - Outliers never change `avg`, `std_dev`, `min` or `median`. A bench with
+     **more than 20 % outliers** gets an explicit *UNTRUSTWORTHY* warning in
+     the end-of-suite report.
+5. **Load guard.** `/proc/loadavg` is read at suite start, before each bench's
+   warm-up, and when each bench finishes. The stored and printed per-bench value
+   (JSON field `load1`) is the **max of the start and end samples**, so a busy
+   spell at either end shows (the *load average* is how many processes were wanting a CPU, on
+   average over the last minute; this machine has 16 logical CPUs). It is
+   printed, stored in the JSON, and a 1-minute load **above 4** prints a warning
+   that the machine is too busy for trustworthy timings. Where the file does not
+   exist (Windows and macOS CI, which only run `cargo check`) the guard simply
+   stays silent.
+6. **`Δ` against the baseline is printed on both min and mean.** `Δmin` is the
+   one to trust, for the reason above (the spike measured 0.4–2.5 % spread on
+   min-of-10 versus 5–8 % on the mean). `Δavg` is kept because every baseline
+   row ever recorded has an average, and the history table is built from
+   averages. A baseline entry written before this change has no `min`, so it
+   prints `Δmin n/a` until the next `CELLA_UPDATE_BENCH=1` refresh.
+
+The JSON schema grew four optional fields. Old files still load, because the
+new fields are `#[serde(default)]` (a unit test parses an old-style entry):
+
+```json
+"2d_straddle_92_t4": { "avg": 47.35, "std_dev": 0.66,
+                       "min": 46.83, "median": 47.05, "outliers": 2, "load1": 1.64 }
+```
+
+Example output. With `CELLA_BENCH=1` every run is printed, then one stats line
+per bench:
+
+```text
+[bench] load average (1 min) at suite start: 3.26
+[bench]              1d_n3_custom_t1: 1.061873 ms      (example value)
+  ... (one line per timed run) ...
+[bench]              1d_n3_custom_t1: min 1.056043 ms, median 1.090268 ms, mean 1.088652 ms (+/-0.027830), outliers 0, load 3.26
+```
+
+and the end-of-suite summary (`zzz_benchmark_summary`, which runs last under
+`--test-threads=1`) prints, per bench, the table row, then a load report and an
+outlier report listing every bench that had outliers with the flagged values:
+
+```text
+[bench]   2d_three_state_cycle_t1: avg 41.9564 (± 3.4385) min 40.3869 med 40.6554 ms | Δmin +0.00% Δavg -1.65% | out 2
+[bench] Load report (1-min load average; this box has 16 logical CPUs):
+[bench]   at suite start: 1.41
+[bench]   no bench finished with load > 4.
+[bench] Outlier report (runs outside median ± max(3·1.4826·MAD, 2 % of median)):
+[bench]   45 bench(es) had outliers (they are INCLUDED in avg/std, never dropped):
+[bench]       1d_large_rule30_2049_t4: 3/10 runs [21.410, 18.581, 19.153] ms  <-- more than 20 % outliers: ...
+```
+
+Full-suite refresh (run from `cella_lib/`, on a quiet machine, release mode):
+
+```text
+CELLA_UPDATE_BENCH=1 cargo test --release --test long_suite -- --ignored --test-threads=1 --nocapture
+```
+
+(`make test-update-benchmarks` also works but runs every ignored test in the
+package and, with no `--release`, in the debug profile. Use the command above
+for baselines.) Check `cat /proc/loadavg` first: if the first number is above
+4, wait. Another process (a test run from a different project) held the load at ~3.2
+during one refresh, and the small benches came out 10–30 % off their usual numbers
+(one, `1d_n3_custom_t1`, nearly 2× slow). That refresh was thrown away and
+redone at load 1.4.
+
+### Comparing two builds: `make bench-ab`
+
+Never compare two *separate* suite runs by eye. The machine drifts over minutes
+(CPU clock, other processes, the WSL2 host), and drift looks exactly like a
+speed change. `scripts/bench_ab.py` (Python 3 standard library only) removes it
+by **interleaving**: it runs build A, then B, then A, then B, and so on, so both
+builds sample the same stretches of machine weather and slow drift cancels out.
+
+```text
+make bench-ab A=<git ref> FILTER='<libtest name filter>' [ROUNDS=8] [RUNS=10]
+# e.g. what did my working-tree edit do to the 2D cycle benches?
+make bench-ab A=HEAD FILTER='stress_2d_three_state_cycle stress_2d_life_like'
+```
+
+What it does:
+
+1. Builds the `long_suite` test binary for git ref **A** (in a temporary
+   `git worktree`, removed afterwards) and for **B**, your current working tree
+   including uncommitted edits, using `cargo test --release --no-run
+   --message-format=json` to find each binary. Both builds finish *before* any
+   timing starts, then it waits (up to 10 minutes) for the load to fall to 4 or
+   less, since its own build raised it.
+2. Runs A, B, A, B, ... for `ROUNDS` rounds with `CELLA_BENCH=1` and your name
+   filter, and parses the per-run times out of the output. Benches that exist
+   on only one side are listed as skipped.
+3. Per bench, prints min and median for each side, `Δmin`, `Δmedian`, the number
+   of outlier runs on each side, and a **Mann-Whitney U** p-value. By default
+   (`--unit rounds`) the p-value is computed on **one median per round per
+   side**, not on every run.
+   - *Why not every run?* Runs inside one process are **correlated**: they
+     happen back to back, so they share the same CPU clock, cache state and
+     background load. Ten runs from one round are closer to "one measurement
+     repeated" than ten independent ones. Pooling them makes the test think it
+     has far more evidence than it really does, so p comes out much too small.
+     One median per round is the honest unit: rounds are separated in time, so
+     they are much closer to independent. `--unit runs` still exists, but its
+     p-values are labelled "optimistic p-values (runs within a process are
+     correlated)".
+   - *Mann-Whitney U in plain words:* pool every sample of A and B, sort them, and
+     give each a rank (1 = fastest). If B is really slower, B's runs collect
+     the high ranks. U measures how lopsided that is. It looks at ordering
+     only, not the actual values, so one wild run cannot fake a result. The
+     **p-value** is the chance of ranks at least this lopsided *if A and B were
+     really the same*; small p means "unlikely to be luck". It is computed by
+     hand with the normal approximation (tie-corrected, with continuity
+     correction), so no scipy is needed.
+4. Verdict: **"significant" only if the four-part gate below passes.** The
+   p-value alone is not enough: even a 1 % wobble can reach p < 0.01 when there
+   are many samples, and a 1 % change is not worth acting on.
+
+**Why the default is 8 rounds.** In rounds mode each side has only `ROUNDS`
+samples. With 5 per side, the smallest p the test can ever give is about 0.012
+(even if every B round beats every A round), so the `p < 0.01` rule could never
+fire. With 6 per side the best p is about 0.005, and 8 leaves some margin. The
+script prints a warning if you ask for fewer than 6 rounds in rounds mode.
+
+**Warm-up asymmetry warning.** The script checks whether A's
+`cella_lib/tests/long_suite.rs` contains `CELLA_BENCH_WARMUP`. If A is older than
+the warm-up change, A's first run of each bench in every process is cold (slow
+caches, CPU ramp-up) and B's is not, which biases the result toward "B faster".
+The script prints a warning and repeats it in the report header. As a
+mitigation it drops the first timed run of every bench in every process, on both
+sides, so the comparison stays symmetric. If you reuse `--workdir` and a leftover
+`wt-a` worktree is there, the script removes it first and prints a note.
+
+Useful flags: `--unit runs` (pool every run: optimistic p-values, see above),
+`--workdir DIR` (keeps A's build cache
+between invocations), `--flock PATH` (serialize timed runs with other users of
+the machine), `--json FILE` (keep the raw samples).
+
+**Verdict gate.** A bench is called "significant" only if **all four** hold:
+(1) p < 0.01; (2) the median changed by more than 2 %; (3) the min changed by
+more than 2 %; (4) the min and the median moved the **same way** (both slower or
+both faster). Why the min and sign rules: noise from a busy machine mostly makes
+some runs slow, which drags the median up but barely moves the fastest run. A
+real change in the code shows up in the min too. Each non-significant row lists
+the gates it failed, e.g. `no change (failed: p,min)`.
+
+**Validation (2026-10-01).** Every check below compares the working tree with
+`HEAD` with no engine change, so the right answer is always "no significant
+change". Read them in order, because the gate was changed after the second step.
+
+1. *Pooled-runs unit (the old default), gate = p and 2 % on the median.* Subset:
+   1D rule 30 center, 1D n3 custom, 2D three-state cycle, 2D life-like, 2D von
+   Neumann, each at `t1/t4/t8` (15 benches), 8 rounds x 10 runs, load 3.2-3.8
+   (another project was using about one CPU). Run twice, 30 comparisons in
+   total: **0 of 30 significant**, but **2 of 30 would have been false positives
+   on p alone** (`2d_vonneumann_threshold_t4`, p near 0.0000, Δmedian -1.38 %;
+   `2d_life_like_moore_t8`, p = 0.0037, Δmedian +0.94 %). Reason: runs in one
+   round are correlated, so pooled p-values are too small. That is why the
+   default became one median per round.
+2. *Rounds unit, 8 rounds, same gate (p and 2 % median), filter `1d_n`, 6
+   benches, load 3.75 before and 3.96 at the start of timing.* **1 of 6
+   significant, a false positive:** `1d_n3_custom_t8`, p = 0.0074, Δmedian
+   +3.21 % but Δmin only +0.89 %. The load was right at the limit of 4 and the
+   bench takes only about 1 ms, so a few slow runs inflated the median. This is
+   why the Δmin and same-sign gates were added. **Honest caveat:** the new gate
+   was designed after seeing this result, so this run cannot validate it.
+3. *Fresh nulls for the new gate (prediction made before running: 0
+   significant).* Two filters not used before, `A=HEAD`, 8 rounds, rounds unit:
+   `three_state` (6 benches, load 2.64 before, 3.21 at start, 2.94 at end) and
+   `randomness` (6 benches, load 2.94 before, 2.84 at start, 3.55 at end). Result:
+   **0 of 12 significant**. The smallest p was 0.052 (`1d_randomness_512_t4`),
+   so even the p rule alone flagged none. Largest |Δmin| was 1.43 %; the one
+   |Δmedian| above 2 % (`1d_three_state_cycle_t1`, -5.25 %) failed p and min.
+
+Total: 12 fresh comparisons with the final gate, 0 false positives. That is a
+small sample, so it shows the gate behaves on quiet-ish runs, not that the
+false-positive rate is zero. Other caveats: about 8-10 % of runs fall outside
+the outlier fence in these runs (they are reported and kept, never dropped), and
+`HEAD` predates the warm-up change, so the script drops each process's first
+timed run on both sides (see the warm-up warning above); once this change is
+committed both sides have the warm-up.
+
+### Scenarios added with this change
+
+Every scenario has a golden snapshot, and the three thread counts hash the
+same. Numbers below are the **min** of 10 runs in ms, from the quiet-machine
+refresh (load 1.4). `chunks = clamp(total_work / 400 000, 1, threads)` rounds
+*down*, where `total_work = cells × work_per_cell` and `work_per_cell` is the sum
+of neighbour offsets over all subrules (`Rule2DPlan::work_per_cell`; for 1D it is
+the sum of `2n + 1` per subrule).
+
+| Scenario | What it isolates | t1 | t4 | t8 |
+|---|---|---|---|---|
+| `1d_rule30_65536` | wide 1D rule 30; work = 65 536 × 6 = 393 216, **just under** 400 000 | 63.3 | 63.1 | 64.2 |
+| `1d_rule30_262144` | same rule, work = 1 572 864 → 3 chunks at t4/t8 | 64.2 | 50.4 | 49.2 |
+| `2d_cycle128_hist{0,1,7}` | `history_limit` sweep, 3-state cycle 128², scalar path, pinned to t1 | 35.1 / 41.6 / 42.1 | - | - |
+| `2d_cyclic12_128` | 12-type cyclic rule (24 subrules, work 192/cell), 12-entry type counter | 29.0 | 19.4 | 30.5 |
+| `2d_straddle_65` | 3-state cycle, work 202 800 (~0.5×) → 1 chunk | 47.4 | 47.4 | 47.8 |
+| `2d_straddle_92` | work 406 272 (~1×) → still 1 chunk (floors) | 46.6 | 46.8 | 46.7 |
+| `2d_straddle_130` | work 811 200 (~2×) → 2 chunks | 48.1 | 49.5 | 47.4 |
+| `2d_straddle_183` | work 1 607 472 (~4×) → 4 chunks | 47.1 | 54.4 | 54.3 |
+
+(Straddle sizes keep total cell-steps about constant, so the `t1` column is flat
+by design and any difference in `t4`/`t8` is the cost or benefit of splitting.)
+
+What they show:
+
+- **`1d_rule30_65536` does not reach the parallel path.** The packed bit-parallel
+  1D path runs only when `chunks_for_work(...) <= 1`. At width 65 536 the work
+  estimate is 393 216, under the 400 000 threshold, so it is *packed at t1, t4
+  and t8 alike*, which is why the three columns agree to within noise. To
+  actually exercise the scalar parallel path a width of at least ~133 000 is
+  needed, hence the extra `1d_rule30_262144`: it takes the packed path at `t1`
+  (one chunk) and the scalar parallel path with 3 chunks at `t4` and `t8`, and
+  that parallel scalar path is ~22 % *faster* than packed-serial at the same
+  cell-steps. Gap 5.4 is closed by this pair.
+- **`history_limit`:** 0 → 1 costs about **+19 %** (35.1 → 41.6 ms), 1 → 7
+  about **+1 %**. So the history *ring buffer* machinery (any non-zero limit) is
+  what costs, not the depth. The §3.8 divide removal made depth almost free; the
+  fixed cost of having a history at all is the remaining target.
+- **The 400 000 threshold on this box.** For this rule, splitting does *not*
+  pay at 2× and loses at 4×: 2 chunks are neutral (+2.9 % at t4, −1.5 % at t8,
+  within noise), 4 chunks are **~15 % slower** than serial. The 12-type case
+  agrees (t8 with 7 chunks is slower than t1; t4 with 4 chunks is 33 % faster,
+  because its per-chunk work is ~786 000, about double). Reading: for cheap
+  per-cell rules, a chunk needs well over 400 000 *estimated* visits to
+  amortize the hand-off, or the estimate over-counts (the "stay" subrules
+  usually stop early, which is exactly §3.14). This is a lead from one rule on
+  one machine, not yet a tuning decision; confirm with `make bench-ab` and
+  `CELLA_MIN_WORK` before changing the constant.
 
 ### Baseline history (`tests/benchmarks_last.json`)
 
@@ -671,6 +933,7 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-10-01 | 76 | 2 292.46 | DS-004 harness hardening: 30 new entries *(set)* (6 randomness entries that had snapshots but no baseline, plus `1d_rule30_65536`/`262144`, the `history_limit` sweep, `2d_cyclic12_128` and the four `2d_straddle_*` sizes); baseline entries now also carry `min`/`median`/`outliers`/`load1`. Engine unchanged: the 46 pre-existing entries sum to **944.65** (+4.2 % vs 906.93 on means, but their sum of mins is 901.54, −0.6 %: the mean-based difference is mostly outlier noise, which is what the new protocol exists to expose) |
 | *(this change)* | 2026-08-14 | 46 | 906.93 | §8 round 4: wildfire fire-front mask (E8, −49/−53 %) |
 | *(this change)* | 2026-08-14 | 46 | 1 134.49 | §8 round 3: 2D bit-plane fast path (E7, life-like −58/−59 %); comparable-40 total **580.67** |
 | *(this change)* | 2026-08-14 | 46 | 1 358.11 | §8 round 2: packed-u64 1D Wolfram path (E6, rule30 −34/−43 %); comparable-40 total **764.34** |
@@ -744,24 +1007,36 @@ Current coverage:
 
 ### Gaps still open
 
-4. **1D parallel path in benchmarks.** No 1D benchmark reaches the work threshold,
-   so the 1D `_t4/_t8` variants still measure the serial path (visible in the
-   results: the three thread variants agree to within noise). Add a
-   width ≥ 65536 1D case, and 2D cases straddling the work threshold, to make the
-   heuristic's effect visible.
-5. **Mid-range randomness.** Only the 0.0/1.0 extremes are tested. Add a
-   statistical test (randomness = 0.5, large N, tolerance band) documenting that
-   it is tolerance-based, not exact. This is also the missing regression test for
-   §3.3, whose effect is currently unmeasurable for want of a benchmark that uses
-   randomness at all.
-8. **long_suite / bench expansions.** A randomness-rule benchmark (would quantify
-   §3.3), Knight at 256×256, a `history_limit` sweep (0 / 1 / 7 — now that `hl`
-   no longer gates threading, this measures the §3.8 divide removal), and a
-   counts-heavy scenario with 10+ types (would confirm or overturn the §3.4
-   decision). Consider snapshotting final `counts_current` alongside the FNV cell
-   hash so statistics regressions are caught by golden files too — note that
-   today's snapshots hash only cell types and ages, which is exactly why bug 2.1
-   went unnoticed.
+4. **1D parallel path in benchmarks.** *(closed by DS-004)* No 1D benchmark used
+   to reach the work threshold, so the 1D `_t4/_t8` variants measured the serial
+   path. Now `1d_rule30_65536` exists, but note that at width 65 536 the work
+   estimate (393 216) is still just *under* the 400 000 threshold, so it is
+   packed at every thread count. `1d_rule30_262144` is the one that really takes
+   the scalar parallel path (3 chunks at t4/t8), and
+   `2d_straddle_{65,92,130,183}` bracket the threshold in 2D at about 0.5×, 1×,
+   2× and 4×. The numbers are in §4 ("Scenarios added with this change"). Open
+   follow-up: at 4 chunks the 2D split is about 15 % *slower* than serial on
+   this box, which feeds §3.14.
+5. **Mid-range randomness.** *(partly closed)* Since `2f04706` there are unit
+   tests at randomness 0.5 (for example in `grid2d.rs`). They check that the same
+   seed gives the same answer and that both outcomes happen over 64 seeds. Still
+   missing: a frequency test, meaning "over a large N, about half the cells
+   apply, within a tolerance band". The randomness benchmarks this gap used to
+   ask for now exist (`1d_randomness_512`, `2d_randomness_128`).
+8. **long_suite / bench expansions.** *(mostly closed by DS-004)* Done: the
+   `history_limit` sweep (`2d_cycle128_hist{0,1,7}`; going from 0 to any
+   non-zero limit costs about 19 %, depth beyond 1 about 1 %), the counts-heavy
+   scenario with 12 types (`2d_cyclic12_128`), and the two randomness
+   benchmarks now have baseline entries. **Dropped on purpose:** the
+   "`SmallRng` vs `cell_rand`" RNG micro-benchmark. `SmallRng` was removed in
+   `2f04706`, so there is nothing left to compare against, and the existing
+   `1d_randomness_512` / `2d_randomness_128` benchmarks already exercise
+   `cell_rand` end to end. Still open: Knight at 256×256, and snapshotting final
+   `counts_current` alongside the FNV cell hash so statistics regressions are
+   caught by golden files too. Note that today's snapshots hash only cell types
+   and ages, which is exactly why bug 2.1 went unnoticed. The 12-type result
+   does not by itself settle the §3.4 decision (replacing SipHash maps); it
+   gives a baseline to measure that change against.
 
 ---
 
@@ -1216,14 +1491,14 @@ Also done since the original review:
 
 Next, in order:
 
-9. Move timing benchmarks to `criterion` (§4, migration plan there). This is
-   now the blocker on further micro-optimization, not a nicety: the current
-   ±5–8 % noise band is wider than the effects still left to chase. (The 1D
-   regression in §3.9 that was cited here has since been resolved.)
-10. Close bench gaps 5.4, 5.5, 5.8 (§5 "Gaps still open"): in particular a
-    1D case large enough to exercise the parallel path, and the
-    threshold-straddling sizes §3.14 needs. (The randomness benchmarks already
-    exist; see gap 5.)
+9. ✅ Trustworthy A/B timing (§4). Criterion was tried and rejected on this
+   machine (DS-002). The existing harness was hardened instead (DS-004): it
+   adds a warm-up, min/median, reported outliers, a load guard, and
+   `make bench-ab` for comparing two builds by alternating their runs.
+10. ✅ Bench gaps 4 and 8 mostly closed by DS-004, including a 1D case large
+    enough to take the parallel path and the threshold-straddling sizes §3.14
+    needs. Still open: gap 5's frequency test, Knight at 256×256, and counts
+    in snapshots.
 11. ✅ §3.9 via the `Rule1DPlan` downcast — done, §8 E1 (−8 to −13 % on n≤2
     1D cases); `1d_large_rule30_2049` was then fixed by §3.7 stage 1 (§8 E6).
 12. ✅ §3.12 plan flatten, condition ranges, lazy counter — done, §8 E2
