@@ -37,18 +37,16 @@
 //! a member keeps exactly the value it was born with — selection can still
 //! act on that value (resampling still copies it), only mutation stops.
 //!
-//! **Exception: `evolve`'s iso+line variation.** The freeze above describes
-//! [`GeneSpace::mutate`]/`mutate_one`, the path `assim`/`open` mode (and
-//! resampling everywhere) use. `evolve` mode's own crossover-flavoured step
-//! ([`crate::explore::evolve::iso_line_step`]) does not honour a per-gene
-//! `sigma: 0` freeze the same way: alongside its own Gaussian step (scaled
-//! by the gene's `sigma`, so that half does stop at `sigma = 0`), it also
-//! moves the child a fraction of the way along the line toward a second,
-//! paired parent — a step whose size is a fixed 0.2 spread, independent of
-//! the gene's own `sigma`. A gene frozen this way in `evolve` mode can
-//! still move, via the line term alone, even at `sigma = 0`. No behaviour
-//! change here — this paragraph only documents a gap this module's own
-//! doc comment did not previously mention.
+//! **Exception: MAP-Elites with `iso_line: true`.** The freeze above holds
+//! for [`GeneSpace::mutate`] and [`GeneSpace::mutate_one`], which ensemble
+//! resampling and the objective and novelty searches use. The MAP-Elites
+//! "iso+line" step (`iso_line_step`, a private function in `evolve.rs`) is
+//! different for numeric genes: besides its own Gaussian nudge (scaled by the
+//! gene's `sigma`, so that part does stop at `sigma = 0`), it moves the child
+//! part of the way along the line towards a second, randomly chosen elite,
+//! by an amount drawn with a fixed spread of 0.2 that ignores the gene's
+//! `sigma`. So a gene with `sigma: 0` can still move through the line term
+//! alone. Other gene kinds go through `mutate_one` and do stay frozen.
 
 use std::collections::BTreeMap;
 
@@ -136,17 +134,25 @@ impl GeneSpec {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneKind {
+    /// A decimal number in `[lo, hi]`; `log` means it is sampled and
+    /// mutated per decade (see [`Scale::Log`]).
     Float { lo: f64, hi: f64, log: bool },
+    /// A whole number in `[lo, hi]`, both ends included.
     Int { lo: i64, hi: i64 },
+    /// An on/off switch.
     Bool,
+    /// One of a fixed list of named options.
     Choice { options: Vec<String> },
+    /// A string of `len` bits (at most 128), such as a Wolfram code.
     Bits { len: u32 },
 }
 
 /// One resolved gene.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Gene {
+    /// The knob key (or free-gene name) this gene stands for.
     pub key: String,
+    /// What values the gene may take.
     pub kind: GeneKind,
     /// Per-gene mutation size, if the spec gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,6 +193,7 @@ pub struct GeneSpace {
     owned: Vec<bool>,
 }
 
+/// Build the "gene 'key': why" error used for every bad gene in a config.
 fn invalid(key: &str, why: impl std::fmt::Display) -> ModelError {
     ModelError::InvalidParam(format!("gene '{key}': {why}"))
 }
@@ -208,10 +215,14 @@ fn expand_key(key: &str, descs: &[ParamDesc]) -> Vec<String> {
     out
 }
 
+/// True for a key that names a grid knob (`rule.` or `model.`), not a free gene.
 fn is_prefixed(key: &str) -> bool {
     key.starts_with("rule.") || key.starts_with(MODEL_PREFIX)
 }
 
+/// Work out a prefixed gene's kind from the knob's description, applying any
+/// narrowing `range`/`bits`/`choices` from the spec. Refuses anything that
+/// would widen the knob's own bounds.
 fn kind_from_desc(spec: &GeneSpec, desc: &ParamDesc) -> Result<GeneKind, ModelError> {
     let key = &spec.key;
     let no_bits_or_choices = |what: &str| -> Result<(), ModelError> {
@@ -329,6 +340,8 @@ fn kind_from_desc(spec: &GeneSpec, desc: &ParamDesc) -> Result<GeneKind, ModelEr
     }
 }
 
+/// Work out a free gene's kind: the spec's own `range`/`bits`/`choices`, or
+/// else the driver's default for that name.
 fn kind_for_free(spec: &GeneSpec, defaults: &[Gene]) -> Result<GeneKind, ModelError> {
     let key = &spec.key;
     if let Some([lo, hi]) = spec.range {
@@ -519,7 +532,8 @@ impl GeneSpace {
         }
     }
 
-    /// Nudge a single gene by position; used by the GUI's "mutate rule".
+    /// Nudge a single gene by position (evolution's breeding loop uses it, and
+    /// so does the GUI's "mutate rule").
     pub fn mutate_one(&self, rng: &mut Rng, genome: &mut Genome, i: usize, sigma: f64) {
         if let (Some(g), Some(v)) = (self.genes.get(i), genome.0.get_mut(i)) {
             mutate_value(&g.kind, v, g.sigma.unwrap_or(sigma), rng);
@@ -1154,14 +1168,11 @@ mod tests {
         assert_eq!(wild.0[4], ParamValue::Choice("off".into()));
     }
 
-    /// Round 7 Task 5 (E45's `SMC_WIND_ROT_SIGMA=0`): a per-gene `sigma` of
-    /// exactly `0.0` must resolve (not be rejected the way a negative
-    /// sigma is) and must freeze that one gene under repeated mutation --
+    /// A per-gene `sigma` of exactly `0.0` must resolve (not be rejected the
+    /// way a negative sigma is) and must freeze that one gene under repeated mutation --
     /// every member keeps exactly the value it was born with -- while a
     /// second gene with no override in the same space keeps mutating
-    /// normally at the engine's own sigma. This is the library-level half
-    /// of the "does the library reject sigma 0" question E45's brief asks;
-    /// it does not (this test is the acceptance check for that fix).
+    /// normally at the engine's own sigma.
     #[test]
     fn a_per_gene_sigma_of_zero_is_accepted_and_freezes_that_gene_only() {
         let sim = life();
@@ -1317,7 +1328,7 @@ mod tests {
     fn float_knob_refusals_and_a_choice_knobs_default_options() {
         let mut sim = life();
         // `randomness` only shows up in the knob list once a subrule has a
-        // value for it (the module doc's "a write can turn randomness on");
+        // value for it;
         // life()'s own fixture never sets it, so give the first subrule one.
         sim.set_param("rule.subrules[0].randomness", ParamValue::Float(0.2))
             .unwrap();

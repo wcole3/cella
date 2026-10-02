@@ -1,11 +1,11 @@
 //! Terrain-adjusted wind fields: a mass-consistent downscaler.
 //!
-//! Weather data arrives as one wind for a whole area — a station reading or
-//! a 30 km reanalysis cell — but a fire on a 30 m grid feels ridges and
-//! valleys. Operational tools (WindNinja, Forthofer et al. 2014) fix this
+//! Weather data arrives as one wind for a whole area (a station reading or
+//! a 30 km reanalysis cell, i.e. a gridded re-computation of past weather),
+//! but a fire on a 30 m grid feels ridges and valleys. Operational tools (WindNinja, Forthofer et al. 2014) fix this
 //! with a *mass-consistent* diagnostic model: start from the uniform wind,
-//! then adjust it as little as possible so that air is conserved as it flows
-//! over the terrain. Air squeezed over a ridge speeds up; air entering a
+//! then adjust it as little as possible so that air is conserved (none is
+//! created or destroyed) as it flows over the terrain. Air squeezed over a ridge speeds up; air entering a
 //! valley is channelled along it. No momentum equation, no thermal effects
 //! (WindNinja's known limits: lee-side recirculation and stable-layer
 //! decoupling are not captured), but it reproduces the first-order terrain
@@ -13,16 +13,21 @@
 //!
 //! This is the two-dimensional, single-layer version. Air moves in a layer
 //! of depth `h(x, y) = top − z(x, y)`, where `z` is the terrain and `top` a
-//! flat lid `layer_depth` metres above the highest cell. Conservation of the
-//! column flux `h·u` with a potential correction `u = u0 + ∇φ` gives the
-//! variable-coefficient Poisson equation
+//! flat lid `layer_depth_m` metres above the highest cell. Conservation of the
+//! column flux `h·u` (layer depth times wind) with a correction written as the
+//! gradient of a potential, `u = u0 + ∇φ`, gives the variable-coefficient
+//! Poisson equation (a standard "spread-out" PDE: it says how `φ` must bend so
+//! the flux has no sources or sinks)
 //!
 //! ```text
 //! ∇·(h ∇φ) = −∇·(h u0) = −(u0 ∂h/∂x + v0 ∂h/∂y)
 //! ```
 //!
-//! solved by Gauss–Seidel with over-relaxation on the cell grid, zero-gradient
-//! (Neumann) boundaries, so the flux through the edges stays `h·u0`. The
+//! solved on the cell grid by Gauss–Seidel (sweep the cells repeatedly, each
+//! time replacing `φ` with the average implied by its neighbours) with
+//! over-relaxation (overshoot each update a little to converge faster).
+//! The edges use zero-gradient (Neumann) boundaries (`φ` has no slope
+//! across the edge), so the flux through the edges stays `h·u0`. The
 //! result is returned as meteorological components: `u` eastward (+x), `v`
 //! northward (−y on a north-up grid), ready for
 //! [`super::WildfireModel::set_wind_field`].
@@ -30,31 +35,41 @@
 /// Result of a downscaling: per-cell `u` (eastward) and `v` (northward), m/s.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindField {
+    /// Eastward wind per cell, row-major, m/s.
     pub u: Vec<f32>,
+    /// Northward wind per cell, row-major, m/s.
     pub v: Vec<f32>,
-    /// Solver iterations used.
+    /// Solver iterations used (sweeps over the grid; both unit solves summed
+    /// when the field came from a [`MassConsistentBasis`]).
     pub iterations: usize,
     /// Final maximum absolute update of the potential (m²/s); convergence
     /// measure.
     pub residual: f64,
 }
 
-/// Solver settings. Defaults are fine for 30 m grids up to ~1.5 M cells.
+/// Solver settings. The defaults are meant for 30 m grids; the automatic
+/// coarsening (see `coarsen`) is what keeps big grids affordable.
 #[derive(Clone, Debug)]
 pub struct MassConsistentOptions {
     /// Lid height above the highest terrain cell, metres. Smaller = stronger
     /// terrain response (ridges squeeze a thinner layer). WindNinja's default
     /// domain top is a few hundred metres; 300 m is a reasonable start.
     pub layer_depth_m: f64,
-    /// Over-relaxation factor in (1, 2). 1.8 converges in a few hundred sweeps.
+    /// Over-relaxation factor, meant to lie in (1, 2) (1 = plain
+    /// Gauss–Seidel; 2 or more diverges). 1.8 is the default.
     pub omega: f64,
-    /// Stop when the largest potential update in a sweep drops below this.
+    /// Stop when the largest potential update in a sweep drops below this
+    /// (same units as [`WindField::residual`], m²/s).
     pub tolerance: f64,
+    /// Hard cap on sweeps per unit solve; the solver returns whatever it has
+    /// reached, so check `residual` against `tolerance`.
     pub max_iterations: usize,
-    /// Solve on a grid coarsened by this factor (block mean of the terrain),
-    /// then interpolate the correction back. 0 = automatic: the smallest
-    /// factor that keeps the coarse grid under ~60 000 cells (WindNinja
-    /// itself runs at 100–150 m for fire support). 1 = full resolution.
+    /// Solve on a grid coarsened by this factor (each coarse cell is the mean
+    /// of a `factor × factor` block of the terrain), then interpolate the
+    /// correction back to the full grid. 0 = automatic: the smallest factor
+    /// that brings the coarse grid to 60 000 cells or fewer, but never more
+    /// than 16 (WindNinja itself runs at 100–150 m for fire support).
+    /// 1 = full resolution.
     pub coarsen: usize,
 }
 
@@ -72,11 +87,11 @@ impl Default for MassConsistentOptions {
 
 /// The terrain part of the solution, computed once per landscape.
 ///
-/// The correction is linear in the driving wind: `φ = u0·φ_a + v0·φ_b`, where
-/// `φ_a` and `φ_b` solve the Poisson problem for a unit eastward and a unit
-/// northward wind. Store their gradients and every later wind is one pass of
-/// multiply-adds — the difference between five minutes and fifty
-/// milliseconds per weather window on a 460 000-cell grid.
+/// The correction is linear in the driving wind: `φ = u0·φ_a + vy0·φ_b`, where
+/// `φ_a` and `φ_b` solve the Poisson problem for a unit eastward wind and a
+/// unit wind along grid +y (southward on a north-up grid; `vy0 = −v0`).
+/// Store their gradients and every later wind is one pass of multiply-adds,
+/// instead of a fresh iterative solve per weather window.
 #[derive(Clone, Debug)]
 pub struct MassConsistentBasis {
     width: usize,
@@ -87,13 +102,15 @@ pub struct MassConsistentBasis {
     ay: Vec<f32>,
     bx: Vec<f32>,
     by: Vec<f32>,
+    /// Sweeps used by the two unit solves, added together.
     pub iterations: usize,
+    /// Larger of the two solves' final residuals (see [`WindField::residual`]).
     pub residual: f64,
 }
 
 impl MassConsistentBasis {
     /// Solve the two unit problems over `elevation` (`width × height`, m,
-    /// row 0 north).
+    /// row 0 north). Panics if `elevation.len() != width * height`.
     pub fn new(elevation: &[f32], width: usize, height: usize, cell_size_m: f64, opts: &MassConsistentOptions) -> Self {
         let n = width * height;
         assert_eq!(elevation.len(), n, "elevation layer must be width * height");
@@ -107,7 +124,8 @@ impl MassConsistentBasis {
             opts.coarsen.max(1)
         };
         let (cw, ch) = (width.div_ceil(factor), height.div_ceil(factor));
-        // Block-mean terrain.
+        // Coarsen: each coarse cell takes the mean elevation of its block
+        // (edge blocks may be smaller; `count` tracks how many cells fell in).
         let mut coarse = vec![0.0f32; cw * ch];
         let mut count = vec![0u32; cw * ch];
         for y in 0..height {
@@ -160,7 +178,8 @@ impl MassConsistentBasis {
         }
     }
 
-    /// The field for a uniform wind `u0` eastward, `v0` northward (m/s).
+    /// The field for a uniform wind `u0` eastward, `v0` northward (m/s). Cheap:
+    /// one multiply-add pass over the grid, no solving.
     pub fn field(&self, u0: f64, v0: f64) -> WindField {
         let n = self.width * self.height;
         let vy0 = -v0; // grid y points south
@@ -178,8 +197,9 @@ impl MassConsistentBasis {
 }
 
 /// Solve ∇·(h∇φ) = −(u0 ∂h/∂x + vy0 ∂h/∂y) on the given grid (grid axes;
-/// `vy0` is the southward component). Returns the gradient fields
-/// (∂φ/∂x, ∂φ/∂y), iterations and final residual.
+/// `vy0` is the southward component, `dx` the cell size in metres). Returns
+/// the gradient fields (∂φ/∂x, ∂φ/∂y), iterations and final residual.
+/// The layer depth `h` is floored at 1 m so the equation never divides by zero.
 #[allow(clippy::type_complexity)]
 fn solve_potential(
     elevation: &[f32],
@@ -195,6 +215,9 @@ fn solve_potential(
     let top = zmax + opts.layer_depth_m;
     let h: Vec<f64> = elevation.iter().map(|&z| (top - z as f64).max(1.0)).collect();
     let idx = |x: usize, y: usize| y * width + x;
+    // Layer depth at the face between a cell and its east / south neighbour:
+    // the harmonic mean 2ab/(a+b), the usual choice for a PDE coefficient that
+    // varies cell to cell.
     let hx = |x: usize, y: usize| -> f64 {
         let a = h[idx(x, y)];
         let b = h[idx(x + 1, y)];
@@ -205,6 +228,8 @@ fn solve_potential(
         let b = h[idx(x, y + 1)];
         2.0 * a * b / (a + b)
     };
+    // First derivative (in cells) of f at index i: central difference inside,
+    // one-sided at the two ends, 0 for a one-cell-wide axis.
     let d1 = |f: &dyn Fn(usize) -> f64, i: usize, len: usize| -> f64 {
         if len == 1 {
             0.0
@@ -283,12 +308,14 @@ fn solve_potential(
 
 /// Downscale a uniform wind (`u0` eastward, `v0` northward, m/s) over the
 /// terrain `elevation` (row-major, `width × height`, metres, row 0 north)
-/// with cell edge `cell_size_m`.
+/// with cell edge `cell_size_m`. For many winds over the same terrain, build
+/// a [`MassConsistentBasis`] once and call its `field` instead.
 ///
 /// Flat terrain returns the uniform wind exactly. Speed is highest where the
 /// layer is thinnest (ridge crests) and lowest where it is thickest (valley
 /// floors); direction bends to follow flux-conserving paths around
-/// obstacles. Panics if the layer length does not match the grid.
+/// obstacles. An empty grid returns an empty field. Panics if the layer length
+/// does not match the grid.
 pub fn mass_consistent(
     elevation: &[f32],
     width: usize,

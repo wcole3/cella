@@ -1,4 +1,11 @@
 //! 2D grid implementation.
+//!
+//! A 2D grid is a `width` x `height` board stored row-major (cell `(x, y)` is
+//! at flat index `y * width + x`). Each step, every cell counts the cells of a
+//! given type in its neighborhood and a subrule decides its next type. Three
+//! step paths exist: a bit-parallel fast path for two-state radius-1 threshold
+//! rules (`step_packed`), the general per-cell path (`step_chunk`, optionally
+//! split across threads), and an attached external model (`step_external`).
 
 use crate::chunking::{OutChunk, split_chunks};
 use crate::resize::{ResizeError, checked_cells, recount, remap_blocks};
@@ -16,7 +23,7 @@ use std::io::Error;
 /// Create with [`Grid2D::new`], then call [`Grid2D::step`] repeatedly.
 /// Cells are stored row-major; data organized as struct-of-arrays.
 ///
-/// Example
+/// Example (Conway's Game of Life; `Gt` means "at least", so `Gt 4` is "4 or more")
 /// ```rust
 /// use cella_lib::{Grid2D, Rule2D, Rule2DSubrule, Neighborhood2D, CellType, CountOp};
 /// let alive = CellType::from("Alive");
@@ -55,10 +62,9 @@ pub struct Grid2D {
     /// Flat circular-buffer history: cell i occupies [i*history_limit .. (i+1)*history_limit).
     #[serde(skip)]
     pub(crate) history_data: Vec<CellType>,
-    /// Write head for each cell's circular history buffer.
-    /// TODO need to check if there is still a need to maintain this; every cell's history gets
-    /// updates when the buffers swap, so presumably we could maintain a single head
-    /// and update when the buffers swap. That would save the array memory
+    /// Write head (next slot to overwrite) for each cell's circular history buffer.
+    /// Kept per cell, not as one shared head, because painting a single cell
+    /// (`transition_state_and_buffer`) advances only that cell's history.
     #[serde(skip)]
     pub(crate) history_heads: Vec<u8>,
     /// Entry count for each cell's circular history buffer.
@@ -366,7 +372,10 @@ impl Grid2D {
         Ok(())
     }
 
-    /// Transition cell `idx` to `new_type`.
+    /// Transition cell `idx` to `new_type` outside of stepping (e.g. painting).
+    /// Records the old type in history, resets or bumps the age, and tells an
+    /// attached model about the paint. Returns `Some(error)` when `idx` is out
+    /// of bounds (nothing changes) and `None` on success.
     pub fn transition_state_and_buffer(
         &mut self,
         idx: usize,
@@ -411,7 +420,7 @@ impl Grid2D {
     }
 
     /// Type at `(x, y)`, or `inactive` when out of bounds.
-    /// Only used for cells within `plan.pad` of a border; see `next_type_interior`.
+    /// Only used by `next_type_edge`, for cells within `plan.pad` of a border.
     #[inline]
     fn neighbor(
         cells: &[CellType],
@@ -433,6 +442,10 @@ impl Grid2D {
     ///
     /// Neighbors are reached by adding a precomputed linear offset to `idx`: no
     /// per-neighbor bounds comparisons and no `y * width + x` multiply.
+    ///
+    /// Counting stops early for a `Gt` subrule without a `limit` (`early_exit`),
+    /// because once `count` neighbors are seen the answer cannot change.
+    /// Hot loop: code-size-bound, see `step_chunk`.
     #[inline]
     fn next_type_interior(
         cells: &[CellType],
@@ -455,7 +468,7 @@ impl Grid2D {
             let mut neighbors = 0u32;
             // A `Gt 0` subrule is satisfied with zero neighbors — skip the scan
             // entirely. (Restructuring the loop itself was tried and regressed
-            // the Moore benches; see performance.md §8.)
+            // the Moore benches; see docs/performance.md §8 E3a/E3b, E3c.)
             if !(early && target == 0) {
                 for &off in offsets {
                     if cells[idx.wrapping_add_signed(off)] == crit {
@@ -537,13 +550,25 @@ impl Grid2D {
         inactive
     }
 
-    /// Compute the next state for one chunk of the grid.
+    /// Compute the next state for one chunk of the grid: a run of consecutive
+    /// flat indices starting at `out.start`, written into disjoint output slices
+    /// so chunks can run on different threads.
     ///
-    /// The `history_limit > 0` test stays *inside* the per-cell loop on
+    /// A cell is "interior" when it is at least `plan.pad` cells from every
+    /// border, so all its neighbors exist and `next_type_interior` can read them
+    /// with no bounds checks; the rest are "edge" cells (`next_type_edge`,
+    /// out-of-bounds neighbors count as inactive). `x`/`y` are tracked
+    /// incrementally to avoid a divide per cell.
+    ///
+    /// Returns the count of every new type except the dominant type `dt`;
+    /// `apply_counts` fills that one in by subtraction.
+    ///
+    /// Hot loop: it is code-size-bound. The `history_limit > 0` test stays *inside* the per-cell loop on
     /// purpose: splitting the loop into with/without-history monomorphized
     /// variants was measured at +30–46 % across every 2D bench (the doubled
     /// body blows the inliner budget for `next_type_interior`) — see
-    /// performance.md §8 E5. The branch itself is perfectly predicted.
+    /// docs/performance.md §8 E5. The branch itself is perfectly predicted.
+    /// Any change that grows this loop should be re-benchmarked.
     // Every argument is a distinct piece of per-chunk state the caller
     // already has in hand; bundling them into a struct would just move the
     // field list to a constructor call at every call site.
@@ -638,9 +663,11 @@ impl Grid2D {
     ///
     /// **1. Line up the neighbors.** Every cell has up to 8 neighbors. By
     /// taking the word for the row above, the row itself, and the row below —
-    /// each as-is, shifted one bit left, and shifted one bit right — we get
-    /// eight words in which bit `j` holds one particular neighbor of cell
-    /// `j`. (Bits falling off a word carry into the next word of the same
+    /// shifted one bit left and one bit right, plus the rows above and below
+    /// as-is (the row itself as-is would be the cell, not a neighbor) — we get
+    /// eight "bit-planes": words in which bit `j` holds one particular neighbor
+    /// of cell `j`. (Only the planes the rule's neighborhood actually counts,
+    /// `PackedThreshold2D::slots`, are used.) (Bits falling off a word carry into the next word of the same
     /// row; the grid border and row ends shift in zeros, which matches the
     /// scalar rule "out of bounds counts as inactive".)
     ///
@@ -649,7 +676,8 @@ impl Grid2D {
     /// digits as four words `c0..c3`: bit `j` of `c0` is the 1s digit of cell
     /// `j`'s count, bit `j` of `c1` the 2s digit, and so on. Each neighbor
     /// word is added with the "carry" pattern below — the same idea as adding
-    /// 1 to a binary number by hand, done for all 64 cells simultaneously:
+    /// 1 to a binary number by hand, done for all 64 cells simultaneously (a
+    /// "bit-sliced counter"):
     ///
     /// ```text
     /// carry = c0 & p;  c0 ^= p;   // add p to the 1s digit; overflow carries
@@ -799,7 +827,13 @@ impl Grid2D {
         Some(count_map)
     }
 
-    /// Advance the automaton by one step using double-buffering.
+    /// Advance the automaton by one step using double-buffering: new types are
+    /// written to `next_cells` while `cells` is still being read, then the two
+    /// are swapped.
+    ///
+    /// Uses the packed fast path when the rule qualifies (it declines each step
+    /// if a foreign cell type is on the grid); otherwise the per-cell path,
+    /// split across threads when the grid is big enough.
     ///
     /// When an [`crate::external::ExternalModel`] is attached, it drives the
     /// transition instead of the subrule engine.
@@ -901,13 +935,13 @@ impl Grid2D {
         self.cells.get(idx).copied().unwrap_or(self.inactive)
     }
 
-    /// Age of cell at `idx`.
+    /// Age of cell at `idx` (steps in current state).
     #[inline]
     pub fn cell_age(&self, idx: usize) -> u32 {
         self.ages.get(idx).copied().unwrap_or(0)
     }
 
-    /// History entries for cell `idx` in FIFO order.
+    /// History entries for cell `idx` in FIFO order (oldest first).
     pub fn cell_history(&self, idx: usize) -> Vec<CellType> {
         if self.history_limit == 0 {
             return Vec::new();
@@ -927,7 +961,7 @@ impl Grid2D {
         hist
     }
 
-    /// Reconstruct old-style CellState vectors.
+    /// Reconstruct the old-style CellState vectors (for serialization / compatibility).
     pub fn to_cell_states(&self) -> Vec<CellState> {
         self.cells
             .iter()

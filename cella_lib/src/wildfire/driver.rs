@@ -1,7 +1,11 @@
 //! [`WildfireDriver`]: the worked example of a [`MemberDriver`].
 //!
-//! Read this file when you write a driver for your own model. It does the
-//! three things a driver exists for:
+//! A *driver* adapts one ensemble member to a particular model: it turns the
+//! outside world's inputs (forcing) into model settings, and applies any
+//! rules that act on a whole member. Read this file when you write a driver
+//! for your own model. It does the three things a driver exists for (the
+//! "E" numbers are validation experiments, written up under
+//! `validation/experiments/`):
 //!
 //! 1. **Turn forcing into model settings.** Each window the caller supplies
 //!    `hours` since ignition and the wind (`wind_speed_ms`, `wind_from_deg`).
@@ -9,7 +13,8 @@
 //!    `wind_scale` gene (how much this member trusts the weather station),
 //!    and sets `p0` to the member's base value times an optional decay
 //!    `exp(-hours / (24 · tau_days))` — the "fires slow down as the days pass"
-//!    effect of validation experiment E16. When the caller gives no forcing
+//!    effect of validation experiment E16 (decay only applies when the member
+//!    has a `tau_days` gene). When the caller gives no forcing
 //!    (the GUI, say), hours come from the step count and `steps_per_day`, and
 //!    the wind from an optional `weather` schedule or the model's own
 //!    setting.
@@ -18,12 +23,13 @@
 //!    driver claims `model.p0` and uses the exact, cheap
 //!    [`WildfireModel::set_p0`] instead, folding the decay in at the same time.
 //! 3. **Stop members with a published rule.** Once a simulated day (every
-//!    `steps_per_day` steps) a still-burning member is *contained* with
+//!    `steps_per_day` steps) a member that is not yet contained is *contained* with
 //!    probability `1 / (1 + exp(-(a + b · ln g)))`, where `g` is how much it
 //!    grew that day — the containment model FSim uses (Finney et al. 2011),
 //!    validated here as E28. `a` and `b` are the genes `contain_a` and
-//!    `contain_b`; leave them out and no member is ever contained. A contained
-//!    member keeps its state but its `p0` becomes 0 for good.
+//!    `contain_b`; leave them out and no member is ever contained. The first
+//!    day boundary only records the fire's size, so containment draws start on
+//!    day two. A contained member keeps its cells but its `p0` becomes 0 for good.
 //!
 //! Everything the driver remembers per member sits in the [`MemberState`]
 //! under plain names (`p0_base`, `contained`, `burned_at_day_start`), so the
@@ -43,13 +49,13 @@ use crate::types::CellType;
 /// Free gene: multiplier on the wind speed the forcing supplies.
 pub const GENE_WIND_SCALE: &str = "wind_scale";
 /// Free gene: degrees added to the forcing's wind *from*-bearing before it
-/// is written into the model, per member (E30b). A fixed, whole-schedule
-/// rotation is a runner concern (`wildfire_smc`'s `SMC_WIND_ROT_DEG`,
-/// applied to the weather schedule before the driver ever sees it); this
-/// gene is the per-member, *learned* version of the same idea — each
+/// is written into the model, per member (E30b). A fixed rotation of the
+/// whole schedule is the runner's job (the `wildfire_smc` example's
+/// `SMC_WIND_ROT_DEG`, applied to the weather schedule before the driver sees
+/// it); this gene is the per-member, *learned* version of the same idea, so each
 /// member can trust the reported wind direction by a different amount.
-/// Left out of a run's gene list (the default), it contributes nothing:
-/// [`WildfireDriver::apply`] reads it with `unwrap_or(0.0)`.
+/// Left out of a run's gene list it contributes nothing: `apply` reads it with
+/// `unwrap_or(0.0)`.
 pub const GENE_WIND_ROT_DEG: &str = "wind_rot_deg";
 /// Free gene: decay time-scale in days for `p0`; absent means no decay.
 pub const GENE_TAU_DAYS: &str = "tau_days";
@@ -75,6 +81,8 @@ pub const STATE_CONTAINED: &str = "contained";
 pub const STATE_BURNED_AT_DAY_START: &str = "burned_at_day_start";
 
 /// One entry of a wind schedule: from `hours` on, this wind applies.
+/// `speed_ms` is in m/s and `from_deg` is the compass bearing the wind blows
+/// *from* (270 = a west wind).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WeatherWindow {
@@ -95,35 +103,27 @@ pub struct WildfireDriver {
     /// keeps the model's own constant wind.
     #[serde(default)]
     pub weather: Vec<WeatherWindow>,
-    /// Round 7 Task 7 (E49): the floor `period_end` clamps a period's
-    /// growth ratio `(burned - before) / before` to before taking its
-    /// `ln` for the containment logit — the "containment threshold" this
-    /// experiment sweeps (`wildfire_smc`'s `SMC_CONTAIN_GROWTH_FLOOR`). A
-    /// member whose burned count did not grow at all this period (growth
-    /// 0) is floored to this value, so a *smaller* floor pushes `ln
-    /// growth` more negative and (since `contain_b` is always negative,
-    /// `Gene::float(GENE_CONTAIN_B, -2.0, -0.3, ...)`) makes a stalled
-    /// member's containment logit larger — more certain containment for
-    /// zero-growth members. `1e-4` (`default_contain_growth_floor`) is
-    /// the value the operator has always used; this field exists so a
-    /// caller can override it without changing that default. See
-    /// `MemberDriver::period_end` below.
+    /// The smallest growth ratio `period_end` will use. At each day boundary
+    /// it computes growth `(burned - before) / before` (cells burning or burned
+    /// now vs. at the last boundary) and takes its `ln` for the containment
+    /// logit; growth below this floor is raised to it (E49 sweeps this value;
+    /// the `wildfire_smc` example's `SMC_CONTAIN_GROWTH_FLOOR` sets it).
+    /// A member that did not grow at all (growth 0) therefore uses the floor.
+    /// A *smaller* floor makes `ln growth` more negative and, because
+    /// `contain_b` is always negative (its range is -2.0 to -0.3), makes the
+    /// logit larger: stalled members become more certain to be contained.
+    /// The default is `1e-4` (`default_contain_growth_floor`).
     ///
-    /// **Must be a finite number > 0.** The floor is what keeps `ln
-    /// growth` finite for a member that did not grow. A floor of 0 (or
-    /// below, when growth is exactly 0) gives `ln 0 = -inf`, and with
-    /// `contain_b` always negative the logit becomes `+inf`: the member is
-    /// contained with probability 1, silently -- the opposite of "no
-    /// clamp". `wildfire_smc` rejects such values when it parses
-    /// `SMC_CONTAIN_GROWTH_FLOOR`.
+    /// **Must be a finite number > 0.** The floor keeps `ln growth` finite for
+    /// a member that did not grow. A floor of 0 gives `ln 0 = -inf`, which with a
+    /// negative `contain_b` makes the logit `+inf`: the member is contained with
+    /// probability 1, silently. `wildfire_smc` rejects such values when it parses
+    /// `SMC_CONTAIN_GROWTH_FLOOR`; this struct does not check it.
     ///
-    /// `skip_serializing_if` (added during the whole-branch review after
-    /// E49 landed): a driver at the default floor serialises with this
-    /// key absent, the same as a config written before this field
-    /// existed, so an old saved config stays byte-for-byte round-trippable
-    /// through a config export/import; a driver at a non-default floor
-    /// still writes the key (`#[serde(default = ...)]` above reads either
-    /// shape back in).
+    /// `skip_serializing_if`: a driver at the default floor serialises with this
+    /// key absent, exactly like a config written before the field existed, so an
+    /// old saved config round-trips byte for byte. A non-default floor is still
+    /// written, and `#[serde(default = ...)]` reads either shape back in.
     #[serde(
         default = "default_contain_growth_floor",
         skip_serializing_if = "is_default_contain_growth_floor"
@@ -139,13 +139,10 @@ fn default_steps_per_day() -> u64 {
     50
 }
 
-/// `period_end`'s pre-existing hard-coded growth floor (`1e-4`), pulled out
-/// to a named constant so [`WildfireDriver::contain_growth_floor`]'s serde
-/// default and this module's own uses agree by construction rather than by
-/// two copies of the literal staying in sync by hand. `pub` so
-/// `wildfire_smc`'s `SMC_CONTAIN_GROWTH_FLOOR` knob (Round 7 Task 7) can
-/// parse its own "unset" default from this same constant instead of a
-/// second copy of the literal.
+/// The default for [`WildfireDriver::contain_growth_floor`] (`1e-4`). It is a
+/// function so the serde default, `Default` and the `skip_serializing_if` check
+/// all share one value instead of three copies of the literal. It is `pub` so the
+/// `wildfire_smc` example can use it as the default of `SMC_CONTAIN_GROWTH_FLOOR`.
 pub fn default_contain_growth_floor() -> f64 {
     1e-4
 }
@@ -160,6 +157,8 @@ impl Default for WildfireDriver {
     }
 }
 
+/// Borrow the wildfire model inside `sim`, or fail with `InvalidParam` if the
+/// grid has no model or a different kind of model.
 fn model_of(sim: &mut Sim) -> Result<&mut WildfireModel, ModelError> {
     sim.model_mut()
         .and_then(|m| m.as_any_mut().downcast_mut::<WildfireModel>())
@@ -171,7 +170,9 @@ fn model_of(sim: &mut Sim) -> Result<&mut WildfireModel, ModelError> {
 }
 
 impl WildfireDriver {
-    /// The wind in force at `hours` from the schedule, if there is one.
+    /// The wind `(speed_ms, from_deg)` in force at `hours` from the schedule, if
+    /// there is one: the window with the latest `hours` not after now, or the
+    /// first window if none has started yet. `None` for an empty schedule.
     fn scheduled_wind(&self, hours: f64) -> Option<(f64, f64)> {
         let mut pick: Option<&WeatherWindow> = None;
         for w in &self.weather {
@@ -237,8 +238,9 @@ impl MemberDriver for WildfireDriver {
 
         // The base p0 comes from the gene when there is one (a child's mutated
         // gene must win over the scratch it inherited from its parent). With
-        // no gene it is captured from the model once: set_p0 overwrites
-        // params.p0, so reading it back later would compound the decay.
+        // no gene it is captured from the model once and remembered in `state`:
+        // set_p0 overwrites params.p0, so reading it back later would compound
+        // the decay.
         let p0_base = match space.float(genome, OWNED_P0) {
             Some(v) => {
                 state.set(STATE_P0_BASE, v);
@@ -299,7 +301,8 @@ impl MemberDriver for WildfireDriver {
     }
 
     /// State correction (E40): rebuild an immigrant's grid from the
-    /// observation instead of a parent's history. `sim` arrives with a
+    /// observation instead of a parent's history (an *immigrant* is a fresh
+    /// member injected into the ensemble; `observed` is the real fire's mask). `sim` arrives with a
     /// fresh genome already written into the model but never stepped, so
     /// every cell this loop does not touch is still exactly the scenario's
     /// original fuel/inert layout — the "fresh scenario grid" the design
@@ -657,15 +660,14 @@ mod tests {
         assert_eq!(plain.state_fraction(STATE_CONTAINED), 0.0);
     }
 
-    /// Round 7 Task 7 (E49): `contain_growth_floor` is the floor
+    /// E49: `contain_growth_floor` is the floor
     /// `period_end` applies to a period's growth ratio before taking its
     /// `ln` for the containment logit. Pin `model.p0` to 0 so the seeded
     /// cell can spread to no neighbours -- the tracked (burning +
     /// burned-out) count is exactly 1 at every period boundary, so growth
     /// is exactly 0 *before* the floor and the floor decides the whole
-    /// logit. With `contain_a = 0, contain_b = -2` (the driver's most
-    /// negative slope, `GENE_CONTAIN_B`'s range top of `-0.3` to
-    /// `-2.0`), a small floor (default `1e-4`, `ln ~ -9.2`) pushes the
+    /// logit. With `contain_a = 0, contain_b = -2` (the most negative slope in
+    /// `GENE_CONTAIN_B`'s range of `-2.0` to `-0.3`), a small floor (default `1e-4`, `ln ~ -9.2`) pushes the
     /// logit strongly positive (~18.4, p ~ 1.0: essentially every member
     /// contained); a large floor (`5.0`, `ln ~ 1.6`) pushes it strongly
     /// negative (~-3.2, p ~ 0.04: essentially none). Same genes, same
@@ -750,7 +752,7 @@ mod tests {
         assert_eq!(round_tripped, overridden);
     }
 
-    /// Round 7 Task 7 (E49), Phase 2: the sweep's own endpoints. The
+    /// E49, Phase 2: the sweep's own endpoints. The
     /// sweep (`SMC_CONTAIN_GROWTH_FLOOR` in {1e-5, 1e-4, 1e-3}) produced
     /// byte-identical reports, so this pins that the three values it used
     /// really do reach `period_end` and really do change the daily

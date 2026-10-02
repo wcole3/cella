@@ -46,7 +46,7 @@ pub(crate) struct WindowDiag {
     /// Median `wind_scale` over the ensemble's members at this window.
     pub(crate) wind_scale_median: f64,
     /// Median `wind_rot_deg` over the ensemble's members at this window;
-    /// `None` unless `SMC_WIND_ROT_GENE` is set (Arm A has no such gene).
+    /// `None` unless `SMC_WIND_ROT_GENE` is set (otherwise the run has no such gene).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) wind_rot_deg_median: Option<f64>,
     /// Round 7 Task 5 (E45): interquartile range (Q3 − Q1) of `wind_rot_deg`
@@ -148,15 +148,6 @@ pub(crate) fn step_recording_contain_draws(
     }
 }
 
-/// The median of a numeric gene over `genomes` (one `BTreeMap` per member,
-/// [`cella_lib::Ensemble::genomes`]'s own shape — taken as a slice rather
-/// than the `Ensemble` itself so this is plain, table-driven and testable
-/// without standing up a live ensemble), or `None` if the gene isn't part
-/// of this run's gene list (e.g. `wind_rot_deg` when `SMC_WIND_ROT_GENE` is
-/// unset) — same "absent means not part of this run" convention as
-/// [`cella_lib::Ensemble::genome_stats`], which this complements: that
-/// gives mean/sd/min/max, this gives the median the mean can hide a skew
-/// behind.
 /// The numeric values of `key` across `genomes`, sorted. Shared by
 /// `median_gene` and `iqr_gene` so both read the same "absent gene" and
 /// NaN-sorting rules from one place.
@@ -176,6 +167,15 @@ fn sorted_gene_values(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Ve
     v
 }
 
+/// The median of a numeric gene over `genomes` (one `BTreeMap` per member,
+/// [`cella_lib::Ensemble::genomes`]'s own shape — taken as a slice rather
+/// than the `Ensemble` itself so this is plain, table-driven and testable
+/// without standing up a live ensemble), or `None` if the gene isn't part
+/// of this run's gene list (e.g. `wind_rot_deg` when `SMC_WIND_ROT_GENE` is
+/// unset) — same "absent means not part of this run" convention as
+/// [`cella_lib::Ensemble::genome_stats`], which this complements: that
+/// gives mean/sd/min/max, this gives the median the mean can hide a skew
+/// behind.
 pub(crate) fn median_gene(genomes: &[BTreeMap<String, ParamValue>], key: &str) -> Option<f64> {
     let v = sorted_gene_values(genomes, key);
     if v.is_empty() {
@@ -391,12 +391,12 @@ mod tests {
     #[test]
     fn iqr_gene_is_none_when_the_key_is_absent_from_every_member() {
         // Same convention as median_gene: SMC_DIAG on but SMC_WIND_ROT_GENE
-        // unset (Arm A) must report "no such gene," not a false IQR of 0.
+        // unset (baseline arm) must report "no such gene," not a false IQR of 0.
         let genomes = vec![row(&[("model.p0", 0.2)]), row(&[("model.p0", 0.3)])];
         assert_eq!(iqr_gene(&genomes, "wind_rot_deg"), None);
     }
 
-    /// `WindowDiag.wind_rot_deg_iqr: None` (Arm A, or any run without
+    /// `WindowDiag.wind_rot_deg_iqr: None` (the baseline arm, or any run without
     /// `SMC_WIND_ROT_GENE`, even with `SMC_DIAG=1` on) must not serialise a
     /// `"wind_rot_deg_iqr"` key at all -- same `skip_serializing_if`
     /// convention as `wind_rot_deg_median` beside it, and the field-level
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn median_gene_is_none_when_the_key_is_absent_from_every_member() {
         // wind_rot_deg is absent from every member's genome when
-        // SMC_WIND_ROT_GENE is unset (Arm A) -- median_gene must say so
+        // SMC_WIND_ROT_GENE is unset (baseline arm) -- median_gene must say so
         // rather than defaulting to 0.0, since 0.0 would misreport "the
         // gene learned no rotation" instead of "there is no gene".
         let genomes = vec![row(&[("model.p0", 0.2)]), row(&[("model.p0", 0.3)])];

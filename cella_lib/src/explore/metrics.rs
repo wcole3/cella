@@ -1,5 +1,10 @@
 //! How a run is measured and scored.
 //!
+//! A **mask** is one `bool` per cell ("is this cell on?"). Most scores here
+//! compare two masks, e.g. what a simulation produced against what was
+//! observed. The mask scores ([`iou`], [`sorensen`], [`agreement`]) go from 0
+//! (nothing in common) to 1 (identical).
+//!
 //! Three layers, each built on the one below:
 //!
 //! 1. **Plain measurements** — free functions such as [`fraction`],
@@ -33,7 +38,11 @@ use crate::types::CellType;
 // Plain measurements
 // ---------------------------------------------------------------------------
 
-/// Intersection over union of two masks (1.0 when both are empty).
+/// Intersection over union (IoU, also called the Jaccard index) of two masks:
+/// `|A∩B| / |A∪B|`, the cells on in both over the cells on in either. For
+/// `[1,1,0,0]` against `[1,0,1,0]` that is 1 / 3. Returns 1.0 when both masks
+/// are empty (nothing to disagree about). If the slices differ in length, only
+/// the shared prefix is compared.
 pub fn iou(a: &[bool], b: &[bool]) -> f64 {
     let (mut inter, mut union) = (0u64, 0u64);
     for (&x, &y) in a.iter().zip(b) {
@@ -48,7 +57,9 @@ pub fn iou(a: &[bool], b: &[bool]) -> f64 {
 }
 
 /// Sørensen–Dice overlap of two masks: `2|A∩B| / (|A| + |B|)` (1.0 when both
-/// are empty). Kinder to small shifts than IoU.
+/// are empty). It is never lower than IoU on the same pair, so it is kinder
+/// to small shifts. For `[1,1,0,0]` against `[1,0,1,0]` that is 2 / 4. If the
+/// slices differ in length, only the shared prefix is compared.
 pub fn sorensen(a: &[bool], b: &[bool]) -> f64 {
     let (mut inter, mut total) = (0u64, 0u64);
     for (&x, &y) in a.iter().zip(b) {
@@ -62,7 +73,11 @@ pub fn sorensen(a: &[bool], b: &[bool]) -> f64 {
     }
 }
 
-/// Fraction of positions where two masks agree (1.0 for empty inputs).
+/// Fraction of positions where two masks agree, on or off (1.0 when `a` is
+/// empty). Unlike IoU it also rewards matching "off" cells, so on a mostly
+/// empty grid it is high even for a poor match. `a` and `b` should have the
+/// same length: the count of matches covers the shared prefix but is divided
+/// by `a.len()`.
 pub fn agreement(a: &[bool], b: &[bool]) -> f64 {
     if a.is_empty() {
         return 1.0;
@@ -72,7 +87,9 @@ pub fn agreement(a: &[bool], b: &[bool]) -> f64 {
 }
 
 /// Brier score of a probability map against what happened: the mean squared
-/// gap between each probability and 0/1. Lower is better; 0 is perfect.
+/// gap between each probability and 0/1 (`obs` true counts as 1). Lower is
+/// better; 0 is perfect. Returns 0.0 for an empty map. The sum covers the
+/// shared prefix but is divided by `prob.len()`, so keep the lengths equal.
 pub fn brier(prob: &[f32], obs: &[bool]) -> f64 {
     if prob.is_empty() {
         return 0.0;
@@ -100,8 +117,9 @@ pub fn fraction(sim: &Sim, types: &[CellType]) -> f64 {
     n as f64 / sim.len() as f64
 }
 
-/// Share of cells that changed on the last step. Before the first step every
-/// cell counts as "just changed", so this reads 1.0 at step 0.
+/// Share of cells that changed on the last step (0 for an empty grid). Before
+/// the first step every cell counts as "just changed" (its age is 0), so this
+/// reads 1.0 at step 0.
 pub fn activity(sim: &Sim) -> f64 {
     if sim.is_empty() {
         return 0.0;
@@ -164,15 +182,19 @@ pub fn bbox_fraction(sim: &Sim, types: &[CellType]) -> f64 {
     ((x1 - x0 + 1) * (y1 - y0 + 1)) as f64 / (w * h) as f64
 }
 
-/// Largest elongation reported; a single row of cells would be infinite.
+/// Largest elongation reported. A long thin line of cells has an elongation
+/// roughly equal to its length, so it is capped to keep the number tame.
 pub const MAX_ELONGATION: f64 = 10.0;
 
-/// The elongation formula, given the raw second-moment sums of a set of
-/// unit-square cells (`n` cells, `sx`/`sy` their coordinate sums, `sxx`/
-/// `syy`/`sxy` their coordinate cross-sums). Shared by [`elongation`]
-/// (the whole tracked set) and [`largest_component_stats`] (one connected
-/// component of it), so the two can never silently disagree on the
-/// formula. 1.0 when fewer than two cells are in the set.
+/// The elongation formula, given the raw sums of a set of unit-square cells:
+/// `n` cells, `sx`/`sy` the sums of their x/y coordinates, `sxx`/`syy` the
+/// sums of squared coordinates and `sxy` the sum of `x*y`. From these it
+/// builds the 2x2 covariance matrix of the cell positions and returns
+/// `√(λ₁/λ₂)` for its two eigenvalues (the ratio of the longest to the
+/// shortest spread). Shared by [`elongation`] (the whole tracked set) and
+/// [`largest_component_stats`] (one connected component of it), so the two
+/// can never silently disagree on the formula. 1.0 when fewer than two cells
+/// are in the set.
 fn elongation_from_moments(n: f64, sx: f64, sy: f64, sxx: f64, syy: f64, sxy: f64) -> f64 {
     if n < 2.0 {
         return 1.0;
@@ -207,8 +229,9 @@ fn moments_of(points: &[(usize, usize)]) -> (f64, f64, f64, f64, f64, f64) {
 }
 
 /// How stretched the set of tracked cells is: the square root of the ratio
-/// of the two eigenvalues of its second-moment matrix (the same measure the
-/// wildfire validation calls "elongation", experiment E12). 1 means as wide
+/// of the two eigenvalues of the covariance (second-moment) matrix of the
+/// cell positions (the same measure the wildfire validation calls
+/// "elongation", experiment E12). 1 means as wide
 /// as it is long in every direction (a disc, a square); 2 means twice as
 /// long as wide, whichever way it points. Clamped to `[1, MAX_ELONGATION]`;
 /// 1 when fewer than two cells are tracked.
@@ -344,7 +367,9 @@ pub fn largest_component_stats(sim: &Sim, types: &[CellType]) -> ComponentStats 
     }
 }
 
-/// Centre of mass `(x, y)` of the cells in `types`, or `None` if there are none.
+/// Centre of mass `(x, y)` of the cells in `types`, or `None` if there are
+/// none (or `width` is 0). `cells` is the row-major grid, so cell `i` sits at
+/// `(i % width, i / width)`.
 pub fn centroid(cells: &[CellType], width: usize, types: &[CellType]) -> Option<(f64, f64)> {
     if width == 0 {
         return None;
@@ -360,8 +385,9 @@ pub fn centroid(cells: &[CellType], width: usize, types: &[CellType]) -> Option<
     (n > 0).then(|| (sx / n as f64, sy / n as f64))
 }
 
-/// How far the centre of mass of `types` moved on the last step, in cells.
-/// 0 before the first step or when either state has no such cells.
+/// How far the centre of mass of `types` moved on the last step, in cells
+/// (straight-line distance). 0 before the first step or when either state
+/// has no such cells.
 pub fn centroid_speed(sim: &Sim, types: &[CellType]) -> f64 {
     if sim.step_count() == 0 {
         return 0.0;
@@ -389,7 +415,8 @@ pub(crate) fn state_hash(sim: &Sim) -> u64 {
 
 /// Smallest period `p` (1..=`window/2`) such that the last `window` states
 /// repeat every `p` steps, or 0 if none does. `states` are per-step
-/// fingerprints, oldest first.
+/// fingerprints, oldest first. If fewer than `window` are given, all of them
+/// are used, with `p` up to half of however many there are.
 fn detect_period(states: &[f64], window: usize) -> u32 {
     let tail = &states[states.len().saturating_sub(window)..];
     let n = tail.len();
@@ -443,15 +470,17 @@ pub enum Metric {
         #[serde(default)]
         score: MaskScore,
     },
-    /// Root-mean-square error between the fraction of `types` after each step
-    /// and `target[step]` (shorter list wins). Use with `goal: minimise`.
+    /// Root-mean-square error between the fraction of `types` after step
+    /// `i + 1` and `target[i]` (so `target[0]` is the first step; the shorter
+    /// of the two lists wins). Use with `goal: minimise`. `when` is ignored.
     Series {
         types: Vec<String>,
         target: Vec<f64>,
     },
     /// The classic density-classification task on two types `[a, b]`: a run
     /// is solved when it ends with every cell equal to whichever type was in
-    /// the majority at the start. Value 1 (solved) or 0. The evolution engine
+    /// the majority at the start. Value 1 (solved) or 0; a start with exactly
+    /// half `a` has no majority and counts as 0. The evolution engine
     /// draws a random start for each repeat when this metric is used.
     DensityClassification { types: [String; 2] },
     /// Bounding-box area of `types` as a fraction of the grid. Descriptor,
@@ -462,16 +491,18 @@ pub enum Metric {
     /// for a streak, whatever its direction; clamped to `[1, 10]`, 1 when
     /// fewer than two cells are tracked.
     Elongation { types: Vec<String> },
-    /// Mean per-step movement of the centre of mass of `types`, in cells.
-    /// Descriptor, range 0..1 (a pattern cannot move faster than one cell a
-    /// step; noisy small masses can, and are clamped).
+    /// Mean per-step movement of the centre of mass of `types`, in cells
+    /// (steps with no such cells count as 0). Descriptor, range 0..1 (a
+    /// pattern cannot move faster than one cell a step; noisy small masses
+    /// can, and are clamped). `when` is ignored.
     CentroidSpeed { types: Vec<String> },
-    /// Final fraction of `types` minus the starting fraction. Descriptor,
-    /// range -1..1.
+    /// Fraction of `types` at the chosen `when` (the end by default) minus
+    /// the starting fraction. Descriptor, range -1..1.
     Growth { types: Vec<String> },
     /// Cycle length of the grid over the last `window` steps (0 = no cycle
     /// found). Descriptor, range 0..window/2. A still life has period 1, a
-    /// blinker 2, chaos 0.
+    /// blinker 2, chaos 0. Needs a reading after every step, so `window` is
+    /// also capped by the run length.
     Period {
         #[serde(default = "default_window")]
         window: u32,
@@ -599,7 +630,8 @@ impl Metric {
         }
     }
 
-    /// Whether this metric must see the grid after every step.
+    /// Whether this metric must see the grid after every step. (An
+    /// [`Objective`] also asks for every step when its `when` is not `End`.)
     pub fn needs_every_step(&self) -> bool {
         matches!(
             self,
@@ -611,7 +643,11 @@ impl Metric {
     }
 
     /// Turn the samples of one run into the metric's value, honouring `when`
-    /// for the metrics where "when" makes sense.
+    /// for the metrics where "when" makes sense. `samples[0]` is the reading
+    /// before the first step. `when` is ignored by `Lifetime`, `Series`,
+    /// `DensityClassification` and `CentroidSpeed`. `Mean` averages the
+    /// readings *after* each step (not the starting one). Returns 0 for an
+    /// empty list.
     pub fn aggregate(&self, samples: &[f64], when: When) -> f64 {
         if samples.is_empty() {
             return 0.0;
@@ -683,11 +719,11 @@ pub enum When {
     End,
     /// The reading after step `k` (clamped to the run length).
     Step(u64),
-    /// The average over every step.
+    /// The average of the readings after each step.
     Mean,
 }
 
-/// What counts as good.
+/// What counts as good: the direction in which a metric's value is scored.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Goal {
@@ -724,10 +760,13 @@ impl Goal {
 /// carefully.)
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Objective {
+    /// What to measure.
     #[serde(flatten)]
     pub metric: Metric,
+    /// Whether bigger, smaller or closest-to-a-value is better.
     #[serde(default)]
     pub goal: Goal,
+    /// Which reading of the run to use.
     #[serde(default)]
     pub when: When,
 }

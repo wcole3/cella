@@ -1,23 +1,29 @@
 //! Thread configuration for parallel stepping.
 //!
-//! This module exposes `thread_count()` which returns how many threads
-//! the engine should use when stepping grids. The value is loaded once
-//! from a simple properties file named `cella.properties` located at
-//! the repository root (or any parent directory of the current working
-//! directory), with a key:
+//! The engine steps big grids on several worker threads at once. A grid is cut
+//! into *chunks* (contiguous runs of cells), each chunk goes to one worker, and
+//! the step finishes when every worker is done (a *fork/join*: fork the work
+//! out, join the results back). This module decides how many threads exist and
+//! how many chunks a step is worth.
+//!
+//! [`thread_count`] returns how many threads the engine should use. The value
+//! is resolved once per process from a simple properties file named
+//! `cella.properties`, looked for in the current working directory and up to
+//! four parent directories above it (the nearest one wins). The line is:
 //!
 //!   threads=NUM
 //!
-//! If the file or key is missing or invalid, the function falls back to
-//! `std::thread::available_parallelism()` (or 1 on error).
+//! (`NUM` must be a whole number >= 1; the key is case-insensitive and lines
+//! starting with `#` or `//` are comments.) If no file is found or the key is
+//! missing or invalid, it falls back to `std::thread::available_parallelism()`
+//! (or 1 if that fails).
 //!
 //! Two more knobs, both read once from the environment and both no-ops
-//! unless set (see docs/performance.md's 2026-09-12 "Ensemble stepping
-//! parallelism" study for why they exist): `CELLA_MIN_WORK=<cells>` lowers
-//! or raises [`MIN_WORK_PER_CHUNK`] for this process, and
-//! `CELLA_MEMBER_PAR=<n>` caps how many ensemble members
-//! [`crate::explore::Ensemble::step`] steps concurrently instead of letting
-//! its own grid-size heuristic decide.
+//! unless set (see docs/performance.md §9, "Ensemble stepping parallelism",
+//! for why they exist): `CELLA_MIN_WORK=<work units>` lowers or raises
+//! [`MIN_WORK_PER_CHUNK`] for this process, and `CELLA_MEMBER_PAR=<n>` caps how
+//! many ensemble members [`crate::explore::Ensemble::step`] steps concurrently
+//! instead of letting its own grid-size heuristic decide.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,11 +31,12 @@ use std::sync::{Mutex, OnceLock};
 
 static THREADS: OnceLock<usize> = OnceLock::new();
 /// Process-local override; `0` means "no override". An atomic rather than a
-/// `Mutex` because `thread_count()` is on the per-step path.
+/// `Mutex` because `thread_count()` is on the per-step path (docs/performance.md §3.6).
 static THREAD_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 
 fn find_properties_file() -> Option<PathBuf> {
-    // Start from current_dir and walk up a few levels to find `cella.properties`.
+    // Start from the current directory and walk up (at most 4 parents) to find
+    // `cella.properties`; the nearest file wins.
     let mut dir = std::env::current_dir().ok()?;
     for _ in 0..5 {
         let candidate = dir.join("cella.properties");
@@ -76,10 +83,11 @@ fn resolve_thread_count_uncached() -> usize {
         .unwrap_or(1)
 }
 
-/// Get the configured thread count for parallel stepping.
+/// Get the configured thread count for parallel stepping (always >= 1).
 ///
-/// This first honors a process-local override (used by tests/benchmarks),
-/// otherwise reads from cella.properties once per process and caches it.
+/// This first honors a process-local override (used by tests/benchmarks).
+/// Otherwise it resolves the `cella.properties` / `available_parallelism`
+/// value once per process and caches it.
 pub fn thread_count() -> usize {
     let overridden = THREAD_OVERRIDE.load(Ordering::Relaxed);
     if overridden != 0 {
@@ -88,8 +96,9 @@ pub fn thread_count() -> usize {
     *THREADS.get_or_init(resolve_thread_count_uncached)
 }
 
-/// Set a process-local override thread count (>=1) used by `thread_count()`.
-/// Useful for tests/benchmarks to run with specific parallelism settings.
+/// Set a process-local override thread count used by `thread_count()` (`0` is
+/// raised to 1). Useful for tests/benchmarks to run with specific parallelism
+/// settings. Tests must hold `lock_override_for_test` while doing so.
 pub fn set_thread_override(n: usize) {
     THREAD_OVERRIDE.store(n.max(1), Ordering::Relaxed);
 }
@@ -101,22 +110,32 @@ pub fn clear_thread_override() {
 
 /// Persistent worker pools, keyed by thread count.
 ///
-/// Grids used to `std::thread::scope`-spawn fresh OS threads on every `step()`,
-/// which cost more than the work it distributed for small and mid-sized grids.
-/// Pools are created on first use for a given size and live for the process, so
-/// stepping only pays for fork/join of already-parked workers. Leaked
-/// deliberately: there are at most a handful of distinct thread counts per run.
+/// Spawning fresh OS threads on every `step()` (as the engine once did with
+/// `std::thread::scope`) cost more than the work it handed out on small and
+/// mid-sized grids. So a pool (a set of long-lived rayon worker threads) is
+/// created on first use for each thread count and lives for the rest of the
+/// process; a step only pays to wake already-parked workers. The pools are
+/// leaked on purpose (`Box::leak`): a run uses at most a handful of distinct
+/// thread counts.
+///
+/// This `Mutex<Vec>` registry is the slow path for counts above [`POOL_SLOTS`];
+/// smaller counts use [`POOL_CACHE`].
 static POOLS: OnceLock<Mutex<Vec<(usize, &'static rayon::ThreadPool)>>> = OnceLock::new();
 
 /// Minimum estimated work (neighbor visits) one chunk must carry to be worth
 /// handing to a worker.
 ///
 /// Waking a parked worker is not free — measured at tens of microseconds on some
-/// platforms, comparable to the OS thread spawn it replaced. So parallelism is
-/// sized by *work*, not by grid size alone: a step is split into
-/// `clamp(total_work / MIN_WORK_PER_CHUNK, 1, thread_count())` chunks. Cheap
-/// rules on mid-sized grids therefore stay serial or use a couple of workers
-/// instead of paying eight wakeups to save a few microseconds of compute.
+/// platforms (about 30-50 µs on the WSL2 reference machine), comparable to the
+/// OS thread spawn it replaced. So parallelism is sized by *work*, not by grid
+/// size alone: a step is split into
+/// `clamp(total_work / MIN_WORK_PER_CHUNK, 1, thread_count())` chunks, where
+/// `total_work` is `cells * work_per_cell` (see `chunks_for_work`). Example:
+/// with the default 400 000, a step estimated at 1 000 000 neighbor visits gets
+/// 2 chunks, and anything under 800 000 stays serial. Cheap rules on
+/// mid-sized grids therefore stay serial or use a couple of workers instead of
+/// paying eight wakeups to save a few microseconds of compute. See
+/// docs/performance.md §3.2.
 pub const MIN_WORK_PER_CHUNK: usize = 400_000;
 
 /// Process-local override for [`MIN_WORK_PER_CHUNK`]; `0` means "no override".
@@ -126,12 +145,14 @@ static MIN_WORK_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 ///
 /// Tests use this to force the multi-threaded path on grids small enough to check
 /// exhaustively — otherwise the work heuristic keeps them serial and the parallel
-/// code paths go untested.
+/// code paths go untested. (`0` is raised to 1.) Tests must hold
+/// `lock_override_for_test` while doing so.
 pub fn set_min_work_per_chunk_override(work: usize) {
     MIN_WORK_OVERRIDE.store(work.max(1), Ordering::Relaxed);
 }
 
-/// Clear the work-per-chunk override.
+/// Clear the work-per-chunk override, so [`MIN_WORK_PER_CHUNK`] applies again.
+/// This also discards any value that `CELLA_MIN_WORK` had put there.
 pub fn clear_min_work_per_chunk_override() {
     MIN_WORK_OVERRIDE.store(0, Ordering::Relaxed);
 }
@@ -142,30 +163,29 @@ pub fn clear_min_work_per_chunk_override() {
 /// This is a thin bootstrap over [`set_min_work_per_chunk_override`], not a
 /// second knob: a one-off benchmark process sets the env var before it does
 /// any work and never changes it, so "read once" is enough and keeps the hot
-/// path (`chunks_for_work` runs on every step) down to one more atomic check
-/// after the first call. Tests that need to vary the threshold within one
-/// process call `set_min_work_per_chunk_override`/`clear_min_work_per_chunk_override`
-/// directly, which always wins over whatever the environment said.
+/// path (`chunks_for_work` runs on every step) down to one more check after
+/// the first call. Tests that need to vary the threshold within one process
+/// call `set_min_work_per_chunk_override`/`clear_min_work_per_chunk_override`
+/// directly; once `chunks_for_work` has run, those calls replace whatever the
+/// environment said.
 static MIN_WORK_ENV_APPLIED: OnceLock<()> = OnceLock::new();
 
-/// Parses one of these env knobs' raw value: a positive `usize`, or nothing
-/// usable (absent, not a number, or zero — `0` is meaningless as a chunk
-/// threshold or a member-batch size, so it's treated the same as unset
-/// rather than silently becoming `.max(1)` the way the direct
-/// `set_*_override` calls do for a caller that already validated). Split out
-/// from `apply_*_env_once` below so the parsing itself is testable without
-/// fighting the `OnceLock`'s once-per-process semantics.
+/// Parses the raw value of one of these env knobs: `Some(n)` for a positive
+/// `usize`, `None` for anything unusable (absent, not a number, or zero).
+/// Zero is meaningless as a chunk threshold or a member-batch size, so it is
+/// treated as "unset" here, whereas the direct `set_*_override` calls quietly
+/// raise 0 to 1. Split out from `apply_*_env_once` so the parsing can be tested
+/// without the once-per-process `OnceLock`.
 fn parse_env_override(raw: Option<String>) -> Option<usize> {
     raw.and_then(|v| v.parse::<usize>().ok()).filter(|&n| n >= 1)
 }
 
 /// Reads `var` from the environment and, if it parses to a positive
 /// `usize`, stores it in `target`. Otherwise `target` is left untouched.
-/// A free function (not gated by any `OnceLock` itself) so it can be
-/// exercised directly in a test with `std::env::set_var` — the
-/// once-per-process gating lives one level up, in `apply_*_env_once`,
-/// mirroring how `resolve_thread_count_uncached` is directly testable
-/// while `thread_count`'s `OnceLock` wrapper around it is not.
+/// Not gated by a `OnceLock` itself, so a test can call it directly with
+/// `std::env::set_var`; the once-per-process gating lives one level up, in
+/// `apply_*_env_once` (the same split as `resolve_thread_count_uncached` and
+/// `thread_count`).
 fn apply_env_override(var: &str, target: &AtomicUsize) {
     if let Some(n) = parse_env_override(std::env::var(var).ok()) {
         target.store(n, Ordering::Relaxed);
@@ -177,7 +197,10 @@ fn apply_min_work_env_once() {
 }
 
 /// How many chunks a step estimated at `total_work` neighbor visits should be
-/// split into. `1` means run serially on the calling thread.
+/// split into: `clamp(total_work / min_work, 1, thread_count())`, where
+/// `min_work` is [`MIN_WORK_PER_CHUNK`] unless overridden. `1` means run
+/// serially on the calling thread; with a single configured thread the answer is
+/// always `1`.
 pub(crate) fn chunks_for_work(total_work: usize) -> usize {
     apply_min_work_env_once();
     let threads = thread_count();
@@ -194,13 +217,14 @@ pub(crate) fn chunks_for_work(total_work: usize) -> usize {
 /// Process-local override: the maximum number of ensemble members
 /// [`crate::explore::Ensemble::step`] batches together for concurrent
 /// stepping. `0` means "no override" — the engine's own size heuristic
-/// decides, exactly as before this knob existed. See docs/performance.md's
-/// 2026-09-12 "Ensemble stepping parallelism" study for why this exists and
-/// what it changes (nothing, unless it or `CELLA_MIN_WORK` is set).
+/// decides. See docs/performance.md §9 ("Ensemble stepping parallelism",
+/// 2026-09-12) for why this exists and what it changes (nothing, unless it or
+/// `CELLA_MIN_WORK` is set).
 static MEMBER_PAR_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 
 /// Set a process-local override for how many ensemble members step
-/// concurrently. Used by tests/benchmarks; mirrors [`set_thread_override`].
+/// concurrently (`0` is raised to 1). Used by tests/benchmarks; mirrors
+/// [`set_thread_override`], and tests must hold `lock_override_for_test` too.
 pub fn set_member_par_override(n: usize) {
     MEMBER_PAR_OVERRIDE.store(n.max(1), Ordering::Relaxed);
 }
@@ -222,9 +246,9 @@ fn apply_member_par_env_once() {
 }
 
 /// The current member-parallelism override, if any. `Ensemble::step` calls
-/// this once per step; `None` means "unchanged behaviour", which is the case
-/// whenever neither `set_member_par_override` nor `CELLA_MEMBER_PAR` has
-/// ever been used in this process.
+/// this once per step; `None` means "let the engine's own heuristic decide",
+/// which is the case whenever neither `set_member_par_override` nor
+/// `CELLA_MEMBER_PAR` has been used in this process.
 pub(crate) fn member_par_override() -> Option<usize> {
     apply_member_par_env_once();
     match MEMBER_PAR_OVERRIDE.load(Ordering::Relaxed) {
@@ -234,10 +258,11 @@ pub(crate) fn member_par_override() -> Option<usize> {
 }
 
 /// Fixed-slot cache for the common thread counts: `pool(n)` for `n <= 64` is a
-/// single atomic load in steady state. Larger counts fall back to the
-/// Mutex-guarded registry — `pool()` runs on every parallel step, and the old
-/// lock-and-scan on each call was the same class of waste as the
-/// `thread_count()` Mutex removed earlier (performance.md §3.6).
+/// single atomic load in steady state (slot `n` of [`POOL_CACHE`], so slot 0
+/// is unused). Larger counts fall back to the Mutex-guarded [`POOLS`] registry.
+/// `pool()` runs on every parallel step, and the old lock-and-scan on each call
+/// was the same class of waste as the `thread_count()` Mutex removed earlier
+/// (docs/performance.md §3.10 and §3.6).
 const POOL_SLOTS: usize = 64;
 static POOL_CACHE: [std::sync::OnceLock<&'static rayon::ThreadPool>; POOL_SLOTS + 1] =
     [const { std::sync::OnceLock::new() }; POOL_SLOTS + 1];
@@ -252,7 +277,8 @@ fn build_pool(n: usize) -> &'static rayon::ThreadPool {
     ))
 }
 
-/// Get (or build) the persistent worker pool with `n` threads.
+/// Get (or build) the persistent worker pool with `n` threads. The pool is
+/// shared and lives for the whole process.
 pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
     if n <= POOL_SLOTS {
         return POOL_CACHE[n].get_or_init(|| build_pool(n));
@@ -272,8 +298,9 @@ pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
 /// `cargo test` runs tests on many threads in one process, but
 /// [`set_thread_override`] and friends change a single global. If two tests
 /// set it at once, one can clear it while the other is mid-run, and a "4
-/// thread" run silently becomes a default-thread run. Every in-crate test
-/// that sets an override must hold this guard for its whole body.
+/// thread" run silently becomes a default-thread run. An in-crate test that
+/// sets an override outside this module should hold this guard for its whole
+/// body (take it via `lock_override_for_test`).
 #[cfg(test)]
 static OVERRIDE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -292,6 +319,9 @@ mod tests {
     use std::io::Write;
     use std::sync::{Mutex, OnceLock};
 
+    /// Serializes the tests in this module (they change the working directory
+    /// and the overrides). It is a different lock from
+    /// `lock_override_for_test`, which guards overrides across modules.
     fn test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))

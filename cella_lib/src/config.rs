@@ -1,6 +1,7 @@
 //! Simple JSON configuration format to build grids without writing Rust code.
 //! This format focuses on readability: you specify dimensions, history limit,
-//! an initial array of type names, and the rule definition.
+//! an initial array of type names, and the rule definition. The top-level
+//! `"dim"` key (`"1d"` or `"2d"`) picks the variant of [`CellaConfig`].
 //!
 //! A config file doubles as a save file: an optional `snapshot` block holds
 //! the run-time state a config alone can't express (the current step, cells,
@@ -52,8 +53,10 @@ use std::path::Path;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "dim")]
 pub enum CellaConfig {
+    /// A 1D scenario (JSON `"dim": "1d"`).
     #[serde(rename = "1d")]
     D1(Config1D),
+    /// A 2D scenario (JSON `"dim": "2d"`).
     #[serde(rename = "2d")]
     D2(Config2D),
 }
@@ -67,7 +70,8 @@ impl CellaConfig {
         }
     }
 
-    /// The `snapshot` block, if the file was saved mid-run (step > 0).
+    /// The `snapshot` block, if the file was saved mid-run (step > 0); `None`
+    /// for a plain scenario file.
     pub fn snapshot(&self) -> Option<&RunSnapshot> {
         match self {
             CellaConfig::D1(c) => c.snapshot.as_ref(),
@@ -108,8 +112,9 @@ pub struct Config1D {
     pub initial: Vec<String>,
     /// Rule definition.
     pub rule: Rule1D,
-    /// Seed for the rule's `randomness` draws (default 0). Same seed, same
-    /// run, on any thread count. See [`crate::Grid1D::seed`].
+    /// Seed for the rule's `randomness` draws (default 0 when the key is
+    /// absent). Same seed, same run, on any thread count. See
+    /// [`crate::Grid1D::seed`].
     #[serde(default)]
     pub seed: u64,
     /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
@@ -164,12 +169,14 @@ pub struct Config2D {
     /// Rule definition.
     pub rule: Rule2D,
     /// Optional external transition model (e.g. `{"wildfire": {...}}`); when
-    /// present it replaces the subrule engine. See [`crate::external`].
+    /// present it computes each step instead of the subrules (the `rule` key
+    /// is still required in the file). See [`crate::external`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<Box<dyn crate::external::ExternalModel>>,
     /// Seed for the rule's `randomness` draws (default 0). Same seed, same
-    /// run, on any thread count. A model keeps its own seed; ensembles and
-    /// evolutions reseed both per member. See [`crate::Grid2D::seed`].
+    /// run, on any thread count. A model keeps its own seed (inside the
+    /// `model` block); ensembles and evolutions reseed both per member. See
+    /// [`crate::Grid2D::seed`].
     #[serde(default)]
     pub seed: u64,
     /// Display colours by cell-type name, as `#rrggbb` hex strings, e.g.
@@ -216,7 +223,10 @@ impl Default for Config2D {
 }
 
 impl CellaConfig {
-    /// Load configuration from a JSON file path.
+    /// Load configuration from a JSON file path. Fails on I/O or JSON errors
+    /// (the box holds the underlying error); it does not build a grid, so
+    /// shape problems such as a wrong `initial` length only show up later,
+    /// as `None` from the `build_*` methods.
     ///
     /// ```no_run
     /// use cella_lib::config::CellaConfig;
@@ -245,7 +255,9 @@ impl CellaConfig {
         Ok(())
     }
 
-    /// Build a Grid1D from D1 config.
+    /// Build a Grid1D from D1 config (seed applied). Starts at step 0 from
+    /// `initial`; any `snapshot` is ignored (use
+    /// [`CellaConfig::build_grid1d_resumed`] for that).
     ///
     /// Returns `None` if `initial.len() != width`, or `history_limit > 255`.
     pub fn build_grid1d(&self) -> Option<Grid1D> {
@@ -329,7 +341,9 @@ impl CellaConfig {
         Some(Evolution::new(sim, cfg))
     }
 
-    /// Build a Grid2D from D2 config.
+    /// Build a Grid2D from D2 config (seed applied, model attached). Starts at
+    /// step 0 from `initial`; any `snapshot` is ignored (use
+    /// [`CellaConfig::build_grid2d_resumed`] for that).
     ///
     /// Returns `None` if `width * height` overflows `usize`,
     /// `initial.len() != width*height`, `history_limit > 255` (`Grid2D::new`
@@ -403,9 +417,9 @@ impl CellaConfig {
     }
 
     /// Build the 2D grid a saved `snapshot` describes, mid-run. The model (if
-    /// any) is re-attached fresh, the same as [`CellaConfig::build_grid2d`];
-    /// see the module docs for what that means for a model with derived
-    /// state it doesn't serialize (wildfire's `arrival` table, for one).
+    /// any) is re-attached fresh, the same as [`CellaConfig::build_grid2d`],
+    /// so any derived state the model does not serialize (wildfire's
+    /// `arrival` table, for one) starts over rather than continuing.
     ///
     /// Returns `None` when `width * height` overflows `usize`, there is no
     /// `snapshot`, `history_limit > 255`, its `cells`, `ages` or `history`

@@ -1,34 +1,40 @@
 //! [`Evolution`]: breed genomes until they do what you asked — or until they
 //! have shown you everything they can do.
 //!
-//! An evolution keeps a **population** of genomes. Each generation every
-//! genome is **evaluated**: a fresh copy of the template grid gets the genome
-//! written into its knobs, runs for `steps` steps (repeated over `repeats`
-//! seeds, averaged), and is scored. Then a new population is bred from the
-//! old one. Three ways to breed, chosen by [`Search`]:
+//! A **genome** is one setting of the knobs that are allowed to vary (see
+//! [`super::genome`]). An evolution keeps a **population** of genomes. Each
+//! generation every genome is **evaluated**: a fresh copy of the template grid
+//! gets the genome written into its knobs, runs for `steps` steps (repeated
+//! over `repeats` seeds, averaged), and is scored. Then a new population is
+//! bred from the old one. Three ways to breed, chosen by [`Search`]:
 //!
 //! - **`objective`** — the classic genetic algorithm. Score = the
 //!   [`Objective`]. Keep the `elite` best unchanged, draw `immigrants` fresh
 //!   from the gene ranges, and fill the rest with children: pick two parents
-//!   ([`Selection`]), cross them with probability `crossover`, nudge each gene
-//!   with probability `mutation` (size `sigma`).
+//!   ([`Selection`]), cross them with probability `crossover` (otherwise the
+//!   child is a copy of the first parent), then nudge each gene with
+//!   probability `mutation` (size `sigma`).
 //! - **`novelty`** — the same loop, but the score used for breeding is how
 //!   *different* a genome's behaviour is from everything seen so far (mean
-//!   distance to its `k` nearest neighbours in descriptor space). Genomes
-//!   novel enough join a growing archive. Lehman & Stanley's novelty search:
-//!   reward being different, and interesting behaviours appear that a
+//!   distance to its `k` nearest neighbours in descriptor space, where a
+//!   **descriptor** is a few numbers that summarise how a run behaved).
+//!   Genomes novel enough join a growing archive. Lehman & Stanley's novelty
+//!   search: reward being different, and interesting behaviours appear that a
 //!   fitness function would never have asked for.
-//! - **`map_elites`** — no population to speak of: an [`Archive`] with one
-//!   cell per region of descriptor space. Each generation takes `batch`
-//!   elites at random, mutates them, evaluates the children and offers each
-//!   to its cell (kept if the cell is empty or it scores higher). With no
+//! - **`map_elites`** — no breeding population to speak of: an [`Archive`]
+//!   with one cell per region of descriptor space. Each generation makes
+//!   `batch` children, each a mutated copy of a randomly chosen elite (the
+//!   first generation just samples the gene ranges). Every child is
+//!   evaluated and offered to its cell (kept if the cell is empty or it
+//!   scores higher). With no
 //!   objective every genome scores 1 and filling the archive is the whole
 //!   point (illumination); with one, each cell holds the best genome that
 //!   behaves that way.
 //!
 //! Every evaluation is seeded from `(seed, generation, index, repeat)`, and
-//! only the breeding step uses the sequential random generator, so a run is
-//! reproducible on any thread count.
+//! evaluations run in parallel. Only the breeding and archive steps draw from
+//! the single sequential random generator, after all evaluations have
+//! finished, so a run is reproducible on any thread count.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -57,8 +63,8 @@ pub enum Selection {
     /// Draw `k` genomes at random and take the best. `k = 3` is gentle;
     /// bigger is greedier.
     Tournament { k: usize },
-    /// Pick in proportion to `exp(beta × score)`: the softer the `beta`,
-    /// the flatter the odds.
+    /// Pick in proportion to `exp(beta × fitness)`: the smaller the `beta`,
+    /// the flatter the odds (`beta = 0` is a fair draw).
     Boltzmann { beta: f64 },
 }
 
@@ -76,7 +82,7 @@ pub enum InitialCondition {
     #[default]
     Fixed,
     /// A fresh random fill each generation (the same one for every genome of
-    /// that generation): each cell draws one of `types` with the given
+    /// that generation, and a different one for each repeat): each cell draws one of `types` with the given
     /// `weights` (equal when empty).
     Random {
         types: Vec<String>,
@@ -97,8 +103,10 @@ pub enum Search {
         /// Neighbours averaged for the novelty distance.
         #[serde(default = "default_k")]
         k: usize,
-        /// Novelty needed to enter the archive; adapts on its own when
-        /// left out.
+        /// Novelty needed to enter the archive. This is the *starting* value
+        /// (left out, it is `0.1 × sqrt(number of descriptors)`); it then
+        /// adapts either way: x1.2 after a generation that admits more than
+        /// a tenth of the valid genomes, x0.95 after one that admits none.
         #[serde(default)]
         threshold: Option<f64>,
     },
@@ -125,7 +133,8 @@ fn default_batch() -> usize {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvolveConfig {
-    /// Genomes per generation (children per generation for `map_elites`).
+    /// Genomes per generation. `map_elites` ignores it and evaluates `batch`
+    /// children per generation instead.
     #[serde(default = "default_population")]
     pub population: usize,
     /// How many generations [`Evolution::run`] runs by default.
@@ -144,10 +153,12 @@ pub struct EvolveConfig {
     /// Objective (default), novelty or MAP-Elites.
     #[serde(default)]
     pub search: Search,
-    /// Behaviour axes for novelty and MAP-Elites (1 to 3).
+    /// Behaviour axes for novelty and MAP-Elites (1 to 3). A descriptor is a
+    /// number measured from a finished run that says how it behaved.
     #[serde(default)]
     pub descriptors: Vec<DescriptorSpec>,
-    /// Keep a thumbnail of each archived genome's final grid.
+    /// Keep a thumbnail of each evaluated genome's final grid (novelty and
+    /// `map_elites` only; plain objective search never makes thumbnails).
     #[serde(default = "default_true")]
     pub thumbnails: bool,
     /// Steps each evaluation runs.
@@ -159,7 +170,8 @@ pub struct EvolveConfig {
     /// Best genomes copied unchanged into the next generation.
     #[serde(default = "default_elite")]
     pub elite: usize,
-    /// Probability a child has two parents rather than one.
+    /// Probability a child is made by crossing two parents rather than
+    /// copying one.
     #[serde(default = "default_crossover")]
     pub crossover: f64,
     /// Probability each gene of a child is nudged.
@@ -171,8 +183,10 @@ pub struct EvolveConfig {
     /// Share of each generation drawn fresh from the gene ranges.
     #[serde(default = "default_immigrants")]
     pub immigrants: f64,
+    /// How parents are picked (default: tournament of 3).
     #[serde(default)]
     pub selection: Selection,
+    /// Where each evaluation starts (default: the template's own cells).
     #[serde(default)]
     pub initial: InitialCondition,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
@@ -243,6 +257,7 @@ impl Default for EvolveConfig {
 /// One evaluated genome.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Individual {
+    /// The knob settings that were evaluated.
     pub genome: Genome,
     /// The number breeding maximises: the objective's score, or the novelty
     /// in novelty search. `-inf` for a genome the grid refused.
@@ -253,6 +268,7 @@ pub struct Individual {
     pub value: f64,
     /// One number per descriptor axis (empty without descriptors).
     pub descriptor: Vec<f64>,
+    /// A picture of the final grid, when thumbnails are on.
     pub thumbnail: Option<Thumbnail>,
     /// The grid refused this genome (or a driver did); it scores `-inf`.
     pub invalid: bool,
@@ -261,22 +277,28 @@ pub struct Individual {
 /// What one generation produced.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenerationReport {
+    /// Which generation this is (0 is the first).
     pub generation: u64,
     /// Best, mean, standard deviation and worst *score* over the valid
     /// genomes evaluated this generation.
     pub best: f64,
+    /// Mean score (see `best`).
     pub mean: f64,
+    /// Standard deviation of the score.
     pub sd: f64,
+    /// Worst score.
     pub min: f64,
     /// The best genome's raw objective value.
     pub best_value: f64,
+    /// The genome that earned `best`.
     pub best_genome: Genome,
+    /// `best_genome` as `key -> value`.
     pub best_named: BTreeMap<String, ParamValue>,
     /// Genomes evaluated this generation.
     pub evaluations: usize,
     /// Of which the grid refused.
     pub invalid: usize,
-    /// Best score ever seen.
+    /// Best score ever seen (the top of the hall of fame).
     pub hall_of_fame_best: f64,
     /// Archive numbers (MAP-Elites only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -289,13 +311,17 @@ pub struct GenerationReport {
     pub archive_size: Option<usize>,
 }
 
-/// One entry of the novelty archive.
+/// One entry of the novelty archive: where it behaved (each descriptor axis
+/// scaled to `[0, 1]`) and the genome that did it.
 #[derive(Clone, Debug)]
 struct NoveltyPoint {
     normalised: Vec<f64>,
     genome: Genome,
 }
 
+/// Everything novelty search remembers: the admitted points, the novelty a
+/// genome needs to join, how many genomes were ever admitted (`seen`) and the
+/// most points kept (`cap`; past it, random reservoir replacement).
 struct NoveltyArchive {
     points: Vec<NoveltyPoint>,
     threshold: f64,
@@ -303,8 +329,11 @@ struct NoveltyArchive {
     cap: usize,
 }
 
+/// Most points the novelty archive keeps.
 const NOVELTY_CAP: usize = 2000;
+/// How many distinct best genomes the hall of fame keeps.
 const HALL_OF_FAME: usize = 5;
+/// Thumbnails are at most this many pixels on a side.
 const THUMB_SIDE: u32 = 64;
 
 /// A population, its scores and its archives. See the module docs.
@@ -339,6 +368,7 @@ fn config_error(why: impl std::fmt::Display) -> ModelError {
     ModelError::InvalidParam(format!("evolve: {why}"))
 }
 
+/// The result of evaluating one genome (averaged over its repeats).
 struct Evaluation {
     score: f64,
     value: f64,
@@ -532,10 +562,12 @@ impl Evolution {
         })
     }
 
+    /// The settings this evolution was built from.
     pub fn config(&self) -> &EvolveConfig {
         &self.config
     }
 
+    /// The resolved genes (which knobs vary, and their ranges).
     pub fn space(&self) -> &GeneSpace {
         &self.space
     }
@@ -653,7 +685,7 @@ impl Evolution {
     /// repeats) and return the final grid, for diagnostics that need the
     /// actual simulated state rather than a scalar score or descriptor —
     /// e.g. connected-component stats on the burned set an archive elite
-    /// produced, which [`Metric::Elongation`](super::metrics::Metric::Elongation)
+    /// produced, which [`Metric::Elongation`]
     /// alone cannot distinguish from a round core plus scattered outliers.
     ///
     /// An archive elite does not record which `(generation, index, repeat)`
@@ -870,8 +902,9 @@ impl Evolution {
         }
     }
 
-    /// Evaluate the genomes that have not been scored yet, in parallel and
-    /// in index order.
+    /// Evaluate every genome of the current population, in parallel. Each
+    /// evaluation depends only on its genome, generation and index, so the
+    /// result does not depend on thread count.
     fn evaluate_population(&mut self) {
         let generation = self.generation;
         let genomes: Vec<Genome> = self.population.iter().map(|i| i.genome.clone()).collect();
@@ -914,7 +947,8 @@ impl Evolution {
     }
 
     /// Score the current population, update the archives and the hall of
-    /// fame, report, and breed the next population.
+    /// fame, report, and breed the next population (which is left unscored
+    /// until the next call).
     pub fn step_generation(&mut self) -> GenerationReport {
         self.evaluate_population();
         let mut novelty_mean = None;
@@ -1173,8 +1207,10 @@ impl Evolution {
         next
     }
 
-    /// MAP-Elites emission: mutate random elites (or sample the gene ranges
-    /// while the archive is still empty).
+    /// MAP-Elites breeding: `batch` children, each a mutated copy of a
+    /// random elite (or a fresh draw from the gene ranges while the archive is
+    /// still empty). With `iso_line` and at least two elites, the mutation is
+    /// the iso+line step towards a second random elite.
     fn emit_children(&mut self, batch: usize, iso_line: bool) -> Vec<Individual> {
         let archive = self.archive.as_ref().expect("map_elites has an archive");
         let elites: Vec<Genome> = archive.elites().map(|(_, e)| e.genome.clone()).collect();
@@ -1215,9 +1251,10 @@ fn unevaluated(genome: Genome) -> Individual {
     }
 }
 
-/// Iso+line variation: a Gaussian step around `child` plus a step along the
-/// line towards `other` for every numeric gene; other kinds get the plain
-/// mutation.
+/// Iso+line variation (Vassiliades & Mouret): for every numeric gene, a
+/// Gaussian step around `child` plus a step along the line towards `other`
+/// (the line step is `0.2 × N(0,1)` of the way, ignoring the gene's `sigma`).
+/// Other gene kinds get the plain per-gene mutation.
 fn iso_line_step(space: &GeneSpace, child: &mut Genome, other: &Genome, sigma: f64, rng: &mut Rng) {
     for (i, gene) in space.genes().iter().enumerate() {
         let sigma_i = gene.sigma.unwrap_or(sigma);

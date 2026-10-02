@@ -239,8 +239,9 @@ struct ReplayReport {
 /// replay (e.g. `exp43_spot_illuminate/Bear_2020.json`) — its own `genes`,
 /// `batch`, `generations` and `steps` are reused verbatim so a replayed
 /// elite runs under the exact same settings that produced the archive.
-/// From that archive, elites with growth at or above the observed day-5
-/// growth are ranked by elongation and the top `SMC_REPLAY_TOP` (default
+/// From that archive, elites with growth at or above the observed growth at
+/// the archive's last observation (day 5 with the default `SMC_MAP_DAYS`,
+/// hence the `observed_growth_day5` report field) are ranked by elongation and the top `SMC_REPLAY_TOP` (default
 /// 5) are replayed for `SMC_REPLAY_SEEDS` (default 3) seeds each — the
 /// same filter and ordering `45-e43-spotting-illumination.md`'s own table
 /// uses to pick "the most stretched fire at the observed size".

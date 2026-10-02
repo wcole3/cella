@@ -1,8 +1,19 @@
-//! EXPERIMENT variant of wildfire_validate (investigation only).
-//! Adds two env-var hooks the committed harness does not have:
+//! EXPERIMENT variant of `wildfire_validate` (investigation only).
+//!
+//! It replays a recorded wildfire scenario through the cella wildfire model and
+//! scores it against the observed fire (see `wildfire_validate` for the plain
+//! version). On top of that it adds env-var hooks (all optional, all default
+//! to "off") that the plain harness does not have. Example:
+//!
+//! ```text
+//! EXP_WIND_SCALE=1.5 cargo run --release --example wildfire_experiment -- \
+//!     ../validation/data/scenarios/Bear_2020 5 /tmp/out.json
+//! ```
+//!
+//! Hooks:
 //!
 //! - `EXP_P0_SCALE=path.json` — JSON array of per-wind-window multipliers
-//!   applied to p0 (moisture-proxy experiments). Length must match the wind
+//!   applied to p0, the base ignition probability (moisture-proxy experiments). Length must match the wind
 //!   schedule minus 1 (one scale per stepped window).
 //! - `EXP_WIND_SCALE=3.0` — multiplies every wind speed (gust-factor
 //!   experiments; ERA5 daily means flatten gusts).
@@ -25,18 +36,20 @@
 //!   wind is downscaled with the mass-consistent solver
 //!   (`cella_lib::wildfire::wind_field`, layer depth in metres) over the config's
 //!   elevation layer and set as a per-cell field.
-//! - `EXP_LINE_TYPE=density:0.2` — the line agent paints a density
-//!   multiplier (retardant / wet line, E27) instead of a cell type;
+//! - `EXP_LINE_TYPE=density:0.2` — (E27) same agent, but it sets a per-cell
+//!   density multiplier (retardant / wet line) instead of changing the cell type;
 //!   `EXP_LINE_RECOVER_H=48` restores treated cells to 1.0 after that many
 //!   hours (retardant dries, hose lines burn over).
-//! - `EXP_SEED_BASE=100` — offsets every ensemble seed (per-seed field dumps
-//!   for ensemble-probability experiments).
+//! - `EXP_SEED_BASE=100` — added to every seed (seed 0 becomes 100, ...), so
+//!   different runs use different random streams (used for ensemble-probability
+//!   experiments).
 //!
-//! For each ensemble seed the grid is rebuilt from `config.json`, the seed
+//! For each seed the grid is rebuilt from the scenario's `config.json`, the seed
 //! and the scenario's wind schedule are applied, and the simulation advances
 //! between the truth's observation times. Scores per observation time:
 //!
-//! - IoU (Jaccard) and Sørensen of the burned sets — the field standard.
+//! - IoU (intersection over union, a.k.a. Jaccard) and Sørensen (Dice) overlap
+//!   of the burned sets — the field standard.
 //! - Arrival-time MAE over cells burned in both (plus miss / false rates),
 //!   quantized to observation times exactly like the truth is.
 //!
@@ -52,8 +65,12 @@
 //!   tuning.
 //!
 //! Usage (run from cella_lib/, its own build root):
-//!   cargo run --release --example wildfire_validate -- \
-//!       ../validation/data/scenarios/Bear_2020 [seeds] [out.json] [fields.json]
+//!   cargo run --release --example wildfire_experiment -- \
+//!       [scenario_dir] [seeds] [out.json] [fields.json]
+//!
+//! Defaults: `scenario_dir` = `../validation/data/scenarios/Bear_2020`,
+//! `seeds` = 5, `out.json` = `../validation/results/<scenario id>.json`.
+//! (A "seed" is one stochastic run of the model; scores are averaged over seeds.)
 //!
 //! The optional 4th argument writes a second JSON with the full per-cell
 //! arrival grids (seed-0 simulation + the radial null). The figure script
@@ -203,7 +220,7 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
     let total = sc.grid.width * sc.grid.height;
     let mut arrival = vec![-1.0f64; total];
 
-    // Experiment hooks (see module docs).
+    // Experiment hooks, each read from an `EXP_*` env var (see module docs).
     let p0_scale: Option<Vec<f64>> = std::env::var("EXP_P0_SCALE").ok().map(|p| {
         serde_json::from_str(&std::fs::read_to_string(&p).expect("EXP_P0_SCALE file"))
             .expect("EXP_P0_SCALE json")
@@ -382,17 +399,19 @@ fn run_seed(cfg: &CellaConfig, sc: &Scenario, seed: u64) -> Vec<f64> {
         steps_done = target_steps;
         record(&grid, &mut arrival, now_hours);
         if line_rate > 0.0 && now_hours >= line_delay_h {
-            // E18 fire-line agent. Candidates: fuel cells (not burning, burned
-            // or inactive) with a burning 8-neighbour = the model's own active
-            // edge. Heel first: nearest to the ignition centroid. Budget
-            // accrues with window length so hourly and daily windows match.
+            // E18 fire-line agent. Candidates: cells that are not burning,
+            // burned out, inactive or already line type, and that have a
+            // burning 8-neighbour = the model's own active edge. Heel first:
+            // nearest to the ignition centroid. The painting budget accrues
+            // with window length so hourly and daily windows match.
             let ramp = if line_ramp_days > 0.0 {
                 1.0 - (-(now_hours - line_delay_h) / (24.0 * line_ramp_days)).exp()
             } else {
                 1.0
             };
             line_budget += line_rate * ramp * (next.hours - cur.hours) / 24.0;
-            // Wind the fire is spreading under in this window, as a grid vector.
+            // Unit vector (wx, wy) the wind blows TOWARD, in grid coordinates
+            // (x east, y south), used by the upwind tactic.
             let toward = (cur.from_deg + wind_rot + 90.0).to_radians();
             let (wy, wx) = toward.sin_cos();
             let n_paint = line_budget.floor() as usize;

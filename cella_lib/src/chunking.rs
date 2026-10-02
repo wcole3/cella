@@ -1,11 +1,19 @@
 //! Splitting a grid's output buffers into disjoint per-worker chunks.
+//!
+//! A *chunk* is a contiguous run of cells handled by one worker thread. Rust
+//! only lets several threads write at once if each gets its own `&mut` slice
+//! that cannot overlap the others, so the engine cuts every output buffer into
+//! matching pieces up front (with `split_at_mut`) and hands one piece of each
+//! buffer to each worker. No locks are needed.
 
 use crate::types::CellType;
 
 /// One worker's disjoint slice of every output buffer.
 ///
 /// `start` is the index of the chunk's first cell in the whole grid; all slices
-/// are indexed *locally* (0 = `start`) except reads of the shared `cells` buffer.
+/// are indexed *locally* (0 = `start`) except reads of the shared `cells` buffer
+/// (the previous generation, which every worker may read in full and is not part
+/// of this struct).
 pub(crate) struct OutChunk<'a> {
     pub start: usize,
     pub next_cells: &'a mut [CellType],
@@ -15,12 +23,18 @@ pub(crate) struct OutChunk<'a> {
     pub history_counts: &'a mut [u8],
 }
 
-/// Split the output buffers into chunks of at most `chunk` cells each.
+/// Split the output buffers into chunks of at most `chunk` cells each (only the
+/// last chunk may be shorter). Panics if `chunk == 0`.
+///
+/// `history_data` holds `history_limit` entries per cell, so its pieces are
+/// `n * history_limit` long for an `n`-cell chunk; `history_heads` and
+/// `history_counts` hold one entry per cell.
 ///
 /// Handles `history_limit == 0`, where the history buffers are empty and every
-/// chunk gets empty history slices. The previous `chunks_mut(chunk * hl)` form
-/// panicked on a zero chunk length, which is why `hl == 0` used to be forced
-/// down the serial path — the cheapest configuration got the least parallelism.
+/// chunk gets empty history slices. The earlier `chunks_mut(chunk * hl)` form
+/// panics on a zero chunk length, which is why `hl == 0` used to be forced
+/// down the serial path — the cheapest configuration got the least parallelism
+/// (docs/performance.md §3.2).
 pub(crate) fn split_chunks<'a>(
     next_cells: &'a mut [CellType],
     ages: &'a mut [u32],
@@ -119,5 +133,5 @@ mod tests {
         assert_eq!(chunks[1].start, 3);
     }
 
-    // TODO add tests with heterogeneous cells and test chunks get correct history split
+    // Not covered yet: chunks over grids holding several different cell types.
 }

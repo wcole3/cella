@@ -263,7 +263,7 @@ fn station_wind_schedule(sc: &Scenario, station: Option<&StationLog>) -> (Vec<Wi
 }
 
 /// Anderson (1983)'s length-to-breadth ratio of a wind-driven fire ellipse,
-/// from the 10 m wind speed `u` in m/s. `LB = 1` is a circle (no wind
+/// from the wind speed `u` in m/s. `LB = 1` is a circle (no wind
 /// effect); it grows with speed and is clamped to `[1, 8]` because the raw
 /// curve is only fit over the range fires are actually observed at — past
 /// that it is extrapolation, not physics.
@@ -346,9 +346,10 @@ fn centred_ellipse_step_cost(dx: f64, dy: f64, wind_toward_rad: f64, lb: f64) ->
 
 /// Grows `mask` outward to `target_area` true cells by Dijkstra over
 /// `step_cost(dx, dy) -> cost` (a step's grid offset to its travel-time
-/// cost): the accepted set, stopped as soon as its size reaches
-/// `target_area`, supersedes the starting mask (every starting cell is at
-/// cost 0, so it is always accepted first). Shared by [`grow_ellipse`] and
+/// cost). Cells are accepted in order of travel time from the starting
+/// mask and the search stops as soon as `target_area` cells are accepted.
+/// Every starting cell is at cost 0, so the result always contains the
+/// starting mask. Shared by [`grow_ellipse`] and
 /// [`grow_ellipse_centred`], which differ only in `step_cost`.
 ///
 /// Deterministic: ties in accumulated cost break on cell index, the lowest
@@ -450,8 +451,9 @@ fn grow_ellipse_centred(
     })
 }
 
-/// The `nulls` mode report (E41): persistence, the Circle and the three
-/// Ellipse variants, scored at every observation, with no ensemble at all
+/// The `nulls` mode report (E41): persistence, the Circle and the four
+/// Ellipse variants (ERA5, station, ERA5 at 3x speed, centred control),
+/// scored at every observation, with no ensemble at all
 /// — cheap enough to run for every fire in a few seconds.
 #[derive(serde::Serialize)]
 struct NullsReport {
@@ -465,7 +467,7 @@ struct NullsReport {
     /// the UTC timestamp `wildfire_smc` was compiled at.
     binary_built_utc: String,
     /// Whether `station_hourly.json` was found for this scenario; when
-    /// `false` every `ellipse_station_*` field above and below is `None`.
+    /// `false` every `ellipse_station_*` field (here and in `scores`) is `None`.
     station_available: bool,
     wall_time_secs: f64,
     scores: Vec<NullObsScore>,
@@ -492,7 +494,7 @@ struct NullsReport {
 }
 
 /// `nulls` mode (validation E41): no ensemble, just the deterministic
-/// dummy forecasters — persistence, the Circle and the three Ellipse
+/// dummy forecasters — persistence, the Circle and the four Ellipse
 /// variants — scored at every observation. This is the cheap, honest
 /// first check of whether the *wind inputs we have* (ERA5 daily, or the
 /// station log) carry any shape signal at all, before spending any more

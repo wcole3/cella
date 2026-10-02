@@ -22,7 +22,8 @@
 //! - **Forcing** — external inputs for the coming steps, as a `name -> number`
 //!   map (`hours`, `wind_speed_ms`, …). The engine stores it and hands it to
 //!   [`MemberDriver::apply`] for every member; the driver decides what the
-//!   names mean. Omitted names fall back to whatever the driver defaults.
+//!   names mean. A name the forcing leaves out falls back to the driver's own
+//!   default.
 //! - **Free genes** — genes the grid has no knob for (`wind_scale`,
 //!   `tau_days`). The driver lists them in [`MemberDriver::free_genes`] with
 //!   default ranges and reads them from the genome in `apply`.
@@ -73,7 +74,8 @@ impl MemberState {
 pub trait MemberDriver: Send + Sync + std::fmt::Debug {
     /// Prepare `sim` for the coming steps: read the free genes and the
     /// forcing, write what they imply into the model or rule. Called once
-    /// when a member is created and again whenever the forcing changes.
+    /// when a member is created, again whenever the forcing changes, and
+    /// again right after every [`Self::period_end`].
     fn apply(
         &self,
         sim: &mut Sim,

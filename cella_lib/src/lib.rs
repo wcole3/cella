@@ -1,24 +1,30 @@
 //! cella: a minimal cellular automata library supporting 1D and 2D grids.
 //!
-//! This crate exposes composable rules and serializable grid state. Stepping
-//! is double-buffered and can run in parallel depending on a simple property
-//! file in your repository root:
+//! A cellular automaton is a grid of cells, each with a type (a name such as
+//! "Alive"). On every step, a rule looks at each cell's neighbours and decides
+//! the cell's next type. This crate provides composable rules and grids that
+//! can be saved to and loaded from JSON. Stepping is double-buffered (read one
+//! buffer, write the next generation into another, then swap) and can run in
+//! parallel. The thread count comes from an optional `cella.properties` file
+//! in the current working directory or up to four directories above it:
 //!
-//!   cella.properties
-//!     threads=4
+//! ```text
+//! threads=4
+//! ```
 //!
-//! The number after `threads=` controls how many worker threads are used to
-//! compute each step. If the file or key is missing, the engine defaults to
-//! `std::thread::available_parallelism()` (or 1 on error). See [`threads`] for
-//! details.
+//! The number after `threads=` is how many worker threads compute each step.
+//! If the file or key is missing (or the value is not a whole number >= 1),
+//! the engine uses `std::thread::available_parallelism()` (or 1 on error). See
+//! [`threads`] for details.
 //!
 //! Quick start:
-//! - Define rules (1D Wolfram-style or 2D threshold neighborhoods)
-//! - Create a Grid1D or Grid2D with initial CellType values
-//! - Call step() repeatedly; save/load a run via [`config::CellaConfig`]
-//!   (`save_1d`/`save_2d` to write, `build_grid1d`/`build_grid2d` or their
-//!   `_resumed` twins to read back). [`state::GridState`] itself is an
-//!   in-memory snapshot only, used internally and by [`explore::Sim`].
+//! - Define rules (1D Wolfram-style or 2D neighbour-count thresholds).
+//! - Create a [`Grid1D`] or [`Grid2D`] with initial [`CellType`] values.
+//! - Call `step()` repeatedly.
+//! - Save or load a run via [`config::CellaConfig`]: `save_1d`/`save_2d` write,
+//!   and `build_grid1d`/`build_grid2d` (or their `_resumed` twins, which pick
+//!   up mid-run) read back. [`state::GridState`] itself is an in-memory
+//!   snapshot only, used by `CellaConfig` and by [`explore::Sim`].
 //!
 //! One module is not part of the engine: [`wildfire`] is a worked example of
 //! the [`external::ExternalModel`] plugin seam — a stochastic fire-spread
@@ -42,9 +48,10 @@ pub mod tunables;
 pub mod types;
 pub mod wildfire;
 
-// Re-exports for an ergonomic public API. Engine types only: nothing from
-// `wildfire` is re-exported here, so `use cella_lib::*;` gives you the
-// cellular-automata engine and not one particular model built on it.
+// Re-exports so callers can write `cella_lib::Grid2D` instead of
+// `cella_lib::grid2d::Grid2D`. Engine types only: nothing from `wildfire` is
+// re-exported here, so `use cella_lib::*;` gives you the cellular-automata
+// engine and not one particular model built on it.
 pub use external::{
     ChunkCtx, ExternalModel, GridView, ModelError, ModelEvent, ParamDesc, ParamKind, ParamValue,
 };
@@ -501,14 +508,8 @@ mod more_tests {
 
     #[test]
     fn knight_range2_reachable_cells() {
-        // (2,2) is reachable in 2 hops: (0,0)->(1,2)->(2,0)? No. (0,0)->(2,1)->(0,2)? No.
-        // (0,0)->(1,2)->(2,4)? No. Let's verify: (2,2): hop1=(1,2), hop2=(1,2)+(1,0)? Not a knight move.
-        // Actually (0,0)->(2,1)->(1,3)? No. (0,0)->(1,2)->(2,4)? No.
-        // (2,2): reachable via (0,0)->(1,2)->(2,0)? (2,0)!=(2,2). Try (0,0)->(2,1)->(0,2)? No.
-        // Correct path: (0,0)->(1,2) then (1,2)+(1,0) not knight. (0,0)->(2,1)->(1,3)? (1,3)!=(2,2).
-        // (0,0)->(1,2)->(3,1)? (3,1)!=(2,2). (0,0)->(2,1)->(4,2)? No. (0,0)->(1,2)->(2,4)? No.
-        // Actually (2,2) needs: from (1,2) add (1,0) - not knight. From (2,1) add (0,1) - not knight.
-        // (2,2) is NOT reachable in 2 hops. (0,4) is: (0,0)->(1,2)->(0,4). Yes!
+        // Two knight hops cannot reach (2,2), but they do reach (0,4) via
+        // (0,0)->(1,2)->(0,4) and (4,0) via (0,0)->(2,1)->(4,0).
         assert!(
             neighborhood_contains(0, 4, 2, Neighborhood2D::Knight),
             "(0,4) should be reachable in 2 knight hops"
@@ -722,18 +723,13 @@ mod more_tests {
 
         // --- 4. range=3 reachability: (0,0) always excluded, known 3-hop cells included ---
         assert!(!neighborhood_contains(0, 0, 3, Neighborhood2D::Knight));
-        // (3,3) is reachable in 3 hops: (0,0)->(1,2)->(2,4)->(3,3)? (2,4)+(1,-1) not knight.
-        // (0,0)->(2,1)->(1,3)->(3,4)? No. (0,0)->(1,2)->(3,3)? (1,2)+(2,1)=(3,3). Yes! 2 hops.
+        // (3,3) is already reachable in 2 hops: (0,0)->(1,2)->(3,3).
         assert!(
             neighborhood_contains(3, 3, 2, Neighborhood2D::Knight),
             "(3,3) should be reachable in 2 hops via (0,0)->(1,2)->(3,3)"
         );
-        // (0,6) reachable in 3 hops: (0,0)->(1,2)->(0,4)->(1,6)? No. (0,0)->(1,2)->(2,4)->(0,5)? No.
-        // (0,0)->(2,1)->(0,2)->(1,4)? No. (0,0)->(1,2)->(0,4)->(2,5)? No.
-        // (0,0)->(2,1)->(1,3)->(0,5)? No. (0,0)->(1,2)->(2,4)->(1,6)? (2,4)+(−1,2)=(1,6)≠(0,6).
-        // (0,0)->(2,1)->(0,2)->(2,3)? No. (0,0)->(1,2)->(0,4)->(−1,6)? No.
-        // (0,6): (0,0)->(2,1)->(1,3)->(2,5)? No. (0,0)->(1,2)->(2,4)->(0,5)? No.
-        // (0,6): (0,0)->(2,1)->(0,2)->(1,4)? No. Let's just verify range=3 count > range=2 count.
+        // Range 3 adds the 3-hop cells, so it must cover strictly more cells
+        // than range 2.
         let count_r3 = (-12..=12i32)
             .flat_map(|dy| (-12..=12i32).map(move |dx| (dx, dy)))
             .filter(|&(dx, dy)| neighborhood_contains(dx, dy, 3, Neighborhood2D::Knight))
@@ -774,7 +770,7 @@ mod more_tests {
         assert_eq!(bad2.validate(), Err(RuleError::InvalidRandomness));
     }
 
-    /// trivial test to print out all our struct memory packing
+    /// Prints the size in bytes of the core structs (reference only).
     #[test]
     #[ignore = "just for reference, not a test"]
     fn print_struct_sizes() {
@@ -934,8 +930,7 @@ mod more_tests {
         let mut g = Grid1D::new(width, hist, init, rule);
         let initial = GridState::from_grid1d(&g);
         g.step();
-        // Round-trip through a saved config (the new format) rather than raw
-        // GridState JSON, which no longer exists.
+        // Round-trip through a saved config; `GridState` is not serializable.
         use crate::config::CellaConfig;
         let cfg = CellaConfig::save_1d(&initial, &g, Default::default());
         let json = serde_json::to_string(&cfg).unwrap();
@@ -1013,8 +1008,7 @@ mod more_tests {
         let mut g = Grid2D::new(w, h, hist, init, rule);
         let initial = GridState::from_grid2d(&g);
         g.step();
-        // Round-trip through a saved config (the new format) rather than raw
-        // GridState JSON, which no longer exists.
+        // Round-trip through a saved config; `GridState` is not serializable.
         use crate::config::CellaConfig;
         let cfg = CellaConfig::save_2d(&initial, &g, Default::default());
         let json = serde_json::to_string(&cfg).unwrap();

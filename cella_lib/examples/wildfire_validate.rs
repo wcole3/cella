@@ -2,11 +2,17 @@
 //! score it honestly. See validation/TEST_PLAN.md for the methodology and
 //! validation/FORMATS.md for the canonical scenario layout this reads.
 //!
-//! For each ensemble seed the grid is rebuilt from `config.json`, the seed
+//! A *scenario* is a recorded real fire: a grid config, an hourly-ish wind
+//! schedule, and the observed ("truth") burn-arrival times. The model is
+//! stochastic, so we run it several times with different random seeds (an
+//! "ensemble") and average the scores.
+//!
+//! For each seed the grid is rebuilt from the scenario's `config.json`, the seed
 //! and the scenario's wind schedule are applied, and the simulation advances
 //! between the truth's observation times. Scores per observation time:
 //!
-//! - IoU (Jaccard) and Sørensen of the burned sets — the field standard.
+//! - IoU (intersection over union, a.k.a. Jaccard) and Sørensen (Dice) overlap
+//!   of the burned sets — the field standard.
 //! - Arrival-time MAE over cells burned in both (plus miss / false rates),
 //!   quantized to observation times exactly like the truth is.
 //!
@@ -23,7 +29,12 @@
 //!
 //! Usage (run from cella_lib/, its own build root):
 //!   cargo run --release --example wildfire_validate -- \
-//!       ../validation/data/scenarios/Bear_2020 [seeds] [out.json] [fields.json]
+//!       [scenario_dir] [seeds] [out.json] [fields.json]
+//!
+//! All four arguments are optional. Defaults: `scenario_dir` =
+//! `../validation/data/scenarios/Bear_2020` (needs `scenario.json`,
+//! `truth.json`, `config.json`), `seeds` = 5, `out.json` =
+//! `../validation/results/<scenario id>.json`. A table is also printed to stdout.
 //!
 //! The optional 4th argument writes a second JSON with the full per-cell
 //! arrival grids (seed-0 simulation + the radial null). The figure script

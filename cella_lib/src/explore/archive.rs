@@ -3,9 +3,10 @@
 //!
 //! An [`Archive`] is the heart of MAP-Elites (Mouret & Clune 2015). Pick one
 //! to three **descriptors** — plain [`Metric`]s such as activity and entropy —
-//! and split each one's range into bins. Every evaluated genome lands in one
-//! cell of that grid according to how it behaved; the cell keeps only the
-//! best-scoring genome it has ever seen (its **elite**). Filling the grid is
+//! and split each one's range into bins. Every evaluated genome (one set of
+//! knob values; see [`super::genome`]) lands in one cell of that grid
+//! according to how it behaved; the cell keeps only the best-scoring genome
+//! it has ever seen (its **elite**). Ties go to the incumbent. Filling the grid is
 //! the goal: a full archive is a map of everything the rule family can do,
 //! with the best example of each behaviour ready to load.
 //!
@@ -35,8 +36,10 @@ use crate::types::CellType;
 /// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DescriptorSpec {
+    /// What to measure along this axis (must be a descriptor metric).
     #[serde(flatten)]
     pub metric: Metric,
+    /// Which reading of the run counts (see [`When`]).
     #[serde(default)]
     pub when: When,
     /// Extent of the axis; defaults to the metric's natural range.
@@ -63,12 +66,17 @@ impl DescriptorSpec {
     }
 }
 
-/// The resolved axes of an archive.
+/// The resolved axes of an archive: the specs with every default filled in.
+/// The four vectors all have one entry per axis.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Descriptor {
+    /// The axes as configured.
     pub specs: Vec<DescriptorSpec>,
+    /// `[low, high]` of each axis (the spec's own, or the metric's natural range).
     pub ranges: Vec<[f64; 2]>,
+    /// Number of bins along each axis.
     pub bins: Vec<u32>,
+    /// A short human-readable name for each axis, e.g. `fraction(Alive)`.
     pub labels: Vec<String>,
 }
 
@@ -155,12 +163,17 @@ impl Descriptor {
 /// [`CellType`] per pixel, drawn by a gallery with the app's palette.
 ///
 /// On the wire it is `{width, height, palette: [names], idx: [u8]}` so a
-/// JSON report stays small.
+/// JSON report stays small: `idx` holds one palette position per pixel. With
+/// more than 256 distinct types, the extras share the last palette slot; an
+/// index past the palette reads back as the background type.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "ThumbnailWire", into = "ThumbnailWire")]
 pub struct Thumbnail {
+    /// Width in pixels (cells).
     pub width: u32,
+    /// Height in pixels (cells).
     pub height: u32,
+    /// Row-major pixels, `width * height` of them.
     pub cells: Vec<CellType>,
 }
 
@@ -262,12 +275,18 @@ impl Sim {
 /// The best genome found for one region of behaviour space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Elite {
+    /// The knob values, in the gene space's order.
     pub genome: super::genome::Genome,
+    /// The same knob values as `key -> value`, for display and reports.
     pub named: BTreeMap<String, ParamValue>,
+    /// The score (higher is better) that earned the cell.
     pub fitness: f64,
+    /// Where it landed: one raw descriptor value per axis (before binning).
     pub descriptor: Vec<f64>,
+    /// A picture of its final grid, when thumbnails are kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<Thumbnail>,
+    /// The generation in which it was found.
     pub generation: u64,
 }
 
@@ -276,9 +295,9 @@ pub struct Elite {
 pub enum AddOutcome {
     /// The cell was empty.
     Inserted,
-    /// The cell had an elite and this one scored higher.
+    /// The cell had an elite and this one scored strictly higher.
     Improved,
-    /// The cell's elite was at least as good.
+    /// The cell's elite scored the same or higher (a tie keeps the incumbent).
     Rejected,
 }
 
@@ -295,16 +314,21 @@ pub struct ArchiveStats {
     pub obj_max: f64,
     /// Mean elite fitness (0 when empty).
     pub obj_mean: f64,
-    /// Candidates whose descriptor fell outside an axis range and were
-    /// clamped to the edge cell. Many of these mean the range is wrong.
+    /// Candidates whose descriptor fell outside an axis range (or was NaN)
+    /// and were clamped to the edge cell. Many of these mean the range is
+    /// wrong. A value exactly equal to an axis's upper bound also counts, even
+    /// though it is placed in the last bin anyway.
     pub out_of_range: u64,
 }
 
 /// The grid of elites. See the module docs.
 #[derive(Clone, Debug)]
 pub struct Archive {
+    /// Bins per axis; the cell count is their product.
     pub dims: Vec<u32>,
+    /// `[low, high]` of each axis.
     pub ranges: Vec<[f64; 2]>,
+    /// Axis names, as in [`Descriptor::labels`].
     pub labels: Vec<String>,
     cells: Vec<Option<Elite>>,
     qd_offset: f64,
@@ -338,7 +362,11 @@ impl Archive {
     }
 
     /// The cell a descriptor falls in (row-major, first axis slowest) and
-    /// whether it had to be clamped onto the grid's edge.
+    /// whether it had to be clamped onto the grid's edge. Each axis is cut
+    /// into equal bins over its range: with range `[0, 1]` and 4 bins, 0.26 is
+    /// bin 1. Out-of-range and NaN values are clamped to the nearest edge bin
+    /// (NaN goes to bin 0) and reported as `true`; a value exactly at the top
+    /// of the range is also reported as clamped, since it would be bin `n`.
     pub fn cell_index(&self, descriptor: &[f64]) -> (usize, bool) {
         let mut index = 0usize;
         let mut clamped = false;
@@ -368,8 +396,8 @@ impl Archive {
         out
     }
 
-    /// Offer a candidate; it stays only if its cell is empty or it beats the
-    /// incumbent.
+    /// Offer a candidate; it stays only if its cell is empty or it scores
+    /// strictly higher than the incumbent (a NaN fitness never beats one).
     pub fn add(&mut self, elite: Elite) -> AddOutcome {
         let (i, clamped) = self.cell_index(&elite.descriptor);
         if clamped {
@@ -410,7 +438,7 @@ impl Archive {
         Some(filled[rng.below(filled.len())])
     }
 
-    /// The best elite by fitness, with its cell index.
+    /// The best elite by fitness, with its cell index (the later cell wins a tie).
     pub fn best(&self) -> Option<(usize, &Elite)> {
         self.elites().max_by(|a, b| {
             a.1.fitness
@@ -419,6 +447,7 @@ impl Archive {
         })
     }
 
+    /// Coverage, QD score and fitness summary of what is stored now.
     pub fn stats(&self) -> ArchiveStats {
         let fits: Vec<f64> = self.elites().map(|(_, e)| e.fitness).collect();
         let elites = fits.len();
@@ -499,30 +528,45 @@ impl Archive {
 /// One filled cell in an [`ArchiveSnapshot`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct SnapshotCell {
+    /// The elite's score.
     pub fitness: f64,
+    /// Its knob values as `key -> value`.
     pub named: BTreeMap<String, ParamValue>,
+    /// Its picture, if thumbnails are kept.
     pub thumbnail: Option<Thumbnail>,
 }
 
 /// A viewer's copy of an archive: what to draw, nothing to compute.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArchiveSnapshot {
+    /// Bins per axis.
     pub dims: Vec<u32>,
+    /// `[low, high]` of each axis.
     pub ranges: Vec<[f64; 2]>,
+    /// Axis names.
     pub labels: Vec<String>,
+    /// One entry per cell (row-major, as [`Archive::cell_index`]); `None` if empty.
     pub cells: Vec<Option<SnapshotCell>>,
+    /// Summary numbers at the time of the snapshot.
     pub stats: ArchiveStats,
+    /// The generation the snapshot was taken at.
     pub generation: u64,
 }
 
 /// One elite in an [`ArchiveReport`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveReportElite {
+    /// The cell index (see [`Archive::cell_index`]).
     pub index: usize,
+    /// The same cell as bin coordinates, one per axis.
     pub coords: Vec<u32>,
+    /// The elite's score.
     pub fitness: f64,
+    /// Its raw descriptor values.
     pub descriptor: Vec<f64>,
+    /// Its knob values as `key -> value`.
     pub named: BTreeMap<String, ParamValue>,
+    /// Its picture, if the report was asked to include thumbnails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<Thumbnail>,
 }
@@ -530,11 +574,17 @@ pub struct ArchiveReportElite {
 /// The serializable form of an archive.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveReport {
+    /// Bins per axis.
     pub dims: Vec<u32>,
+    /// `[low, high]` of each axis.
     pub ranges: Vec<[f64; 2]>,
+    /// Axis names.
     pub labels: Vec<String>,
+    /// Summary numbers.
     pub stats: ArchiveStats,
+    /// Fitness per cell (row-major); `None` for an empty cell.
     pub cell_fitness: Vec<Option<f64>>,
+    /// Every filled cell.
     pub elites: Vec<ArchiveReportElite>,
 }
 

@@ -9,6 +9,9 @@ use std::sync::OnceLock;
 pub const INACTIVE: &str = "Inactive";
 
 static INTERNER: OnceLock<ThreadedRodeo> = OnceLock::new();
+/// The process-wide string interner. Every [`CellType`] is a small handle
+/// into it, so comparing two types is an integer compare rather than a string
+/// compare.
 #[inline]
 pub fn interner() -> &'static ThreadedRodeo {
     INTERNER.get_or_init(ThreadedRodeo::default)
@@ -16,11 +19,12 @@ pub fn interner() -> &'static ThreadedRodeo {
 
 /// A semantic label for a cell's type/state.
 ///
-/// Cell types are arbitrary strings and can be used to distinguish
-/// living/dead, species, phases, etc. A special built-in type is
-/// [`INACTIVE`], representing the background/border.
+/// Cell types are arbitrary strings used to tell cells apart: living/dead,
+/// species, phases, etc. Under the hood each name is interned (stored once,
+/// globally) so a `CellType` is a cheap `Copy` handle. The built-in type
+/// [`INACTIVE`] is the background/border.
 ///
-/// Examples
+/// Example
 /// ```rust
 /// use cella_lib::CellType;
 /// let alive = CellType::from("Alive");
@@ -31,7 +35,19 @@ pub fn interner() -> &'static ThreadedRodeo {
 pub struct CellType(pub Spur);
 
 impl CellType {
-    /// Convenience constructor for the inactive/background type.
+    /// Creates (or looks up) the cell type with this name. Equal names always
+    /// give equal types.
+    #[inline]
+    pub fn new(name: &str) -> Self {
+        CellType(interner().get_or_intern(name))
+    }
+    /// The type's name. The string lives for the whole program.
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        interner().resolve(&self.0)
+    }
+    /// Convenience constructor for the inactive/background type
+    /// (same as `CellType::new(INACTIVE)`).
     ///
     /// ```rust
     /// use cella_lib::{CellType, INACTIVE};
@@ -43,14 +59,6 @@ impl CellType {
     /// assert_ne!(t, t2);
     /// assert_eq!(t2.as_str(), String::from("testType"));
     /// ```
-    #[inline]
-    pub fn new(name: &str) -> Self {
-        CellType(interner().get_or_intern(name))
-    }
-    #[inline]
-    pub fn as_str(&self) -> &'static str {
-        interner().resolve(&self.0)
-    }
     pub fn inactive() -> Self {
         Self::new(INACTIVE)
     }
@@ -101,11 +109,13 @@ impl<'de> Deserialize<'de> for CellType {
 
 /// Per-cell state tracked by a grid.
 ///
-/// It includes the current [`CellType`], how long the cell stayed in
-/// that state, and a bounded history of previous states.
+/// It holds the current [`CellType`], how many consecutive steps the cell has
+/// had it, and a bounded history of previous types. Used in snapshots
+/// ([`crate::state::GridState`]); the grids themselves store the same data in
+/// flat arrays for speed.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CellState {
-    /// FIFO of previous states, bounded by `history_limit`.
+    /// Previous cell types, oldest first, at most `history_limit` long.
     pub history: VecDeque<CellType>,
     /// Number of consecutive steps the cell has been in `current`.
     pub age_in_state: u32,

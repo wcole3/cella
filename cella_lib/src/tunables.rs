@@ -1,10 +1,11 @@
-//! One key grammar for every knob a grid has.
+//! One key grammar for every knob a grid has. A "knob" is any number or choice
+//! you can adjust on a running grid, and its "key" is a string naming it.
 //!
 //! An external model already describes its parameters with [`ParamDesc`]
 //! (see [`crate::external`]), which is what lets the GUI draw a slider for
 //! `p0` without knowing what `p0` is. Rules had no such description: the
-//! numbers inside a subrule (`count`, `range`, a Wolfram code) could only be
-//! changed by editing the struct. This module gives them the same treatment,
+//! numbers inside a subrule (`count`, `range`, a Wolfram code) used to be
+//! changeable only by editing the struct. This module gives them the same treatment,
 //! and then joins both worlds behind a single key format so an optimiser, an
 //! ensemble or a panel can say "set this knob" without caring whether the
 //! knob belongs to the rule or to the model:
@@ -32,13 +33,14 @@ use crate::rules::{CountOp, Neighborhood2D, Rule1D, Rule2D, Rule2DSubrule};
 /// Prefix of every model parameter key: `model.<key as the model names it>`.
 pub const MODEL_PREFIX: &str = "model.";
 
-/// Build the key for field `field` of subrule `index`.
+/// Build the key for field `field` of subrule `index`, e.g.
+/// `rule_key(2, "count")` is `"rule.subrules[2].count"`.
 pub fn rule_key(index: usize, field: &str) -> String {
     format!("rule.subrules[{index}].{field}")
 }
 
 /// Split `rule.subrules[<i>].<field>` into `(i, field)`; `None` for any other
-/// shape (including a `model.` key).
+/// shape (including a `model.` key). Inverse of [`rule_key`].
 pub fn parse_rule_key(key: &str) -> Option<(usize, &str)> {
     let rest = key.strip_prefix("rule.subrules[")?;
     let close = rest.find(']')?;
@@ -842,8 +844,8 @@ mod tests {
     fn kind_1d_has_no_wolfram_code_kind_outside_n_1_to_3_and_a_bogus_2d_field_is_none() {
         // n=0 is outside the 1..=3 window `wolfram_code`'s bit width needs;
         // `kind_1d` reports it as absent rather than picking an arbitrary
-        // width (the same "field does not exist right now" convention the
-        // module doc describes for an unset optional field).
+        // width (the same "field does not exist right now" convention
+        // `kind_1d`'s doc describes).
         let x = CellType::from("X");
         let out_of_range = Rule1DSubrule {
             current_type: x,

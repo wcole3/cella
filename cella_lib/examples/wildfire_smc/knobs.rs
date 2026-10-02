@@ -149,10 +149,9 @@ pub(crate) struct Knobs {
     /// of the containment operator's growth floor
     /// (`WildfireDriver::contain_growth_floor` — see that field's doc
     /// comment for what it does). Unset parses to the operator's
-    /// pre-existing hard-coded value (`1e-4`,
-    /// `cella_lib::wildfire::driver::default_contain_growth_floor`'s
-    /// twin default here), so the operator's own containment behaviour
-    /// is reproduced exactly. The *report*, though, is not byte-identical
+    /// pre-existing value (`1e-4`, from
+    /// `cella_lib::wildfire::driver::default_contain_growth_floor`), so the
+    /// operator's own containment behaviour is reproduced exactly. The *report*, though, is not byte-identical
     /// to a pre-Round-7 one even when this knob is left unset:
     /// `modes::open::run`'s `Report` struct unconditionally gained this
     /// field, plus `wind_source` and `station_fallback_windows` (two

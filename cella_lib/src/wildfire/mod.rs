@@ -23,9 +23,11 @@
 //! c1 = 0.045, c2 = 0.131, a = 0.078).
 //!
 //! Everything expensive is precomputed: the slope table once at attach
-//! (elevation is static), the eight wind factors once per chunk (wind is
-//! uniform per step), leaving two multiplies per burning neighbor and no
-//! transcendentals in the per-cell loop.
+//! (elevation is static), the eight wind factors once per chunk (a chunk is
+//! one slice of the grid handed to one worker thread; wind is uniform per
+//! step), leaving two multiplies per burning neighbor and no transcendentals
+//! (`exp`, `ln`, `cos`: slow library math) in the per-cell loop. With a
+//! per-cell wind field the eight factors are instead precomputed per cell.
 //!
 //! Randomness is a stateless counter-based hash of
 //! `(seed, step, cell index, stream)` — see [`cell_rand`] — so results are
@@ -36,8 +38,9 @@
 //!
 //! ## Two spread rules
 //!
-//! The formula above (`params.spread = "bernoulli"`, the default) rolls one
-//! coin per tick per burning neighbour, at a *probability*. A probability
+//! The formula above (`params.spread = "bernoulli"`, the default) combines the
+//! burning neighbours' *probabilities* into one ignition chance per tick and
+//! rolls a single coin against it. A probability
 //! cannot go above 1, so once a cell has enough burning neighbours it
 //! ignites almost immediately no matter which direction they are in — wind
 //! changes how *often* that happens, not how *long* it takes, so it widens
@@ -60,8 +63,12 @@
 //! ratio is `dir[head] / dir[flank]` regardless of size or burn duration,
 //! and does not collapse as the fire grows. Burn duration no longer
 //! influences *when* a cell catches under this rule — only how long it
-//! stays visibly burning (and so eligible to spot) before burning out. See
-//! [`WildfireDerived::arrival`] and [`WildfireModel::step_chunk_arrival`].
+//! stays visibly burning (and so eligible to spot) before burning out. The
+//! `arrival` buffer and its stepper are the private `WildfireDerived::arrival`
+//! and `WildfireModel::step_chunk_arrival` (read their comments in the source).
+//!
+//! (Experiment ids such as E37 and E41 refer to write-ups in
+//! `validation/experiments/`.)
 //!
 //! Independently, `params.wind_law` chooses *which* direction factor either
 //! rule uses: the original exponential law, or `"rear_focus"`, a rear-focus
@@ -84,7 +91,8 @@ use crate::types::CellType;
 const STREAM_IGNITE: u64 = 0;
 /// RNG stream for the spot-trigger draw.
 const STREAM_SPOT: u64 = 1;
-/// RNG streams for the Box–Muller pair of the lognormal distance.
+/// RNG streams for the Box–Muller pair of the lognormal distance (two
+/// uniform draws that the Box–Muller formula turns into one normal draw).
 const STREAM_DIST_A: u64 = 2;
 const STREAM_DIST_B: u64 = 3;
 /// RNG stream for the landing-angle jitter.
@@ -166,9 +174,10 @@ pub struct WildfireParams {
     pub p0: f64,
     /// Which spread rule decides *when* a cell catches fire.
     ///
-    /// `"bernoulli"` (default): the original Alexandridis rule — every tick,
-    /// every unburned neighbour of a burning cell rolls independent dice
-    /// (one per burning neighbour) at a per-direction *probability*. Because
+    /// `"bernoulli"` (default): the original Alexandridis rule. Every tick,
+    /// each unburned fuel cell turns its burning neighbours' per-direction
+    /// *probabilities* into one combined ignition chance and rolls once
+    /// against it. Because
     /// a probability saturates at 1, a cell surrounded by enough burning
     /// neighbours ignites almost immediately regardless of which direction
     /// they are in, which is why large fires come out round (see the module
@@ -184,8 +193,8 @@ pub struct WildfireParams {
     /// its own tick number reaches that value. A slow direction just costs
     /// more ticks per cell, so the head:flank speed ratio survives no matter
     /// how big the fire gets, and burn duration no longer affects *when* a
-    /// cell catches (only how long it stays visibly burning). See
-    /// [`WildfireDerived::arrival`].
+    /// cell catches (only how long it stays visibly burning). The module docs
+    /// explain it in more detail.
     #[serde(default = "default_spread")]
     pub spread: String,
     /// Fuel classes; every other non-Burning/BurnedOut/Inactive type is inert.
@@ -208,8 +217,12 @@ pub struct WildfireParams {
     /// `from = toward − 90°`.
     #[serde(default)]
     pub wind_from_deg: f64,
+    /// Wind speed coefficient `c1` in `exp(c1·V)`: how much raw wind speed
+    /// raises spread in every direction.
     #[serde(default = "default_c1")]
     pub c1: f64,
+    /// Wind direction coefficient `c2` in `exp(V·c2·(cos θ − 1))`: how sharply
+    /// spread falls off away from the downwind direction.
     #[serde(default = "default_c2")]
     pub c2: f64,
     /// Which wind law shapes the eight per-direction factors.
@@ -244,6 +257,7 @@ pub struct WildfireParams {
     /// run). `0` turns jitter off. Ignored by the Bernoulli rule.
     #[serde(default = "default_arrival_jitter")]
     pub arrival_jitter: f64,
+    /// Firebrand spotting settings; `None` (the default) disables spotting.
     #[serde(default)]
     pub spotting: Option<SpottingParams>,
     /// Override for the burning state's type name (default "Burning").
@@ -258,7 +272,9 @@ pub struct WildfireParams {
 /// terrain; otherwise the length must be `width * height`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct WildfireEnv {
+    /// Fuel density multiplier per cell (row-major); scales `p_base`.
     pub density: Vec<f32>,
+    /// Terrain elevation per cell in metres (row-major); drives the slope table.
     pub elevation: Vec<f32>,
     /// Optional per-cell wind, eastward component in m/s (meteorological
     /// `u`). Empty = use the uniform `wind_speed` / `wind_from_deg` params.
@@ -283,9 +299,11 @@ struct WildfireDerived {
     /// Per-cell wind factors, `8·w·h`, present only when `env.wind_u/v` are
     /// set; otherwise the uniform `dir_factors()` apply to every cell.
     wind_factors: Vec<f32>,
-    /// The eight Moore offsets, in `neighborhood_offsets` order.
+    /// The eight Moore (all eight surrounding cells) offsets `(dx, dy)`, in
+    /// `neighborhood_offsets` order.
     offsets: [(i32, i32); 8],
-    /// Linear index offsets matching `offsets` for the interior fast path.
+    /// The same offsets as flat-index steps (`dy * width + dx`), used by the
+    /// interior fast path that skips bounds checks.
     lin: [isize; 8],
     burning: CellType,
     burned: CellType,
@@ -308,12 +326,14 @@ struct WildfireDerived {
     /// Once a cell ignites, its own entry is never written again — it stays
     /// the historical fact "this cell caught at tick N" for its neighbours
     /// to read as a source. Only a still-unburned fuel cell's own entry is
-    /// ever relaxed downward, by [`WildfireModel::step_chunk_arrival`], one
-    /// tick at a time (a local, per-tick version of the Dijkstra/eikonal
-    /// idea "distance to X = min over neighbours of distance-to-neighbour +
-    /// cost-of-that-edge" — see the module docs).
+    /// ever relaxed downward, by `WildfireModel::step_chunk_arrival`, one
+    /// tick at a time. This is a local, per-tick version of the shortest-path
+    /// idea behind Dijkstra's algorithm and the eikonal equation (the
+    /// "how soon does a front reach each point" equation): "time to reach X =
+    /// min over neighbours of (time to reach that neighbour + cost of the
+    /// step from it)". See the module docs.
     ///
-    /// `step_chunk` receives `&self` — a *shared* reference — because
+    /// `step_chunk` receives `&self` (a *shared* reference) because
     /// several worker threads call it concurrently, one per chunk of the
     /// grid (see the [`crate::external`] determinism contract). A plain
     /// `Vec<f32>` cannot be written through a shared reference, so each
@@ -331,10 +351,10 @@ struct WildfireDerived {
     /// already fixed and read-only from this tick's point of view; a
     /// neighbour that ignites *during* this same tick is invisible to this
     /// tick's relaxation and only becomes a usable source next tick. The
-    /// *next* call to `step_chunk` (the following tick) only happens after
-    /// `Grid2D::step_external`'s `rayon` `reduce()` has joined every
-    /// chunk's task on the calling thread, which is itself a
-    /// synchronization point — so a later step always sees an earlier
+    /// *next* tick's `step_chunk` calls only start after
+    /// `Grid2D::step_external` has finished the current tick (when it runs in
+    /// parallel, rayon has joined every chunk's task first), and that join is
+    /// itself a synchronization point, so a later step always sees an earlier
     /// step's stores.
     arrival: Vec<AtomicU32>,
 }
@@ -398,6 +418,9 @@ pub fn anderson_lb(v: f64) -> f64 {
 }
 
 impl WildfireModel {
+    /// Build a model from `params` and per-cell `env` layers. It is not usable
+    /// until the engine calls `attach`, which validates everything and builds
+    /// the precomputed tables.
     pub fn new(params: WildfireParams, env: WildfireEnv) -> Self {
         Self {
             params,
@@ -445,8 +468,8 @@ impl WildfireModel {
     /// Change `p0` on an attached model without re-attaching.
     ///
     /// `p0` is baked into every cell's precomputed base probability at
-    /// attach, so a plain `params.p0` write is silently ignored (Round 1
-    /// engine finding). The panel path re-attaches, which also rebuilds the
+    /// attach, so a plain `params.p0` write is silently ignored on an
+    /// already-attached model. The panel path re-attaches, which also rebuilds the
     /// `8 × cells` slope table — fine for a slider, far too slow for a
     /// weather schedule that changes `p0` every hour. This rebuilds only the
     /// per-fuel bases and `p_base`, with attach's exact arithmetic, so the
@@ -479,8 +502,9 @@ impl WildfireModel {
         Ok(())
     }
 
-    /// The eight per-direction wind factors for the current wind, including
-    /// the diagonal distance correction. Cheap enough to rebuild per chunk.
+    /// The eight per-direction wind factors for the current uniform wind
+    /// (`wind_speed`, `wind_from_deg`), including the diagonal distance
+    /// correction. Cheap enough to rebuild per chunk.
     fn dir_factors(&self) -> [f32; 8] {
         let v = self.params.wind_speed;
         let theta_w = wind_toward_grid_deg(self.params.wind_from_deg).to_radians();
@@ -527,8 +551,9 @@ impl WildfireModel {
     /// The arrival rule's per-cell log-normal jitter multiplier, `exp(σ·z)`
     /// with `σ = params.arrival_jitter` and `z` a standard normal.
     ///
-    /// `z` comes from a Box–Muller transform of two `cell_rand` draws, the
-    /// same technique [`Self::spot_target`] uses for its landing distance.
+    /// `z` comes from a Box–Muller transform (a formula turning two uniform
+    /// random numbers into one normally distributed one) of two `cell_rand`
+    /// draws, the same technique [`Self::spot_target`] uses for its landing distance.
     /// The step argument is pinned to `0` (not `ctx.step`) so the draw is a
     /// function of the cell only, not the tick: the same cell gets the same
     /// multiplier for the whole run, which is what "one draw per cell" in
@@ -541,8 +566,9 @@ impl WildfireModel {
     ///
     /// **Why `#[inline(never)]`.** `ln`, `cos` and `exp` have no side
     /// effects, so the compiler is allowed to run them early, "just in case".
-    /// When this function was inlined, LLVM moved the whole Box-Muller
-    /// calculation (three expensive libm calls) out of the "this cell has a
+    /// When this function was inlined, LLVM (the compiler's code generator)
+    /// moved the whole Box-Muller calculation (three expensive libm, i.e.
+    /// C math library, calls) out of the "this cell has a
     /// burning neighbour" branch and ran it for *every* fuel cell on *every*
     /// step. That was over half of the arrival rule's run time (profiled with
     /// `perf`: libm was about 56 % of samples). Keeping the call out of line
@@ -577,8 +603,9 @@ impl WildfireModel {
         }
     }
 
-    /// Rebuild the per-cell wind factor table from `env.wind_u/v` (no-op when
-    /// the field is empty).
+    /// Rebuild the per-cell wind factor table from `env.wind_u/v`. If either
+    /// layer's length is not one value per cell (e.g. empty), the table is
+    /// cleared instead and the uniform wind applies.
     fn rebuild_wind_factors(&mut self) {
         let n = self.derived.p_base.len();
         if self.env.wind_u.len() != n || self.env.wind_v.len() != n {
@@ -756,7 +783,10 @@ impl WildfireModel {
     /// per-cell wind field is set) feeds the precomputed `wind_factors`
     /// table. Everything else is read live by [`Self::dir_factors`],
     /// [`Self::next_type`], or [`Self::spot_target`], so a change takes
-    /// effect on the next step with no rebuild.
+    /// effect on the next step with no rebuild. (Caveat: while a per-cell wind
+    /// field is set, `c1` and `c2` are baked into the precomputed
+    /// `wind_factors` table, which only `attach` and `set_wind_field`
+    /// rebuild.)
     ///
     /// Bounds are what the engine checks a new value against before this model
     /// sees it, which is why [`Self::set_param`] does no range checking. They
@@ -1256,9 +1286,9 @@ impl ExternalModel for WildfireModel {
         20
     }
 
-    /// Dispatches to one of two spread rules ([`WildfireParams::spread`]):
-    /// [`Self::step_chunk_bernoulli`] (default, unchanged since before this
-    /// rule existed) or [`Self::step_chunk_arrival`].
+    /// Dispatches to one of the two spread rules chosen by
+    /// [`WildfireParams::spread`]: `step_chunk_bernoulli` (the default) or
+    /// `step_chunk_arrival`.
     fn step_chunk(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         if self.params.spread == "arrival" {
             self.step_chunk_arrival(ctx, next)
@@ -1403,8 +1433,11 @@ impl WildfireModel {
     ///
     /// 1. Copy the current types over as the default next state.
     /// 2. Build a bitmap with one bit per cell: 1 = Burning. (The rows this
-    ///    chunk covers, plus one halo row above and below.)
-    /// 3. OR together the bitmap's eight one-cell shifts (plus itself). A set
+    ///    chunk covers, plus one halo row above and below: extra read-only
+    ///    rows from the neighbouring chunks, so edge cells can see their
+    ///    neighbours.)
+    /// 3. OR together the bitmap's eight one-cell shifts (plus itself; this
+    ///    handles 64 cells per `u64` word at a time). A set
     ///    bit now means "this cell is Burning or touches a Burning cell" —
     ///    the only cells worth visiting.
     /// 4. Walk just those set bits and run the normal per-cell transition
@@ -1414,10 +1447,8 @@ impl WildfireModel {
     /// have changed, and they never consumed randomness in the first place
     /// (the ignition draw only happens when a burning neighbor exists).
     ///
-    /// This is the Bernoulli rule's stepper and is untouched by the arrival
-    /// rule's addition: `params.spread == "bernoulli"` (the default) reaches
-    /// this function and only this function, with exactly the code it had
-    /// before the arrival rule existed.
+    /// This is the Bernoulli rule's stepper: `params.spread == "bernoulli"`
+    /// (the default) reaches this function and no arrival-rule code.
     fn step_chunk_bernoulli(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
         let dir = self.dir_factors();
@@ -1538,7 +1569,8 @@ impl WildfireModel {
     }
 
     /// The arrival rule's stepper: minimum travel time, not ignition
-    /// chance. See the [module docs](self) and [`WildfireDerived::arrival`].
+    /// chance. See the [module docs](self) and the private
+    /// `WildfireDerived::arrival` buffer.
     ///
     /// Like [`Self::step_chunk_bernoulli`] it uses a fire-front bitmap, so it
     /// only visits the cells that can change (see "The fire-front mask"
@@ -1548,7 +1580,7 @@ impl WildfireModel {
     /// previous tick's snapshot), never from another chunk's in-progress work
     /// this tick.
     ///
-    /// One tick of local Dijkstra/eikonal relaxation: for each still-
+    /// One tick of local shortest-path ("Dijkstra/eikonal") relaxation: for each still-
     /// unburned fuel cell with at least one burning-or-burned neighbour `j`,
     /// `arrival[cell] = min(arrival[cell], min_j (arrival[j] + cost_j))`,
     /// `cost_j = jitter(cell) / (p_base[cell] · dir[j] · slope[cell, j])`,
@@ -1770,7 +1802,7 @@ impl WildfireModel {
             // No extra distance term here: `dir_cell[j]` (via
             // `factors_for_vector`) already divides by `norm_j`, so
             // `1 / rate` alone is the correct travel time. See the
-            // fix-round-4 note on this function's doc comment above.
+            // fix-round-4 note on `step_chunk_arrival`'s doc comment.
             let cost = (jit / rate).max(1.0);
             let neighbor_arrival = f32::from_bits(d.arrival[nidx].load(Ordering::Relaxed));
             let candidate = neighbor_arrival + cost;
@@ -1788,7 +1820,7 @@ impl WildfireModel {
     }
 
     /// The original every-cell arrival stepper, kept only so tests can prove
-    /// the masked [`Self::step_chunk_arrival`] gives identical results.
+    /// the masked `step_chunk_arrival` gives identical results.
     #[cfg(test)]
     fn step_chunk_arrival_reference(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
@@ -1865,7 +1897,7 @@ impl WildfireModel {
                 // No extra distance term here: `dir_cell[j]` (via
                 // `factors_for_vector`) already divides by `norm_j`, so
                 // `1 / rate` alone is the correct travel time. See the
-                // fix-round-4 note on this function's doc comment above.
+                // fix-round-4 note on `step_chunk_arrival`'s doc comment.
                 let cost = (jit / rate).max(1.0);
                 let neighbor_arrival = f32::from_bits(d.arrival[nidx].load(Ordering::Relaxed));
                 let candidate = neighbor_arrival + cost;

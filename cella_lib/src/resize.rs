@@ -26,6 +26,10 @@ pub enum ResizeError {
 }
 
 /// Check a requested size and return its cell count (`width * height`).
+///
+/// The history buffer holds `history_limit` entries per cell (at least 1 is
+/// assumed here, to be safe), so `cells * history_limit` must fit in `usize`
+/// too, otherwise [`ResizeError::TooLarge`] is returned.
 pub(crate) fn checked_cells(
     width: usize,
     height: usize,
@@ -88,6 +92,9 @@ pub fn remap_edge<T: Copy>(src: &[T], old: (usize, usize), new: (usize, usize)) 
 
 /// Recount population per type from `cells`, and raise `peak_counts` wherever
 /// a new count is higher (a peak that happened stays a peak).
+///
+/// `inactive` is the grid's background type. It is the dominant type reported
+/// for an empty `cells` slice (a normal grid never is, since size >= 1x1).
 ///
 /// Shared by [`crate::Grid1D::resize`] and [`crate::Grid2D::resize`] so the
 /// bookkeeping after a resize is written once. Returns the freshly computed

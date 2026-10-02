@@ -16,7 +16,12 @@
 //!
 //! Anything model-specific — a weather schedule, a stopping rule — lives in
 //! an optional [`MemberDriver`]. Without one, an ensemble is plain Monte
-//! Carlo over seeds and genes, which already works for any rule.
+//! Carlo (run the same random simulation many times and look at the spread
+//! of outcomes) over seeds and genes, which already works for any rule.
+//!
+//! A **genome** is the list of knob values ("genes") one member runs with.
+//! IoU (intersection over union) is the overlap score used for learning; see
+//! [`super::metrics::iou`].
 //!
 //! ```text
 //! "ensemble": {
@@ -64,20 +69,25 @@ pub struct EnsembleConfig {
     /// background.
     #[serde(default)]
     pub track: Vec<String>,
-    /// Selection sharpness when learning: weights are `exp(beta × score)`.
-    /// 10 keeps a healthy spread; 30 is greedy and over-confident.
+    /// Selection sharpness when learning: a member's weight is
+    /// `exp(beta × (score − best score))`, so the best member always has
+    /// weight 1. 0 ignores scores (all weights equal); 10 keeps a healthy
+    /// spread; 30 is greedy and over-confident.
     #[serde(default = "default_beta")]
     pub beta: f64,
-    /// Mutation size after resampling (see [`super::genome`]).
+    /// Mutation size after resampling (see [`super::genome`]); a gene's own
+    /// `sigma`, if it has one, wins over this.
     #[serde(default = "default_sigma")]
     pub sigma: f64,
-    /// Share of each new generation re-drawn from the gene ranges, so the
-    /// population never collapses onto one genome.
+    /// Share (0 to 1) of each new generation re-drawn from the gene ranges,
+    /// so the population never collapses onto one genome. The count is
+    /// `round(immigrants × members)`.
     #[serde(default = "default_immigrants")]
     pub immigrants: f64,
-    /// Chance that a resampled child's genome is a cross of two parents
-    /// (uniform per gene) before it is mutated. 0 (the default) keeps the
-    /// classic particle filter: children inherit one parent's genome.
+    /// Chance that a resampled (non-immigrant) child's genome is a cross of
+    /// two parents (each gene from one or the other; see
+    /// [`GeneSpace::crossover`]) before it is mutated. 0 (the default) keeps
+    /// the classic particle filter: children inherit one parent's genome.
     #[serde(default)]
     pub crossover: f64,
     /// Whether an immigrant starts with a fresh driver state instead of
@@ -190,9 +200,13 @@ impl Default for EnsembleConfig {
 /// One member: its grid, its genome, its seed and its driver scratch.
 #[derive(Clone, Debug)]
 pub struct Member {
+    /// This member's own copy of the simulation.
     pub sim: Sim,
+    /// The knob values this member runs with (already written into `sim`).
     pub genome: Genome,
+    /// The seed of this member's dice (`Sim::set_seed`).
     pub seed: u64,
+    /// Scratch space the driver keeps between calls (e.g. a "contained" flag).
     pub state: MemberState,
 }
 
@@ -208,8 +222,8 @@ pub struct AssimilationReport {
     pub parents: Vec<usize>,
     /// How many new members were fresh draws rather than children.
     pub immigrants: usize,
-    /// Children whose mutated genome the grid refused, and which therefore
-    /// kept their parent's genome unchanged.
+    /// New members (children or immigrants) whose new genome the grid
+    /// refused, and which therefore kept their parent's genome unchanged.
     pub rejected: usize,
 }
 
@@ -365,6 +379,7 @@ impl Ensemble {
         self.generation
     }
 
+    /// The settings this ensemble was built from.
     pub fn config(&self) -> &EnsembleConfig {
         &self.config
     }
@@ -428,9 +443,15 @@ impl Ensemble {
     /// Advance every member one step, then run the driver's period hook if
     /// this step completes a period.
     ///
-    /// Members step in parallel when one member is too small to be split
-    /// into chunks itself, and one after another (each using the engine's
-    /// own chunk parallelism) otherwise — the result is the same either way.
+    /// There are two ways to use several threads: step many members at once,
+    /// or step members one by one and let each split its own grid into
+    /// chunks. The default heuristic picks the first only when there is more
+    /// than one member and a single member is too small to be split:
+    /// `chunks_for_work(cells × 12) <= 1` (12 is a rough estimate of neighbour
+    /// visits per cell; a chunk needs `MIN_WORK_PER_CHUNK` = 400 000 of them,
+    /// or `CELLA_MIN_WORK`, to be worth a thread; with one thread the answer
+    /// is always 1). Otherwise members step one after another, each using
+    /// the engine's own chunk parallelism. The result is the same either way.
     ///
     /// `CELLA_MEMBER_PAR=<n>` (see [`crate::threads`]) overrides that choice:
     /// members are split into batches of at most `n`, and each batch steps
@@ -438,9 +459,10 @@ impl Ensemble {
     /// the fully-sequential shape (one member at a time, each free to use
     /// every thread for its own chunking); `n >= members.len()` forces every
     /// member concurrently, same as the heuristic's parallel branch. Unset,
-    /// this method is unchanged from before the knob existed — see the
-    /// 2026-09-12 "Ensemble stepping parallelism" study in
-    /// docs/performance.md for why a one-off study needed this at all.
+    /// the heuristic above decides. See docs/performance.md §9 ("Ensemble
+    /// stepping parallelism", 2026-09-12) for the measurements; it found
+    /// that for the large wildfire grids the heuristic already steps members
+    /// one at a time.
     pub fn step(&mut self) -> Result<(), ModelError> {
         match member_par_override() {
             Some(n) => {
@@ -551,7 +573,7 @@ impl Ensemble {
     }
 
     /// Mean and standard deviation of any per-grid measurement over the
-    /// members, e.g. `ens.metric_stats(|s| metrics::entropy(s))`.
+    /// members, e.g. `ens.metric_stats(super::metrics::entropy)`.
     pub fn metric_stats(&self, f: impl Fn(&Sim) -> f64) -> (f64, f64) {
         let v: Vec<f64> = self.members.iter().map(|m| f(&m.sim)).collect();
         mean_sd(&v)
@@ -585,13 +607,13 @@ impl Ensemble {
     }
 
     /// One round of learning from an observed mask: each member is scored by
-    /// the IoU between its `types` mask and `observed`, then
+    /// the IoU (overlap) between its `types` mask and `observed`, then
     /// [`Self::assimilate_scores`] does the rest. Score your forecast against
     /// `observed` *before* calling this, never after.
     ///
     /// Along the way this also computes the *area ratio* — mean member
-    /// burned area over observed burned area, the same number the wildfire
-    /// runner reports as `area_ratio_mean` — and caches it for
+    /// burned area over observed burned area (the observed area counts as at
+    /// least 1, so an empty observation does not divide by zero) — and caches it for
     /// [`EnsembleConfig::immigrant_reset_gate`] to read inside
     /// [`Self::assimilate_scores`]. A direct call to `assimilate_scores`
     /// never updates it.
@@ -646,10 +668,12 @@ impl Ensemble {
 
     /// One round of learning from any per-member score (higher is better):
     /// weight by `exp(beta × (score − best))`, resample systematically,
-    /// mutate the children, replace a share with immigrants. Children keep
-    /// their parent's grid state and driver scratch; only genomes and seeds
-    /// change. A child whose mutated genome the grid refuses keeps its
-    /// parent's genome (counted in `rejected`).
+    /// mutate the children, replace a share with immigrants. By default
+    /// children keep their parent's grid state and driver scratch; only
+    /// genomes and seeds change. The exceptions are immigrants reset by
+    /// [`EnsembleConfig::immigrant_reset`] and children whose grid is rebuilt
+    /// by [`EnsembleConfig::state_correction`]. A child whose new genome the
+    /// grid refuses keeps its parent's genome (counted in `rejected`).
     pub fn assimilate_scores(&mut self, scores: &[f64]) -> Result<AssimilationReport, ModelError> {
         let m = self.members.len();
         if scores.len() != m {

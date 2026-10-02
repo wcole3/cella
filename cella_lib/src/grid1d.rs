@@ -1,4 +1,9 @@
 //! 1D grid implementation.
+//!
+//! A 1D grid is one row of cells. Each step, every cell looks at the `2n+1`
+//! cells centred on it and a Wolfram-style rule table decides its next type.
+//! Two step paths exist: a general per-cell path (`step_chunk`) and a
+//! bit-parallel fast path for plain two-state rules (`step_packed`).
 
 use crate::chunking::{OutChunk, split_chunks};
 use crate::resize::{ResizeError, checked_cells, recount, remap_blocks};
@@ -388,9 +393,9 @@ impl Grid1D {
     /// Evaluate subrules for a cell at least `rule.n_max()` from either end, so
     /// every window slot is in bounds.
     ///
-    /// Subrules with `n < 1` or `n > 3` cannot be encoded in a `u128` window and
-    /// never match; [`Rule1DSubrule::validate`] rejects them, and `applies_*`
-    /// reports no match for them here.
+    /// Subrules with `n < 1` or `n > 3` cannot be encoded in a `u128` window, so
+    /// the plan marks them `valid == false` and they are skipped here (they never
+    /// match). [`Rule1DSubrule::validate`] rejects them up front.
     #[inline]
     fn next_type_interior(
         cells: &[CellType],
@@ -455,7 +460,20 @@ impl Grid1D {
         inactive
     }
 
-    /// Compute the next state for one chunk, writing into disjoint output slices.
+    /// Compute the next state for one chunk (a contiguous run of cells), writing
+    /// into disjoint output slices so chunks can run on different threads.
+    ///
+    /// Cells at least `pad` (= the largest `n`) from both ends are "interior":
+    /// their whole window is in bounds, so they take the cheaper
+    /// `next_type_interior`. The few cells near either end are "edge" cells and
+    /// use `next_type_edge`, which treats out-of-bounds slots as inactive.
+    ///
+    /// Returns the count of every new type except the dominant type `dt`;
+    /// `apply_counts` fills that one in by subtraction.
+    ///
+    /// Hot loop: it is code-size-bound (docs/performance.md §8 E5). Splitting it
+    /// into variants or otherwise growing it has made it slower, so measure
+    /// before adding anything.
     #[allow(clippy::too_many_arguments)]
     fn step_chunk(
         cells: &[CellType],
@@ -519,8 +537,9 @@ impl Grid1D {
     }
 
     /// The fast step for a [`PackedWolfram`] rule: the row is stored one
-    /// **bit** per cell (1 = `active`, 0 = inactive) inside 64-bit integers,
-    /// so one machine instruction processes 64 cells at once.
+    /// **bit** per cell (1 = `active`, 0 = inactive) inside 64-bit integers
+    /// (called "words" below), so one machine instruction processes 64 cells at
+    /// once. This trick is often called SWAR ("SIMD within a register").
     ///
     /// Returns `None` when the fast path can't be used — some cell is neither
     /// `active` nor inactive (e.g. the user painted a third type). The caller
@@ -628,7 +647,12 @@ impl Grid1D {
         Some(count_map)
     }
 
-    /// Advance the automaton by one step using double-buffering.
+    /// Advance the automaton by one step using double-buffering: new types are
+    /// written to `next_cells` while `cells` is still being read, then the two
+    /// are swapped.
+    ///
+    /// Uses the packed fast path when the plan allows it and the work fits in a
+    /// single chunk; otherwise the per-cell path, in parallel when the row is big.
     pub fn step(&mut self) {
         let width = self.width;
         let hl = self.history_limit;

@@ -3,15 +3,33 @@
 //! [`cella_lib::wildfire::WildfireDriver`] — the same two pieces any other
 //! model would use.
 //!
-//! `open` mode — plain Monte Carlo: `M` members with genes drawn from the
-//! ranges below, run independently; the per-cell burn probability is scored
-//! as a probabilistic forecast (Brier, consensus IoU, best-threshold IoU)
-//! beside the deterministic nulls (persistence, area-matched radial).
+//! Background for newcomers. An *ensemble* is a set of `M` simulation
+//! "members" (also called *particles* in sequential Monte Carlo, SMC), each
+//! with its own gene values (model settings such as `model.p0`, the base
+//! ignition probability) and random seed. Running many members gives a
+//! per-cell burn *probability* instead of one yes/no map. A forecast is
+//! scored with IoU (intersection over union of the burned cell sets; 1 is a
+//! perfect match) and the Brier score (mean squared error of the predicted
+//! probability against the 0/1 outcome; lower is better). "Consensus" means
+//! cells that at least half the members burned. *Resampling* means copying
+//! well-scoring members over poorly-scoring ones; *immigrants* are fresh
+//! random members injected to keep diversity. The scores are always printed
+//! next to simple "null" forecasters (persistence, circle, ellipse; see
+//! `nulls.rs`), because a model is only interesting where it beats them.
 //!
-//! `assim` mode — after each observation the ensemble is scored, then
-//! [`Ensemble::assimilate`] resamples, mutates and admits immigrants, and the
-//! members keep simulating. Every score at t_k is a forecast from the state
-//! assimilated at t_{k-1}: the mask at t_k is never seen before it is scored.
+//! # Modes
+//!
+//! `open` mode — plain Monte Carlo: `M` members with genes drawn from the
+//! default gene list below, run independently; the per-cell burn probability
+//! is scored as a probabilistic forecast (Brier, consensus IoU,
+//! best-threshold IoU) beside the deterministic nulls (persistence,
+//! area-matched radial).
+//!
+//! `assim` mode — "assimilation": after each observation the ensemble is
+//! scored, then [`Ensemble::assimilate`] resamples, mutates and admits
+//! immigrants, and the members keep simulating. Every score at t_k is a
+//! forecast from the state assimilated at t_{k-1}: the mask at t_k is never
+//! seen before it is scored.
 //!
 //! `evolve` mode (validation E36) — fit first: a genetic algorithm
 //! ([`cella_lib::Evolution`] with the same driver) searches the genes for the
@@ -36,128 +54,164 @@
 //! can be told apart from a round core plus a few cells scattered far away
 //! (spot-fire embers). See [`run_replay`]'s own doc comment.
 //!
-//! Usage (from cella_lib/):
-//!   cargo run --release --example wildfire_smc -- <scenario_dir> <members> <open|assim|evolve|map|replay> <out.json>
-//! Env: SMC_BETA (10), SMC_SIGMA (0.2), SMC_IMMIGRANTS (0), SMC_CROSSOVER (0), SMC_SEED (0),
-//!      SMC_IMM_RESET=1 (immigrants start uncontained, with p0 from their own genome),
-//!      SMC_IMM_RESET_GATE=<f64> (E39: gate the reset above on evidence — an
-//!      immigrant is reset only while the last assimilation's area ratio
-//!      (mean member burned area / observed burned area) is below this
-//!      value, i.e. only while the population is under-predicting the
-//!      observed area; setting this takes the decision away from
-//!      SMC_IMM_RESET, which is then ignored),
-//!      SMC_STATE_CORRECTION=immigrants|all (E40/E40b: a child's *grid*, not
-//!      just its state, is rebuilt from the observed perimeter — burned
-//!      cells become the model's burned type, the rim of still-unburned
-//!      fuel next to a burned cell becomes burning at age 0, everything
-//!      else is untouched from a fresh scenario grid; ignores
-//!      SMC_IMM_RESET/SMC_IMM_RESET_GATE for the children it corrects,
-//!      which are always uncontained. "immigrants" (E40) corrects only the
-//!      immigrants; "all" (E40b) corrects every resampled child, which
-//!      keeps its own learned/mutated genome, so learning continues while
-//!      the grid is corrected every window. Default (and any other value):
-//!      "none", the pre-E40 behaviour — a child's grid is a clone of a
-//!      resampled parent, like any other child. SMC_IMM_SOURCE=observed is
-//!      kept as an alias for SMC_STATE_CORRECTION=immigrants (E40's
-//!      original runner uses it); SMC_STATE_CORRECTION wins if both are set,
-//!      SMC_WIND_ROT_DEG (0), SMC_ASSIM_EVERY (1),
-//!      SMC_PRIOR=path.json (a JSON array of genes replacing the default list),
-//!      SMC_CONTAIN=1 (add the containment genes `contain_a`/`contain_b`, so
-//!      the driver draws a containment once a day — the E28 operator),
-//!      SMC_TAU_OFF=1 (drop the `tau_days` gene so containment is the only stop),
-//!      SMC_FIT_DAYS (3), SMC_GENERATIONS (20 evolve / 30 map), SMC_POP (24 evolve /
-//!      32 map batch), SMC_REPEATS (2), SMC_MAP_DAYS (5).
-//!      SMC_MAX_DAYS=<n> (`open`/`assim` only, unset = run every observation
-//!      day in the scenario: stop after the n-th scored day instead. Added
-//!      for the 2026-09-12 ensemble-parallelism benchmark so a timing run
-//!      doesn't pay for the whole ~23-30 day scenario every configuration;
-//!      `SMC_MAP_DAYS` above is the pre-existing equivalent for `map` mode).
-//!      SMC_SPOT=1 (E43: switch spotting on in the config's wildfire model
-//!      — see [`enable_spotting`] — and add `model.spotting.p_spot` and
-//!      `model.spotting.median_distance` to the gene list, so `map` mode
-//!      illuminates the spread genes *and* spotting together),
-//!      SMC_MAP_REPLAY=path.json (`replay` mode only, required: the
-//!      `map`-mode report to re-evaluate), SMC_REPLAY_TOP (5 elites),
-//!      SMC_REPLAY_SEEDS (3 seeds per elite).
-//!      SMC_SPREAD=bernoulli|arrival, SMC_WIND_LAW=exponential|rear_focus,
-//!      SMC_C2=<f64>, SMC_ARRIVAL_JITTER=<f64> (E30/E30a: override the
-//!      scenario config's wildfire spread rule / wind law / c2 / jitter
-//!      before the config is turned into a `Sim` — see [`configure_spread`].
-//!      Each of the four is independent; any left unset keeps the scenario
-//!      config's own value, so setting none of them is a no-op. E30's
-//!      recommended setting is SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus,
-//!      with `c2` and jitter left at the config's own defaults).
-//!      SMC_STEPS_SCALE=<f64> (1; E30b: a faster clock — multiplies the
-//!      scenario's own `steps_per_hour` before anything else reads it, so
-//!      the forcing schedule's window step-counts and (since
-//!      `steps_per_day` is computed from that same field) the wildfire
-//!      driver's containment period both stretch together — one
-//!      observation window still spans one day of weather at any scale.
-//!      SMC_STEPS_SCALE=4 turns E30's 50 ticks/day into 200: the arrival
-//!      rule's one-cell-per-tick cap rises from 1.5 km/day to 6 km/day).
-//!      SMC_WIND_ROT_GENE=<f64> (off; E30b: half-width in degrees of a
-//!      free, per-member `wind_rot_deg` gene, uniform on [-h, h] — added
-//!      to the gene list only when this is set; see
-//!      [`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`]. Each member
-//!      learns its own offset to the forcing's wind *from*-bearing, on
-//!      top of any fixed SMC_WIND_ROT_DEG rotation of the whole schedule
-//!      above — the fixed knob rotates the input once for everyone, this
-//!      one lets the filter search for a per-member correction to it).
-//!      SMC_WIND_ROT_SIGMA=<f64> (unset; Round 7 Task 5/E45: a per-gene
-//!      mutation-size override on `wind_rot_deg` only, no effect unless
-//!      SMC_WIND_ROT_GENE is also set — see [`priors::build_genes`].
-//!      Unset leaves the gene's sigma at the engine's own default
-//!      (byte-identical reports to before this knob existed).
-//!      SMC_WIND_ROT_SIGMA=0 freezes the gene at each member's birth
-//!      draw — resampling still copies it and selection still acts on
-//!      it, only mutation stops — isolating per-member angular
-//!      *diversity* from the *learning* half of the gene).
-//!      SMC_DIAG=1 (off; E48/Round 7 Task 3: opt-in per-window diagnostics
-//!      on `ObsScore` -- a new `diag` field, `None`/omitted from the JSON
-//!      when this is unset so every existing field is byte-identical to
-//!      before this knob existed. Emitted by `open`, `assim` and
-//!      `evolve`'s forecast half alike, since all three step through the
-//!      same `modes::open::run` loop (see that module's own doc comment).
-//!      See [`diag`] for
-//!      what it adds: the ERA5 wind vector and (when `station_hourly.json`
-//!      exists for the scenario) the station vector mean for the window,
-//!      the ensemble's per-window median `model.p0`/`wind_scale`/
-//!      `wind_rot_deg` (the last `None` unless SMC_WIND_ROT_GENE is set),
-//!      the per-window interquartile range (spread) of `wind_rot_deg`
-//!      (Round 7 Task 5/E45: `wind_rot_deg_iqr`, same "`None` unless the
-//!      gene is in this run's list" rule as the median beside it), and a
-//!      head-vs-flank decomposition of the consensus-vs-truth miss
-//!      and false-positive cells (downwind of the ignition centroid, by
-//!      the window's ERA5 "toward" direction, vs cross/upwind). Round 7
-//!      Task 7 (E49) adds `contain_draws` (every daily containment draw
-//!      since the previous scored window: burned count before/after, raw
-//!      growth ratio before the floor, the member's `contain_a`/
-//!      `contain_b`, and whether it was contained) and
-//!      `min_growth_uncontained` (the smallest of those raw growths).
-//!      SMC_CONTAIN_GROWTH_FLOOR=<f> (1e-4; Round 7 Task 7/E49): the floor
-//!      the containment draw clamps a day's growth ratio to before taking
-//!      its log (`WildfireDriver::contain_growth_floor`). Unset is the
-//!      value the operator always used, so runs are unchanged; the floor
-//!      in force is echoed as the report's `contain_growth_floor` field.
-//!      SMC_WIND_SOURCE=era5|station (era5; Round 7 Task 6/E46): which
-//!      wind feeds the driver's per-window forcing in `open`/`assim`/
-//!      `evolve`-forecast mode (`modes::open::run`). `station` replaces
-//!      each window's ERA5 (speed, from-bearing) with the station log's
-//!      vector mean over that same window — same daily cadence, no
-//!      sub-daily driver changes — falling back to that window's own
-//!      ERA5 entry (counted as `station_fallback_windows` in the report)
-//!      where the station log has no samples in range or no station file
-//!      exists at all; see [`nulls::wind_schedule_for`]. `era5` (default,
-//!      unset) leaves every pre-existing field's *value* unchanged; the
-//!      report is not byte-identical to a pre-Round-7 one even so, since
-//!      it unconditionally gained `wind_source` and
-//!      `station_fallback_windows` (plus `contain_growth_floor`, a
-//!      sibling knob's field) this round regardless of what any of the
-//!      three are set to. The
-//!      deterministic nulls and SMC_DIAG's `era5_*`/`station_*`
-//!      diagnostic fields always read the scenario's own ERA5 (or the
-//!      station log directly) regardless of this knob — only the
-//!      ensemble's own forcing changes.
+//! `nulls` mode — scores only the deterministic null forecasters (no
+//! ensemble); implemented in `nulls.rs` (`run_nulls`).
+//!
+//! # Usage (from cella_lib/)
+//!
+//! ```text
+//! cargo run --release --example wildfire_smc -- <scenario_dir> <members> <mode> <out.json>
+//! # e.g.
+//! SMC_SEED=1 SMC_MAX_DAYS=5 cargo run --release --example wildfire_smc -- \
+//!     ../validation/data/scenarios/Bear_2020 32 assim /tmp/bear_assim.json
+//! ```
+//!
+//! `<mode>` is `open|assim|evolve|map|replay|nulls`. Only `<scenario_dir>`
+//! (needs `scenario.json`, `truth.json`, `config.json`) is required. Defaults:
+//! `<members>` 32 (ignored by `map`/`replay`/`nulls`), `<mode>` `open`,
+//! `<out.json>` `smc_report.json`. Any other mode string is not rejected: it
+//! runs the shared `open` loop and is recorded under that name in the report.
+//!
+//! # Environment knobs
+//!
+//! All optional; a value that fails to parse is silently treated as unset
+//! (except `SMC_CONTAIN_GROWTH_FLOOR`, which panics on an invalid number).
+//! Boolean knobs (`SMC_IMM_RESET`, `SMC_SPOT`, `SMC_CONTAIN`, `SMC_TAU_OFF`,
+//! `SMC_DIAG`) are on when set to a number above 0, e.g. `=1`.
+//!
+//! Ensemble / filter settings:
+//! - `SMC_BETA` (10): selection sharpness for resampling; larger = the best
+//!   members dominate more.
+//! - `SMC_SIGMA` (0.2): size of the mutation applied to resampled children.
+//! - `SMC_IMMIGRANTS` (0): fraction of fresh random members per assimilation.
+//! - `SMC_CROSSOVER` (0): crossover (gene mixing between two parents) rate.
+//! - `SMC_SEED` (0): ensemble / search seed.
+//! - `SMC_ASSIM_EVERY` (1): assimilate every N observations (`assim` mode).
+//! - `SMC_MAX_DAYS=<n>` (unset = every observation day in the scenario): stop
+//!   after the n-th scored day. Applies to `open`, `assim` and `evolve`'s
+//!   forecast half (not `map`; `SMC_MAP_DAYS` is its equivalent). Added for
+//!   the 2026-09-12 ensemble-parallelism benchmark so a timing run does not
+//!   pay for the whole ~23-30 day scenario.
+//!
+//! Immigrants and state correction (what a newly resampled member's grid and
+//! driver state look like):
+//! - `SMC_IMM_RESET=1`: immigrants start uncontained, with p0 from their own
+//!   genome.
+//! - `SMC_IMM_RESET_GATE=<f64>` (E39): gate that reset on evidence — an
+//!   immigrant is reset only while the last assimilation's area ratio (mean
+//!   member burned area / observed burned area) is below this value, i.e.
+//!   only while the population is under-predicting the observed area. Setting
+//!   it takes the decision away from `SMC_IMM_RESET`, which is then ignored.
+//! - `SMC_STATE_CORRECTION=immigrants|all` (E40/E40b): a child's *grid*, not
+//!   just its state, is rebuilt from the observed perimeter — burned cells
+//!   become the model's burned type, the rim of still-unburned fuel next to a
+//!   burned cell becomes burning at age 0, everything else is untouched from
+//!   a fresh scenario grid. Such children are always uncontained, so
+//!   `SMC_IMM_RESET`/`SMC_IMM_RESET_GATE` are ignored for them. `immigrants`
+//!   (E40) corrects only the immigrants; `all` (E40b) corrects every resampled
+//!   child, which keeps its own learned/mutated genome, so learning continues
+//!   while the grid is corrected every window. Default (and any other value,
+//!   including `none`): no correction — a child's grid is a clone of a
+//!   resampled parent. `SMC_IMM_SOURCE=observed` is an older alias for
+//!   `SMC_STATE_CORRECTION=immigrants` (E40's original runner uses it);
+//!   `SMC_STATE_CORRECTION` wins if both are set.
+//!
+//! Genes:
+//! - `SMC_PRIOR=path.json`: a JSON array of genes replacing the default list.
+//! - `SMC_CONTAIN=1`: add the containment genes `contain_a`/`contain_b`, so
+//!   the driver draws a containment once a day — the E28 operator.
+//! - `SMC_TAU_OFF=1`: drop the `tau_days` gene so containment is the only stop.
+//! - `SMC_SPOT=1` (E43): switch spotting (embers landing ahead of the front)
+//!   on in the config's wildfire model — see [`enable_spotting`] — and add
+//!   `model.spotting.p_spot` and `model.spotting.median_distance` to the gene
+//!   list, so `map` mode illuminates the spread genes *and* spotting together.
+//! - `SMC_WIND_ROT_GENE=<f64>` (off; E30b): half-width in degrees of a free,
+//!   per-member `wind_rot_deg` gene, uniform on [-h, h], added to the gene
+//!   list only when set; see
+//!   [`cella_lib::wildfire::driver::GENE_WIND_ROT_DEG`]. Each member learns
+//!   its own offset to the forcing's wind *from*-bearing, on top of any fixed
+//!   `SMC_WIND_ROT_DEG` rotation (the fixed knob rotates the input once for
+//!   everyone; this one lets the filter search for a per-member correction).
+//! - `SMC_WIND_ROT_SIGMA=<f64>` (unset; Round 7 Task 5/E45): a per-gene
+//!   mutation-size override on `wind_rot_deg` only; no effect unless
+//!   `SMC_WIND_ROT_GENE` is also set — see [`priors::build_genes`]. Unset
+//!   leaves the gene at the engine's own default sigma. `0` freezes the gene
+//!   at each member's birth draw (resampling still copies it and selection
+//!   still acts on it; only mutation stops), isolating per-member angular
+//!   *diversity* from the *learning* half of the gene.
+//!
+//! Weather and clock:
+//! - `SMC_WIND_ROT_DEG` (0): rotate the whole wind schedule by a fixed number
+//!   of degrees.
+//! - `SMC_STEPS_SCALE=<f64>` (1; E30b): a faster clock — multiplies the
+//!   scenario's own `steps_per_hour` before anything else reads it, so the
+//!   forcing schedule's window step-counts and the wildfire driver's
+//!   containment period (`steps_per_day` is computed from the same field)
+//!   stretch together; one observation window still spans one day of weather
+//!   at any scale. `SMC_STEPS_SCALE=4` turns E30's 50 ticks/day into 200: the
+//!   arrival rule's one-cell-per-tick cap rises from 1.5 km/day to 6 km/day.
+//! - `SMC_WIND_SOURCE=era5|station` (era5; Round 7 Task 6/E46): which wind
+//!   feeds the driver's per-window forcing in `open`/`assim`/`evolve`-forecast
+//!   mode (`modes::open::run`). `station` replaces each window's ERA5 (speed,
+//!   from-bearing) with the station log's vector mean over that same window —
+//!   same daily cadence — falling back to that window's own ERA5 entry
+//!   (counted as `station_fallback_windows` in the report) where the station
+//!   log has no samples in range or no station file exists; see
+//!   [`nulls::wind_schedule_for`]. `era5` leaves every pre-existing field's
+//!   *value* unchanged, but the report is not byte-identical to a
+//!   pre-Round-7 one, since it unconditionally gained `wind_source`,
+//!   `station_fallback_windows` and `contain_growth_floor`. The deterministic
+//!   nulls and `SMC_DIAG`'s `era5_*`/`station_*` fields always read the
+//!   scenario's own ERA5 (or the station log directly) regardless of this
+//!   knob; only the ensemble's own forcing changes.
+//! - `SMC_STATION_WIND=<path>`: path of the station wind log used by
+//!   `nulls` mode, `SMC_DIAG` and `SMC_WIND_SOURCE=station` (default: the
+//!   scenario's own `station_hourly.json`; see `nulls::load_station`).
+//!
+//! Spread rule (E30/E30a): `SMC_SPREAD=bernoulli|arrival`,
+//! `SMC_WIND_LAW=exponential|rear_focus`, `SMC_C2=<f64>`,
+//! `SMC_ARRIVAL_JITTER=<f64>` override the scenario config's wildfire spread
+//! rule / wind law / c2 / jitter before the config is turned into a `Sim` —
+//! see [`configure_spread`]. Each of the four is independent; any left unset
+//! keeps the scenario config's own value, so setting none of them is a no-op.
+//! E30's recommended setting is `SMC_SPREAD=arrival SMC_WIND_LAW=rear_focus`
+//! with `c2` and jitter left at the config's defaults.
+//!
+//! Containment: `SMC_CONTAIN_GROWTH_FLOOR=<f>` (1e-4; Round 7 Task 7/E49): the
+//! floor the containment draw clamps a day's growth ratio to before taking its
+//! log (`WildfireDriver::contain_growth_floor`). Unset is the value the
+//! operator always used, so runs are unchanged; the floor in force is echoed
+//! as the report's `contain_growth_floor` field. Must be finite and > 0.
+//!
+//! `evolve` mode: `SMC_FIT_DAYS` (3) observations to fit on, `SMC_GENERATIONS`
+//! (20), `SMC_POP` (24) population, `SMC_REPEATS` (2) runs per genome.
+//!
+//! `map` mode: `SMC_MAP_DAYS` (5) days of weather, `SMC_GENERATIONS` (30),
+//! `SMC_POP` (32, MAP-Elites batch size), `SMC_MAP_GROWTH_MAX` (0.1, upper end
+//! of the growth behaviour axis).
+//!
+//! `replay` mode: `SMC_MAP_REPLAY=path.json` (required: the `map`-mode report
+//! to re-evaluate), `SMC_REPLAY_TOP` (5 elites), `SMC_REPLAY_SEEDS` (3 seeds
+//! per elite).
+//!
+//! Diagnostics: `SMC_DIAG=1` (off; E48/Round 7 Task 3): opt-in per-window
+//! diagnostics on `ObsScore` — a new `diag` field, omitted from the JSON when
+//! unset so every existing field is byte-identical to before this knob
+//! existed. Emitted by `open`, `assim` and `evolve`'s forecast half alike,
+//! since all three step through the same `modes::open::run` loop. See
+//! [`diag`] for what it adds: the ERA5 wind vector and (when
+//! `station_hourly.json` exists for the scenario) the station vector mean for
+//! the window, the ensemble's per-window median `model.p0`/`wind_scale`/
+//! `wind_rot_deg` (the last `None` unless `SMC_WIND_ROT_GENE` is set), the
+//! per-window interquartile range (spread) of `wind_rot_deg`
+//! (`wind_rot_deg_iqr`, `None` under the same rule), and a head-vs-flank
+//! decomposition of the consensus-vs-truth miss and false-positive cells
+//! (downwind of the ignition centroid, by the window's ERA5 "toward"
+//! direction, vs cross/upwind). Round 7 Task 7 (E49) adds `contain_draws`
+//! (every daily containment draw since the previous scored window: burned
+//! count before/after, raw growth ratio before the floor, the member's
+//! `contain_a`/`contain_b`, and whether it was contained) and
+//! `min_growth_uncontained` (the smallest of those raw growths).
 //!
 //! Default genes (the E25 prior): `model.p0` log-uniform 0.08–0.6,
 //! `model.burn_duration` 5–20, `tau_days` log-uniform 2–100 days,

@@ -194,7 +194,7 @@ g.cell_history(idx);                   // Vec<CellType>, oldest first
 g.cells();                             // &[CellType], the whole current picture
 g.to_cell_states();                    // Vec<CellState>
 g.transition_state_and_buffer(idx, &t) // manual paint; Some(io::Error) if idx is out of bounds
-g.reset_cells(new_cells)?;             // replace the picture; ages, history and counts reset
+g.reset_cells(new_cells)?;             // replace the picture; step, ages, history and counts all reset
 ```
 
 `Grid1D` has the same surface, indexed by cell position; its constructor is
@@ -827,21 +827,23 @@ library that runs work on a pool of worker threads.
 
 #### Thread configuration
 
-The library looks for a `cella.properties` file in the current directory and
-up to four parent directories:
+The library looks for a `cella.properties` file in the current working
+directory and up to four parent directories (the nearest one wins):
 
 ```properties
 threads=8
 ```
 
-- If the file is missing or the key is not set, the count defaults to
-  `std::thread::available_parallelism()` (or 1 on error). The resolved value
-  is cached for the process.
+- If the file is missing, the key is not set, or its value is not a whole
+  number of at least 1, the count defaults to
+  `std::thread::available_parallelism()` (or 1 on error). The key name is
+  case-insensitive, and lines starting with `#` or `//` are comments. The
+  resolved value is cached for the process.
 - Set `threads=1` to force single-threaded execution (useful for debugging).
 - Tests and benchmarks can use `threads::set_thread_override(n)` /
   `clear_thread_override()` for a process-local override.
 - Two environment variables are read once per process and do nothing unless
-  set (see [performance.md](performance.md)): `CELLA_MIN_WORK=<n>` changes
+  set (see [performance.md](performance.md) section 9): `CELLA_MIN_WORK=<n>` changes
   the work-per-chunk threshold below, and `CELLA_MEMBER_PAR=<n>` caps how many
   ensemble members step concurrently.
 
@@ -903,16 +905,20 @@ own build root with its own `cella_lib/target/` directory. That is why the
 | `make coverage` / `make coverage-all` | `cargo llvm-cov --html` for `cella_lib` (the `-all` form includes ignored tests; needs `cargo-llvm-cov`) |
 | `make test-create-snapshots` | regenerate `cella_lib/tests/snapshots/*.txt` |
 | `make test-update-benchmarks` | rewrite `cella_lib/tests/benchmarks_last.json` |
+| `make bench-ab A=<git ref> FILTER='<name>'` | interleaved A/B timing of a git ref against the working tree (see [performance.md](performance.md)) |
+| `make clean` | `cargo clean` at the repository root |
 
 Environment variables the test suite reads:
 
 - `CELLA_ASCII=1`: write ASCII renders of the initial and final grids (off by
-  default; `make test`, `test-all` and `coverage` pin it to `0`).
+  default; `make test`, `test-all`, `coverage` and `coverage-all` pin it to `0`).
 - `CELLA_UPDATE_SNAPSHOTS=1`: write snapshot hashes instead of asserting them.
 - `CELLA_UPDATE_BENCH=1`: write benchmark baselines instead of comparing.
 - `CELLA_BENCH=1`: print per-test timings as they complete.
-- `CELLA_BENCH_RUNS=N`: repeats per benchmark (default 10). Timings are
+- `CELLA_BENCH_RUNS=N`: timed repeats per benchmark (default 10). Timings are
   recorded per thread count (`<name>_t<threads>`).
+- `CELLA_BENCH_WARMUP=N`: untimed warm-up runs before the timed ones
+  (default 1).
 - `CELLA_EXPORT_CONFIGS=1`: write a JSON config file for each scenario the
   tests build.
 

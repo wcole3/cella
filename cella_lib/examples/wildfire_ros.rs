@@ -17,9 +17,20 @@
 //! Output: one JSON array on stdout.
 //!
 //! Usage (from cella_lib/): `cargo run --release --example wildfire_ros -- <mode>`
+//! For example: `cargo run --release --example wildfire_ros -- lb > lb.json`
 //!
-//! Modes:
-//! - `speed` (default, no argument needed): the original E19 table, unchanged.
+//! Terms: a *tick* is one simulation step; *rate of spread* (ROS) is how far
+//! the fire front moves per tick (cells/tick, or metres/tick = cells x 30 m);
+//! *p0* is the base per-neighbour ignition probability; *jitter* is random
+//! noise on arrival times in the `arrival` spread rule; *elongation* / *LB*
+//! (length-to-breadth) is how stretched the burned shape is.
+//!
+//! Output goes to stdout as JSON (progress lines go to stderr). `speed` prints
+//! a bare JSON array; every other mode prints
+//! `{"binary_git": ..., "binary_built_utc": ..., "results": [...]}`.
+//!
+//! Modes (an unrecognised or missing mode runs `speed`):
+//! - `speed` (default): the original E19 table, unchanged.
 //! - `arrival_flat`: the E30a flat-grid speed table, both spread rules,
 //!   wind 0/2/5/8 m/s, p0 0.12/0.22/0.44, burn duration 5/10, 3 seeds.
 //! - `illuminate`: point ignition, both rules, both wind laws. Fix round 2:
@@ -27,7 +38,7 @@
 //!   `WIDTH`/`HEIGHT`/`IGNITE_X` below) instead of centred on a square one,
 //!   after a centred 400x400 grid was found to let the fire's head hit the
 //!   domain boundary at almost exactly the old 10 % checkpoint (see the
-//!   module doc's own arithmetic note above `illuminate`) — every
+//!   arithmetic in the doc comment on `WIDTH`/`HEIGHT`). Every
 //!   checkpoint reads cells burned as an absolute count (2,000 / 5,000 /
 //!   10,000 / 20,000), not a fraction of the grid, and carries a
 //!   `boundary_contact` flag.
@@ -35,8 +46,19 @@
 //!   20,000-cell checkpoints (same domain), scanning `c2` under the
 //!   exponential wind law and also under the rear-focus law, against
 //!   Anderson (1983)'s `LB(U)`, at jitter 0.2 (3 seeds) and jitter 0 (one
-//!   deterministic reading). Also prints the head:back ratio at 0.6 m/s for
-//!   both laws (a closed-form number, not a simulation).
+//!   deterministic reading). Also prints (to stderr) the head:back ratio at
+//!   0.6 m/s for both laws (a closed-form number, not a simulation), and adds
+//!   two rear-focus "template" points at jitter 0 with LB targets 1.2 and 2.0.
+//! - `head_speed`: measured head speed (cells/tick) vs the closed form
+//!   `p0 * exp(c1 * wind)`, arrival rule, jitter 0, both wind laws.
+//!
+//! Env knobs for `illuminate`, `lb` and `head_speed` (all optional; `speed`
+//! and `arrival_flat` ignore them):
+//! - `WF_SEEDS` (default 3; `illuminate`, `lb`), `WF_BURN_DUR` (default 5)
+//! - `WF_P0`: one p0 value (default: 0.12 and 0.22 for `illuminate`/`lb`,
+//!   0.12 for `head_speed`)
+//! - `WF_MAX_STEPS` (default 20,000): tick cap per run
+//! - `WF_DEBUG=1` (any value): `illuminate`, `lb`: print why runs stopped early
 
 use cella_lib::wildfire::{FuelClass, WildfireEnv, WildfireModel, WildfireParams, anderson_lb};
 use cella_lib::{CellType, Grid2D, Rule2D};
@@ -45,7 +67,7 @@ use std::env;
 const W: usize = 240;
 const H: usize = 120;
 
-/// Domain for `illuminate`/`lb` (fix round 2): elongated and wind-aligned,
+/// Domain for `illuminate`/`lb`/`head_speed` (fix round 2): elongated and wind-aligned,
 /// with the ignition placed upwind, so the fire's head has ~860 cells of
 /// room before it can ever reach the far edge. At 8 m/s, rear-focus, p0 =
 /// 0.12, the head's own cost is `1 / (p0 * exp(c1*v))` ~= 5.8 ticks/cell (see
@@ -156,22 +178,16 @@ fn speed(p0: f64, dur: u32, wind: f64, seed: u64, spread: &str, wind_law: &str) 
     (cov / var, t as f64)
 }
 
-/// E12's elongation measure (√(λ1/λ2) of the second-moment matrix of the
-/// tracked cells, unit-square-corrected), reimplemented here rather than
-/// pulled in from `cella_lib::explore::metrics` so this example stays a
-/// plain consumer of the public `Grid2D`/`WildfireModel` API — the exact
-/// second-moment formula this mirrors is documented and tested in
-/// `cella_lib::explore::metrics::elongation`. That shared function clamps
-/// its result to `[1, 10]` (`MAX_ELONGATION`), which is the right ceiling
-/// for the shapes E12/E37 look at; this copy clamps to `[1, 50]` instead
-/// (fix round 2), because rear-focus at 8 m/s on the upwind-ignition domain
-/// below genuinely exceeds 10 (a near-1-D spine can have arbitrarily large
-/// second-moment elongation) — reporting a saturated 10.0 for every
-/// checkpoint would look flat for the wrong reason. 50 is generous headroom
-/// for a length-to-breadth around Anderson's own ceiling of 8 without
-/// blowing up on the smallest checkpoints tested (2,000 cells is already
-/// far past the few-cell regime where a straight line reads as
-/// near-infinite).
+/// E12's elongation measure: sqrt(l1/l2), where l1 >= l2 are the eigenvalues
+/// of the second-moment (covariance) matrix of the tracked cells, with a
+/// 1/12 unit-square correction per axis. Reimplemented here rather than
+/// imported from `cella_lib::explore::metrics::elongation` so this example
+/// stays a plain consumer of the public `Grid2D`/`WildfireModel` API (that
+/// function documents and tests the same formula). The library version clamps
+/// to `[1, 10]` (`MAX_ELONGATION`); this copy clamps to `[1, 50]` instead,
+/// because rear-focus at 8 m/s on the upwind-ignition domain genuinely
+/// exceeds 10, and a saturated 10.0 at every checkpoint would look flat for
+/// the wrong reason.
 fn elongation(cells: &[CellType], w: usize, _h: usize, tracked: impl Fn(CellType) -> bool) -> f64 {
     let (mut n, mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
     for (i, &c) in cells.iter().enumerate() {
@@ -339,8 +355,6 @@ fn run_speed_table() {
     println!("\n]");
 }
 
-/// E30a measurement 1: the E19 flat-grid speed table for both spread rules,
-/// on the combinations the task brief pre-registered.
 /// Opening line for a metadata-wrapped report: `{"binary_git": ...,
 /// "binary_built_utc": ..., "results": [`. `CELLA_GIT_SHA`/`CELLA_BUILT_UTC`
 /// come from `cella_lib/build.rs` (the same fields `wildfire_smc`'s reports
@@ -358,6 +372,8 @@ fn print_report_close() {
     println!("\n]}}");
 }
 
+/// E30a measurement 1: the E19 flat-grid speed table for both spread rules,
+/// on the combinations the task brief pre-registered.
 fn run_arrival_flat() {
     let p0s = [0.12, 0.22, 0.44];
     let durs = [5u32, 10];
@@ -596,8 +612,8 @@ fn run_lb() {
     print_report_close();
 }
 
-/// Fix round 2: measured head speed (cells/tick along +x, from `front_x`)
-/// against the closed form `p0 * exp(c1 * wind_speed)` (identical under
+/// Fix round 2: measured head speed (cells/tick along +x, from the change in
+/// `front_x` between the 5,000- and 20,000-cell checkpoints) against the closed form `p0 * exp(c1 * wind_speed)` (identical under
 /// either wind law), one row per wind, arrival rule, jitter 0 (deterministic,
 /// isolates the rate from per-cell noise).
 fn run_head_speed() {

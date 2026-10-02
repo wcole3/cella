@@ -1,9 +1,11 @@
 //! Reproducible randomness for the whole crate.
 //!
-//! Two tools live here, both built on the SplitMix64 mixer so no external
-//! crate is needed:
+//! Two tools live here, both built on the SplitMix64 mixer (a tiny, well-known
+//! recipe that scrambles a 64-bit integer into a well-spread one) so no
+//! external crate is needed:
 //!
-//! - [`cell_rand`]: a *stateless* draw. Give it a seed, a step number, a cell
+//! - [`cell_rand`]: a *stateless* ("counter-based") draw: there is no
+//!   generator object to advance, only a pure function of its inputs. Give it a seed, a step number, a cell
 //!   index and a stream number and it returns the same number in `[0, 1)`
 //!   every time, on any thread, in any order. The steppers use it for subrule
 //!   `randomness`, the wildfire model uses it for ignition and spotting, and
@@ -13,12 +15,13 @@
 //!   in one place (sampling a prior, resampling an ensemble, choosing parents
 //!   in a genetic algorithm). Same seed, same sequence.
 //!
-//! Streams keep independent uses from reading the same numbers: the wildfire
-//! model owns streams `0..=6`, subrule `i` of a rule draws on
+//! Streams keep independent uses from reading the same numbers (the same seed,
+//! step and cell give a different value on each stream): the wildfire model
+//! owns streams `0..=6`, subrule `i` of a rule draws on
 //! [`STREAM_RULE`]` + i`, and random fill uses [`STREAM_FILL`].
 
 /// First stream reserved for rule subrules: subrule `i` draws on `STREAM_RULE + i`.
-/// Streams below this belong to external models (the wildfire model uses 0..=4).
+/// Streams below this belong to external models (the wildfire model uses 0..=6).
 pub const STREAM_RULE: u64 = 16;
 
 /// Stream used by "random fill" so a fill never reuses a rule's or a model's draws.
@@ -26,7 +29,8 @@ pub const STREAM_FILL: u64 = 64;
 
 /// SplitMix64 finalizer (Steele et al.): a full-avalanche integer mixer.
 ///
-/// Every output bit depends on every input bit, which is what lets
+/// "Avalanche" means flipping one input bit flips about half the output bits,
+/// so every output bit depends on every input bit. That is what lets
 /// [`cell_rand`] combine a seed, a step and an index into one well-spread value.
 #[inline]
 pub fn mix(mut z: u64) -> u64 {
@@ -42,7 +46,8 @@ pub fn mix(mut z: u64) -> u64 {
 /// snapshot-testable. Distinct `stream` values give independent draws for the
 /// same cell and step.
 ///
-/// `idx` is the cell's flat index (`y * width + x` in 2D). Changing a grid's
+/// `idx` is the cell's flat index (`y * width + x` in 2D), and the result is a
+/// 24-bit-resolution `f32`. Changing a grid's
 /// width therefore gives most surviving cells a new stream; see "Resizing a
 /// grid" in docs/lib.md.
 #[inline]
@@ -55,7 +60,8 @@ pub fn cell_rand(seed: u64, step: u64, idx: u64, stream: u64) -> f32 {
     ((z >> 40) as f32) * (1.0 / (1u64 << 24) as f32)
 }
 
-/// SplitMix64 sequential generator — small, fast, reproducible.
+/// SplitMix64 sequential generator — small, fast, reproducible. The whole state
+/// is one `u64` that steps forward on every draw.
 ///
 /// Use it where one piece of code needs a *sequence* of random numbers (an
 /// ensemble resampling its members, a genetic algorithm picking parents). For
@@ -80,13 +86,15 @@ impl Rng {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// Standard normal (mean 0, variance 1) via Box–Muller.
+    /// Standard normal (mean 0, variance 1) via Box–Muller (two uniforms in, one
+    /// bell-curve value out; the first is kept above 1e-12 so `ln` stays finite).
     pub fn normal(&mut self) -> f64 {
         let (u, v) = (self.uniform().max(1e-12), self.uniform());
         (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos()
     }
 
-    /// Log-uniform in `[lo, hi]`: every decade is equally likely. `lo` must be > 0.
+    /// Log-uniform in `[lo, hi]`: every decade is equally likely (1..10 is as
+    /// likely as 10..100). `lo` must be > 0 and `hi >= lo`.
     pub fn log_uniform(&mut self, lo: f64, hi: f64) -> f64 {
         (lo.ln() + self.uniform() * (hi.ln() - lo.ln())).exp()
     }

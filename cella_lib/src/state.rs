@@ -1,14 +1,17 @@
 //! In-memory grid snapshots.
 //!
-//! [`GridState`] is not serializable — it used to be the save-file format,
-//! but round-tripping it directly wrote per-cell state with no scenario
-//! context (no rule name, no colours, nothing to reset back to). It is now
-//! purely an in-memory handoff: [`crate::config::CellaConfig`] builds one
-//! from a live grid to save it (see `save_1d`/`save_2d`), and reads one back
-//! out of a saved snapshot to restore a grid (see `build_grid1d_resumed`/
-//! `build_grid2d_resumed`), both by calling into [`Grid1D::from_state`]/
-//! [`Grid2D::from_state`] below. [`crate::explore::Sim::to_state`]/
-//! `from_state` use it the same way to clone a running simulation.
+//! [`GridState`] is a plain copy of everything a grid needs to be rebuilt:
+//! its cells (with age and history), step counter, seed, rule and counts.
+//! It is deliberately NOT serializable. It once was the save-file format, but
+//! it carried no scenario context (no rule name, no colours, nothing to reset
+//! back to), so saving now goes through [`crate::config::CellaConfig`]
+//! instead. `GridState` is just an in-memory handoff:
+//! - [`crate::config::CellaConfig`] builds one from a live grid when saving
+//!   (`save_1d`/`save_2d`), and turns one back into a grid when resuming
+//!   (`build_grid1d_resumed`/`build_grid2d_resumed`), using
+//!   [`Grid1D::from_state`]/[`Grid2D::from_state`] below.
+//! - [`crate::explore::Sim::to_state`]/`from_state` use it the same way to
+//!   clone a running simulation.
 
 use crate::CellType;
 use crate::grid1d::Grid1D;
@@ -19,6 +22,12 @@ use lasso2::Spur;
 use std::collections::HashMap;
 
 /// In-memory snapshot of either a 1D or 2D grid.
+///
+/// Both variants hold the same core fields: `cell_states` has one entry per
+/// cell (row-major in 2D), `step` is how many steps have run, `seed` drives
+/// the per-cell randomness, and `counts_current`/`peak_counts` map a cell
+/// type's name to its current/highest population. The 2D variant may also
+/// carry the grid's attached external model (e.g. the wildfire model).
 #[derive(Clone, Debug)]
 pub enum GridState {
     D1 {
@@ -46,6 +55,7 @@ pub enum GridState {
 }
 
 impl GridState {
+    /// Copies a live 1D grid into a [`GridState::D1`] snapshot.
     pub fn from_grid1d(g: &Grid1D) -> Self {
         let (current_count_map, peak_count_map) =
             convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
@@ -62,6 +72,8 @@ impl GridState {
         }
     }
 
+    /// Copies a live 2D grid (including its external model, if any) into a
+    /// [`GridState::D2`] snapshot.
     pub fn from_grid2d(g: &Grid2D) -> Self {
         let (current_count_map, peak_count_map) =
             convert_map_spur_to_string(&g.counts_current, &g.peak_counts);
@@ -82,6 +94,9 @@ impl GridState {
 }
 
 impl Grid1D {
+    /// Rebuilds a 1D grid from a snapshot. Returns `None` if `state` is a
+    /// 2D snapshot. If the saved count maps are empty they are recounted
+    /// from the cells.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
             GridState::D1 {
@@ -131,6 +146,10 @@ impl Grid1D {
 }
 
 impl Grid2D {
+    /// Rebuilds a 2D grid from a snapshot. Returns `None` if `state` is a
+    /// 1D snapshot, or if the attached external model rejects this grid
+    /// (see [`Grid2D::attach_model`]). If the saved count maps are empty they
+    /// are recounted from the cells.
     pub fn from_state(state: &GridState) -> Option<Self> {
         match state {
             GridState::D2 {
@@ -178,8 +197,9 @@ impl Grid2D {
                     model: None,
                 };
                 if let Some(model) = model {
-                    // A model that fails validation against its own snapshot is
-                    // a malformed state; treat it like a dimension mismatch.
+                    // A model that fails validation against its own snapshot means
+                    // the snapshot is malformed, so give up (`None`) just as for
+                    // the wrong grid dimension.
                     grid.attach_model(model.clone()).ok()?;
                 }
                 Some(grid)
@@ -189,6 +209,9 @@ impl Grid2D {
     }
 }
 
+/// Turns saved name-keyed count maps back into interned-key maps. An empty
+/// `counts_current` is recounted from the cells; an empty `peak_counts`
+/// starts equal to the current counts.
 fn convert_map_string_to_spur(
     cells: &Vec<CellState>,
     counts_current: &HashMap<String, u64>,
@@ -215,6 +238,7 @@ fn convert_map_string_to_spur(
     (new_counts, new_peak_counts)
 }
 
+/// Inverse of `convert_map_string_to_spur`: resolves interned keys to names.
 fn convert_map_spur_to_string(
     counts_current: &HashMap<Spur, u64>,
     peak_counts: &HashMap<Spur, u64>,
@@ -230,7 +254,11 @@ fn convert_map_spur_to_string(
     (new_counts, new_peak_counts)
 }
 
-/// Convert deserialized CellState vectors to SoA history arrays.
+// The three `soa_*` helpers flatten per-cell `CellState::history` queues into
+// the grid's struct-of-arrays layout: `limit` ring-buffer slots per cell, a
+// head index per cell, and a used-slot count per cell.
+
+/// The flat history buffer (`states.len() * limit` slots, unused ones Inactive).
 pub(crate) fn soa_history(states: &[CellState], limit: usize) -> Vec<CellType> {
     if limit == 0 {
         return Vec::new();
@@ -244,6 +272,7 @@ pub(crate) fn soa_history(states: &[CellState], limit: usize) -> Vec<CellType> {
     }
     data
 }
+/// Per-cell ring-buffer head (next slot to write).
 pub(crate) fn soa_heads(states: &[CellState], limit: usize) -> Vec<u8> {
     if limit == 0 {
         return Vec::new();
@@ -253,6 +282,7 @@ pub(crate) fn soa_heads(states: &[CellState], limit: usize) -> Vec<u8> {
         .map(|cs| (cs.history.len() % limit) as u8)
         .collect()
 }
+/// Per-cell number of filled history slots.
 pub(crate) fn soa_counts(states: &[CellState], limit: usize) -> Vec<u8> {
     if limit == 0 {
         return Vec::new();

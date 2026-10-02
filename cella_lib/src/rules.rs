@@ -15,8 +15,9 @@ use memoize::memoize;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
 
-/// Lightweight cell-type counter for hotpath use.
-/// Avoids HashMap allocation; typically < 20 unique types.
+/// Lightweight cell-type counter for hotpath use: a small `Vec` of
+/// `(type, count)` pairs searched linearly. Cheaper than a `HashMap` because a
+/// grid typically has fewer than 20 distinct types.
 #[derive(Clone, Debug)]
 pub struct TypeCounter {
     entries: Vec<(CellType, u64)>,
@@ -31,6 +32,7 @@ impl TypeCounter {
         }
     }
 
+    /// Add one count of `t`, creating its entry on first sight.
     pub fn add(&mut self, t: CellType) {
         for e in &mut self.entries {
             if e.0 == t {
@@ -70,6 +72,7 @@ impl TypeCounter {
         }
     }
 
+    /// Fold all of `other`'s counts into `self` (used to combine per-chunk results).
     pub fn merge(&mut self, other: &Self) {
         // `continue 'outer` (not `return`): every entry of `other` must be folded in.
         'outer: for (t, c) in &other.entries {
@@ -83,6 +86,7 @@ impl TypeCounter {
         }
     }
 
+    /// Iterate over `(type, count)` pairs in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (&CellType, &u64)> {
         self.entries.iter().map(|(t, c)| (t, c))
     }
@@ -175,6 +179,8 @@ pub(crate) mod serde_u128 {
 }
 
 /// Neighborhood types for 2D rules.
+///
+/// In every case the centre cell itself is not a neighbor.
 ///
 /// - `Moore`: all cells in the (2n+1)x(2n+1) square.
 /// - `VonNeumann`: cells with Manhattan distance <= n.
@@ -306,23 +312,31 @@ fn knight_reachable(dx: i32, dy: i32, max_moves: u8) -> bool {
 /// Validation errors for rules.
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum RuleError {
+    /// 1D `n` is below 1.
     #[error("invalid neighborhood size n for 1D rule: {0}")]
     InvalidN1D(u8),
+    /// 1D `n` is above 3: the window would need more than 128 table bits.
     #[error("too many neighborhood patterns for n={0}; supported up to n<=3")]
     TooManyPatterns(u8),
+    /// The Wolfram code has bits beyond the table for this `n`.
     #[error("wolfram code {0} exceeds maximum for n={1}")]
     InvalidWolframCode(u128, u8),
+    /// `randomness` is outside `0.0..=1.0`.
     #[error("randomness must be in [0.0, 1.0]")]
     InvalidRandomness,
+    /// 2D `range` is below 1, or `limit` is inconsistent with `op`/`count`
+    /// (`Eq` with a limit, or an empty between-range).
     #[error("range must be >= 1")]
     InvalidRange2D,
 }
 
 /// One subrule for a 1D automaton using Wolfram-style code.
 ///
-/// The `wolfram_code` bitmask enumerates all neighborhood windows of
-/// size 2n+1, interpreting a bit=1 as a match when the window equals
-/// the pattern of `criteria_type` vs "other".
+/// For each cell whose type is `current_type`, the `2n+1` cells centred on it
+/// are turned into bits (1 = "is `criteria_type`", 0 = anything else, read
+/// left to right). That bit pattern is a number `idx`; the subrule fires when
+/// bit `idx` of `wolfram_code` is set. This is the usual Wolfram rule-number
+/// scheme (rule 30 = `wolfram_code: 30`, n = 1).
 ///
 /// Example
 /// ```rust
@@ -334,21 +348,28 @@ pub enum RuleError {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule1DSubrule {
     #[serde(with = "serde_u128")]
+    /// The rule table: bit `idx` says whether window pattern `idx` fires.
     pub wolfram_code: u128,
-    /// Optional randomness in (0-1); pass only if random >= value.
+    /// Optional randomness in `[0.0, 1.0]`: a matching cell draws a uniform
+    /// number in `[0, 1)` and the subrule is skipped when the draw is below
+    /// this value, so `Some(0.0)` always fires and `Some(1.0)` never does.
     pub randomness: Option<f64>,
-    /// Neighborhood radius (>=1): window size is 2n+1.
+    /// Neighborhood radius (1 to 3): window size is 2n+1.
     pub n: u8,
+    /// Type the cell becomes when the subrule fires.
     pub output_type: CellType,
+    /// Only cells of this type are tested by this subrule.
     pub current_type: CellType,
+    /// The type counted as a 1 bit when reading the window.
     pub criteria_type: CellType,
 }
 
 impl Rule1DSubrule {
     /// Validate subrule parameters.
     ///
-    /// Ensures `n>=1`, `randomness` in (0-1), and `wolfram_code` within range
-    /// for the window size (when computable within u128 limits).
+    /// Ensures `1 <= n <= 3`, `randomness` in `[0.0, 1.0]`, and `wolfram_code`
+    /// within range for the window size (n = 3 uses all 128 bits, so any
+    /// `u128` is valid there).
     pub fn validate(&self) -> Result<(), RuleError> {
         if self.n < 1 {
             return Err(RuleError::InvalidN1D(self.n));
@@ -376,10 +397,12 @@ impl Rule1DSubrule {
         Ok(())
     }
 
-    /// Compute the wolfram-code bit index for the given neighborhood window.
-    /// Returns `true` if the corresponding bit in `wolfram_code` is set.
+    /// Turn `neighborhood` (the whole `2n+1` window, left to right) into a bit
+    /// index (1 where the cell is `criteria_type`) and return whether that bit
+    /// of `wolfram_code` is set.
     ///
-    /// Caller already verified `current_type == self.current_type`.
+    /// Caller already verified `current_type == self.current_type`. This is the
+    /// plain reference version; the stepper uses faster specialised code.
     #[inline]
     pub fn applies(&self, neighborhood: &[CellType]) -> bool {
         let crit = &self.criteria_type;
@@ -394,6 +417,7 @@ impl Rule1DSubrule {
 /// A 1D rule consisting of multiple subrules evaluated in order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule1D {
+    /// Tried in order for each cell; the first one that matches wins.
     pub subrules: Vec<Rule1DSubrule>,
 }
 
@@ -439,7 +463,9 @@ pub(crate) struct Sub1DPlan {
 ///
 /// # What shape qualifies?
 ///
-/// A classic two-state Wolfram automaton, written as two subrules:
+/// A classic two-state Wolfram automaton, written as exactly two subrules with
+/// `n = 1`, no randomness, the same code `C` (below 256) in both, and
+/// `active` different from the inactive type:
 ///
 /// ```text
 /// { current: active,   criteria: active, code: C, n: 1, output: active }
@@ -560,7 +586,24 @@ impl Rule1DPlan {
     }
 }
 
-/// One subrule for a 2D automaton using threshold counts in a neighborhood.
+/// Comparison operator for neighbor counts. `Lt` and `Gt` are inclusive
+/// ("at most" / "at least"), not strict; see docs/performance.md §2.5.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CountOp {
+    /// At most (inclusive): `neighbor_count <= count`.
+    #[serde(rename = "lt")]
+    Lt,
+    /// At least (inclusive): `neighbor_count >= count`.
+    #[serde(rename = "gt")]
+    Gt,
+    /// Equal to: `neighbor_count == count`.
+    #[serde(rename = "eq")]
+    Eq,
+}
+
+/// One subrule for a 2D automaton: a cell of `current_type` becomes
+/// `output_type` when the number of `criteria_type` cells in its neighborhood
+/// passes the `op` / `count` (/ `limit`) test.
 ///
 /// Example
 /// ```rust
@@ -572,21 +615,6 @@ impl Rule1DPlan {
 ///  b.clone(), None, None );
 /// assert!(s.validate().is_ok());
 /// ```
-/// Comparison operator for neighbor counts.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum CountOp {
-    /// At most (inclusive): `neighbor_count <= target_count`.
-    #[serde(rename = "lt")]
-    Lt,
-    /// At least (inclusive): `neighbor_count >= target_count`.
-    #[serde(rename = "gt")]
-    Gt,
-    /// Equal to: `neighbor_count == target_count`.
-    #[serde(rename = "eq")]
-    Eq,
-}
-
-/// One subrule for a 2D automaton using neighbor-count comparisons.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Rule2DSubrule {
     /// Sorted offsets for deterministic iteration and better cache locality.
@@ -609,9 +637,11 @@ pub struct Rule2DSubrule {
     pub(crate) cond_lo: u32,
     #[serde(skip)]
     pub(crate) cond_hi: u32,
-    /// Optional randomness in (0-1); pass only if random >= value.
+    /// Optional randomness in `[0.0, 1.0]`: a matching cell draws a uniform
+    /// number in `[0, 1)` and the subrule is skipped when the draw is below
+    /// this value, so `Some(1.0)` never fires.
     pub randomness: Option<f64>,
-    /// Comparison operator: lt/gt/eq. When accompanied by `limit`, creates a
+    /// Comparison operator: lt/gt/eq (`Lt`/`Gt` inclusive). When accompanied by `limit`, creates a
     /// between-range inclusive clause (see `validate`).
     pub op: CountOp,
     /// Optional bound for "between":
@@ -621,15 +651,23 @@ pub struct Rule2DSubrule {
     pub limit: Option<u32>,
     /// Comparison baseline value.
     pub count: u32,
-    /// Range n >= 1 defines (2n+1)^2 window.
+    /// Neighborhood radius `n >= 1` (for `Moore`, a (2n+1)^2 window; see
+    /// [`Neighborhood2D`] for the other shapes).
     pub range: u8,
+    /// Shape of the neighborhood.
     pub neighborhood: Neighborhood2D,
+    /// Type the cell becomes when the subrule fires.
     pub output_type: CellType,
+    /// Only cells of this type are tested by this subrule.
     pub current_type: CellType,
+    /// The type counted among the neighbors.
     pub criteria_type: CellType,
 }
 
 impl Rule2DSubrule {
+    /// Build a subrule and precompute its derived fields (`offsets`, `pad`,
+    /// `early_exit`, `cond_lo`/`cond_hi`). Always construct through this (or
+    /// deserialization, which calls it) rather than a struct literal.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         current_type: CellType,
@@ -677,7 +715,10 @@ impl Rule2DSubrule {
         }
     }
 
-    /// Validate subrule parameters (range>=1 and randomness/limit bounds).
+    /// Validate subrule parameters: `range >= 1`, `randomness` in `[0.0, 1.0]`,
+    /// and a consistent `limit` (none for `Eq`; at least `count` for `Gt`; at
+    /// most `count` for `Lt`). Bad `range` and `limit` both report
+    /// [`RuleError::InvalidRange2D`].
     pub fn validate(&self) -> Result<(), RuleError> {
         if self.range < 1 {
             return Err(RuleError::InvalidRange2D);
@@ -758,6 +799,7 @@ impl<'de> Deserialize<'de> for Rule2DSubrule {
 /// A 2D rule consisting of multiple subrules evaluated in order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rule2D {
+    /// Tried in order for each cell; the first one that matches wins.
     pub subrules: Vec<Rule2DSubrule>,
 }
 
@@ -873,8 +915,9 @@ pub(crate) struct Rule2DPlan {
     pub pad: usize,
     /// Rough estimate of work per cell (total neighbor visits across all
     /// subrules). Only used to decide how many parallel chunks a step is worth
-    /// splitting into. Deliberately an over-estimate — that direction is safe,
-    /// because it never makes a too-small grid look worth parallelizing.
+    /// splitting into. It ignores early exit and how often each subrule
+    /// matches, so it can over-estimate and split slightly too eagerly
+    /// (docs/performance.md §3.14).
     pub work_per_cell: usize,
     /// `Some` when the rule matches the [`PackedThreshold2D`] shape and the
     /// bit-parallel fast path may be attempted.

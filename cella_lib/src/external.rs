@@ -3,9 +3,12 @@
 //! An [`ExternalModel`] replaces the subrule engine for a [`Grid2D`]: instead of
 //! evaluating `Rule2D` subrules, `step()` hands each chunk of the grid to the
 //! model, which computes the next cell types with whatever logic it likes
-//! (equation-based, stochastic, spatially heterogeneous, ...). The engine keeps
-//! ownership of every bookkeeping invariant — ages, history, population counts,
-//! double buffering, chunked parallelism — so a model cannot corrupt them.
+//! (equation-based, stochastic, spatially heterogeneous, ...). A *chunk* is a
+//! contiguous run of cells (flat indices `start..start + len`); the engine
+//! splits the grid into chunks so several worker threads can step it at once.
+//! The engine keeps ownership of every bookkeeping invariant — ages, history,
+//! population counts, double buffering, chunked parallelism — so a model
+//! cannot corrupt them.
 //!
 //! Models are open for downstream extension: implement [`ExternalModel`] in any
 //! crate, annotate the impl with `#[typetag::serde(name = "...")]`, and the
@@ -19,16 +22,22 @@
 //! `step_chunk` is called concurrently from worker threads, potentially with
 //! any partition of the grid into chunks. To keep runs reproducible and
 //! independent of thread count, a model must derive any randomness it needs
-//! from per-cell counters (e.g. a stateless hash of `(seed, ctx.step, index)`)
-//! rather than from shared mutable RNG state.
+//! from per-cell counters rather than from shared mutable RNG state. The
+//! helper for this is [`crate::rng::cell_rand`]`(seed, ctx.step, index, stream)`:
+//! a stateless hash that returns the same number in `[0, 1)` for the same
+//! four inputs, whichever thread asks and in whatever order. Pick a `stream`
+//! below [`crate::rng::STREAM_RULE`] (16) so you do not reuse a subrule's draws.
 
 use crate::types::CellType;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 
-/// Read-only view of a grid handed to [`ExternalModel::attach`].
+/// Read-only view of a grid handed to [`ExternalModel::attach`] and
+/// [`ExternalModel::resize`].
 pub struct GridView<'a> {
+    /// Grid width in cells.
     pub width: usize,
+    /// Grid height in cells.
     pub height: usize,
     /// Current cell types, row-major, length `width * height`.
     pub cells: &'a [CellType],
@@ -50,7 +59,9 @@ pub struct ChunkCtx<'a> {
     pub ages: &'a [u32],
     /// Flat index of the chunk's first cell.
     pub start: usize,
+    /// Grid width in cells (the whole grid, not just this chunk).
     pub width: usize,
+    /// Grid height in cells (the whole grid, not just this chunk).
     pub height: usize,
     /// The step counter *before* this step is applied.
     pub step: u64,
@@ -72,17 +83,22 @@ pub struct ModelEvent {
     pub new_type: CellType,
 }
 
-/// Errors from [`ExternalModel::attach`] validation.
+/// Errors a model (or the engine on its behalf) can report: from
+/// [`ExternalModel::attach`] validation, [`ExternalModel::set_param`], resize
+/// and similar calls.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ModelError {
+    /// A per-cell layer does not have one value per grid cell.
     #[error("layer '{layer}' has length {got}, expected {expected} (width * height)")]
     LayerLength {
         layer: &'static str,
         expected: usize,
         got: usize,
     },
+    /// A parameter, key or value was refused; the string says why.
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
+    /// A type name the model wants clashes with one already in use.
     #[error("cell type name collision: {0}")]
     NameCollision(String),
 }
@@ -95,9 +111,13 @@ pub enum ModelError {
 /// parameter is described by that parameter's [`ParamKind`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParamValue {
+    /// A real number.
     Float(f64),
+    /// A whole number.
     Int(i64),
+    /// An on/off switch.
     Bool(bool),
+    /// The name of one of a fixed set of options.
     Choice(String),
     /// A string of bits packed into a `u128` (bit `i` is switch `i`), e.g. a
     /// 1D Wolfram code. Serialised as a decimal string so 128-bit values
@@ -116,6 +136,7 @@ pub enum ParamKind {
     Float {
         min: f64,
         max: f64,
+        /// Suggested slider increment (a hint for the UI, not enforced).
         step: f64,
     },
     /// Discrete value; bounds are inclusive.
@@ -123,6 +144,7 @@ pub enum ParamKind {
         min: i64,
         max: i64,
     },
+    /// An on/off switch; there is no range to check.
     Bool,
     /// One of a fixed set of names.
     Choice {
@@ -153,6 +175,7 @@ pub struct ParamDesc {
     pub help: Option<String>,
     /// Optional unit suffix for display, e.g. "m/s", "°".
     pub unit: Option<String>,
+    /// The control type and its valid range.
     pub kind: ParamKind,
     /// Whether changing this invalidates derived state, and so requires the
     /// engine to re-run `attach`. See `Grid2D::set_model_param`.
@@ -187,8 +210,11 @@ pub trait ExternalModel: Send + Sync {
     }
 
     /// Estimated work per cell in nominal neighbor visits, feeding the
-    /// engine's parallel chunk sizing. Defaults to a Moore-1 weight plus the
-    /// bookkeeping pass.
+    /// engine's parallel chunk sizing (`cells * work_per_cell` is compared with
+    /// [`crate::threads::MIN_WORK_PER_CHUNK`] to decide how many chunks to use).
+    /// Defaults to 12: roughly 8 for a Moore radius-1 neighborhood plus the
+    /// engine's own per-cell bookkeeping pass. A heavier model should return
+    /// more so big grids split sooner.
     fn work_per_cell(&self) -> usize {
         12
     }
@@ -292,7 +318,8 @@ use crate::rules::{TypeCounter, apply_counts};
 use crate::threads::{chunks_for_work, pool};
 use rayon::prelude::*;
 
-/// Check a value against a parameter's declared kind and bounds.
+/// Check a value against a parameter's declared kind and bounds (the
+/// engine-side half of [`Grid2D::set_model_param`]).
 ///
 /// This is the generic validation the engine runs before any model code sees
 /// the value, which is why a model author writes no range checks at all: the
@@ -478,6 +505,8 @@ impl Grid2D {
         let nchunks = chunks_for_work(total.saturating_mul(model.work_per_cell().max(1)));
         let cells = &self.cells;
         let inactive = self.inactive;
+        // `dt`, the dominant type, is left out of the per-chunk counts below;
+        // `apply_counts` derives its count from the total instead.
         let dt = self.dominant_type;
         let step = self.step;
 

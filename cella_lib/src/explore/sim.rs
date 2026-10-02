@@ -20,7 +20,9 @@ use crate::types::CellType;
 /// A 1D or 2D grid behind one interface.
 #[derive(Clone)]
 pub enum Sim {
+    /// A one-dimensional grid (a row of cells).
     D1(Grid1D),
+    /// A two-dimensional grid.
     D2(Grid2D),
 }
 
@@ -196,7 +198,8 @@ impl Sim {
         self.cells().iter().map(|c| types.contains(c)).collect()
     }
 
-    /// Replace every cell and start over (see [`Grid2D::reset_cells`]).
+    /// Replace every cell and start over: ages and history are cleared and the
+    /// step counter goes back to 0 (see [`Grid2D::reset_cells`]).
     pub fn reset_cells(&mut self, cells: Vec<CellType>) -> Result<(), ModelError> {
         match self {
             Sim::D1(g) => g.reset_cells(cells),
@@ -215,16 +218,18 @@ impl Sim {
 
     /// Set one cell's type in place — the same move a live paint tool makes
     /// (see [`Grid2D::transition_state_and_buffer`]): its age resets to 0 if
-    /// the type actually changed, an attached model is told via
-    /// `on_paint`, but nothing else about the grid moves. Unlike
+    /// the type actually changed (the same type just ages it by one), the
+    /// cell's history is advanced, and an attached model is told via
+    /// `on_paint`; nothing else about the grid moves. Unlike
     /// [`Self::reset_cells`] this does **not** touch the step counter,
-    /// which is exactly why a [`super::driver::MemberDriver`] rebuilding an
-    /// immigrant's grid from an observation
+    /// which is exactly why a [`super::driver::MemberDriver`] rebuilding a
+    /// child's grid from an observation
     /// ([`super::driver::MemberDriver::seed_from_observation`]) must use
     /// this instead: the ensemble relies on every member reporting the same
     /// step count, and a driver has no business changing that. Population
     /// counts are not updated here (a live paint tool already leaves them
     /// stale the same way); they catch up at the member's next step.
+    /// Fails if `idx` is outside the grid.
     pub fn paint(&mut self, idx: usize, new_type: CellType) -> Result<(), ModelError> {
         let refused = match self {
             Sim::D1(g) => g.transition_state_and_buffer(idx, &new_type),

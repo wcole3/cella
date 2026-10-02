@@ -1,13 +1,25 @@
 //! Run the `ensemble` or `evolve` block of any config from the command line.
 //!
+//! Background: an *ensemble* is a population of simulations ("members"), each
+//! with its own gene values, that is stepped forward together and can learn
+//! from an observed mask. *Evolve* runs a genetic search (population,
+//! generations, scoring) over the same genes to find good settings.
+//!
 //! ```text
 //! cd cella_lib
 //! cargo run --release --example explore -- <config.json> ensemble <steps> [report.json]
 //! cargo run --release --example explore -- <config.json> evolve [report.json] [--cell i[,j[,k]]]
 //! ```
 //!
+//! The report path defaults to `explore_ensemble.json` / `explore_evolve.json`
+//! in the current directory. `--cell` picks one cell of the quality-diversity
+//! archive (the grid of "elite" genomes) instead of the overall best genome;
+//! it only has an effect when the evolve block uses an archive. Put the report
+//! path *before* `--cell`: any non-`--` argument after the mode is treated as
+//! a positional, so the `i,j` value after `--cell` would be read as the path.
+//!
 //! Environment overrides (all optional):
-//! - `EXPLORE_SEED`: replace the block's seed (and the grid seed)
+//! - `EXPLORE_SEED`: replace the seed of the grid and of the ensemble/evolve block
 //! - `EXPLORE_GENES=path`: a JSON array of genes replacing the block's list
 //! - `EXPLORE_EVERY`: ensemble, report every N steps (default 10)
 //! - `EXPLORE_MASKS=path`: ensemble, `[{"step": k, "mask": [0/1 per cell]}]`;
