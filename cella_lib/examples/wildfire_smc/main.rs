@@ -69,8 +69,8 @@
 //! `<mode>` is `open|assim|evolve|map|replay|nulls`. Only `<scenario_dir>`
 //! (needs `scenario.json`, `truth.json`, `config.json`) is required. Defaults:
 //! `<members>` 32 (ignored by `map`/`replay`/`nulls`), `<mode>` `open`,
-//! `<out.json>` `smc_report.json`. Any other mode string is not rejected: it
-//! runs the shared `open` loop and is recorded under that name in the report.
+//! `<out.json>` `smc_report.json`. Any other mode string is rejected: the
+//! program prints the valid modes and exits with status 2.
 //!
 //! # Environment knobs
 //!
@@ -297,11 +297,32 @@ fn weather_schedule(sc: &Scenario, rot: f64) -> Vec<WeatherWindow> {
         .collect()
 }
 
+/// Every mode the example understands.
+const MODES: [&str; 6] = ["open", "assim", "evolve", "map", "replay", "nulls"];
+
+/// Checks the `<mode>` argument. `None` (not given) means `open`. A name that
+/// is not in [`MODES`] is an error that lists the valid ones, so a typo does
+/// not silently run the `open` loop.
+fn parse_mode(arg: Option<&str>) -> Result<String, String> {
+    let mode = arg.unwrap_or("open");
+    if MODES.contains(&mode) {
+        Ok(mode.to_string())
+    } else {
+        Err(format!(
+            "unknown mode `{mode}`; valid modes are: {}",
+            MODES.join(", ")
+        ))
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = PathBuf::from(args.get(1).expect("scenario dir"));
     let members: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(32);
-    let mode = args.get(3).cloned().unwrap_or_else(|| "open".into());
+    let mode = parse_mode(args.get(3).map(String::as_str)).unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    });
     let out = PathBuf::from(
         args.get(4)
             .cloned()
@@ -402,4 +423,26 @@ fn main() {
         fit,
         &dir,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_known_mode_and_the_default_are_accepted() {
+        for m in MODES {
+            assert_eq!(parse_mode(Some(m)).unwrap(), m);
+        }
+        assert_eq!(parse_mode(None).unwrap(), "open");
+    }
+
+    #[test]
+    fn unknown_mode_is_rejected_and_the_error_lists_the_valid_modes() {
+        let err = parse_mode(Some("foo")).unwrap_err();
+        assert!(err.contains("foo"), "{err}");
+        for m in MODES {
+            assert!(err.contains(m), "{err}");
+        }
+    }
 }

@@ -14,9 +14,8 @@
 //! The report path defaults to `explore_ensemble.json` / `explore_evolve.json`
 //! in the current directory. `--cell` picks one cell of the quality-diversity
 //! archive (the grid of "elite" genomes) instead of the overall best genome;
-//! it only has an effect when the evolve block uses an archive. Put the report
-//! path *before* `--cell`: any non-`--` argument after the mode is treated as
-//! a positional, so the `i,j` value after `--cell` would be read as the path.
+//! it only has an effect when the evolve block uses an archive. The report
+//! path can go before or after `--cell i,j`.
 //!
 //! Environment overrides (all optional):
 //! - `EXPLORE_SEED`: replace the seed of the grid and of the ensemble/evolve block
@@ -319,6 +318,23 @@ fn run_ensemble(cfg: &CellaConfig, config_path: &str, steps: u64, out: &Path) {
     eprintln!("-> {}", out.display());
 }
 
+/// The positional arguments (the ones that are not flags) in `rest`, which is
+/// everything after the mode. Today the only flag that takes a value is
+/// `--cell`; its value is skipped together with it, so `--cell 1,2` never
+/// leaks `1,2` into the positionals. Any other `--flag` is skipped alone.
+fn positionals(rest: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut iter = rest.iter();
+    while let Some(a) = iter.next() {
+        if a == "--cell" {
+            iter.next(); // its value belongs to the flag
+        } else if !a.starts_with("--") {
+            out.push(a.as_str());
+        }
+    }
+    out
+}
+
 fn parse_cell(args: &[String]) -> Option<Vec<u32>> {
     let pos = args.iter().position(|a| a == "--cell")?;
     let spec = args.get(pos + 1)?;
@@ -429,11 +445,7 @@ fn main() {
     let mode = args.get(2).expect(usage).clone();
     let mut cfg: CellaConfig = load(Path::new(&config_path));
     apply_overrides(&mut cfg);
-    let positional: Vec<&String> = args
-        .iter()
-        .skip(3)
-        .filter(|a| !a.starts_with("--"))
-        .collect();
+    let positional = positionals(&args[3..]);
     match mode.as_str() {
         "ensemble" => {
             let steps: u64 = positional
@@ -443,9 +455,8 @@ fn main() {
             let out = PathBuf::from(
                 positional
                     .get(1)
-                    .cloned()
-                    .cloned()
-                    .unwrap_or_else(|| "explore_ensemble.json".into()),
+                    .copied()
+                    .unwrap_or("explore_ensemble.json"),
             );
             run_ensemble(&cfg, &config_path, steps, &out);
         }
@@ -453,12 +464,46 @@ fn main() {
             let out = PathBuf::from(
                 positional
                     .first()
-                    .cloned()
-                    .cloned()
-                    .unwrap_or_else(|| "explore_evolve.json".into()),
+                    .copied()
+                    .unwrap_or("explore_evolve.json"),
             );
             run_evolve(&cfg, &config_path, &out, parse_cell(&args));
         }
         _ => panic!("{usage}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn cell_value_is_not_a_positional() {
+        let args = strings(&["--cell", "1,2"]);
+        assert!(positionals(&args).is_empty());
+        // The report path may come before or after the flag.
+        let args = strings(&["out.json", "--cell", "1,2"]);
+        assert_eq!(positionals(&args), vec!["out.json"]);
+        let args = strings(&["--cell", "1,2", "out.json"]);
+        assert_eq!(positionals(&args), vec!["out.json"]);
+        let args = strings(&["50", "--cell", "3", "out.json"]);
+        assert_eq!(positionals(&args), vec!["50", "out.json"]);
+    }
+
+    #[test]
+    fn plain_arguments_are_positionals() {
+        let args = strings(&["10", "r.json"]);
+        assert_eq!(positionals(&args), vec!["10", "r.json"]);
+    }
+
+    #[test]
+    fn parse_cell_reads_the_value_after_the_flag() {
+        let args = strings(&["cfg", "evolve", "--cell", "1, 2"]);
+        assert_eq!(parse_cell(&args), Some(vec![1, 2]));
+        assert_eq!(parse_cell(&strings(&["cfg", "evolve"])), None);
     }
 }
