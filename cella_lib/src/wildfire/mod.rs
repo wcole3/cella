@@ -1540,14 +1540,13 @@ impl WildfireModel {
     /// The arrival rule's stepper: minimum travel time, not ignition
     /// chance. See the [module docs](self) and [`WildfireDerived::arrival`].
     ///
-    /// Unlike [`Self::step_chunk_bernoulli`] this does not build the
-    /// burning-neighbor bitmap; it just walks every cell of the chunk (the
-    /// "plain per-cell path" the task brief allows), which is simpler and
-    /// still chunk-parallel-safe because a chunk only ever touches `arrival`
-    /// entries inside its own `start .. start + next.len()` range, and every
-    /// neighbour it reads as a source is read from `cells` (the previous
-    /// tick's snapshot), never from another chunk's in-progress work this
-    /// tick.
+    /// Like [`Self::step_chunk_bernoulli`] it uses a fire-front bitmap, so it
+    /// only visits the cells that can change (see "The fire-front mask"
+    /// below). It is chunk-parallel-safe because a chunk only ever touches
+    /// `arrival` entries inside its own `start .. start + next.len()` range,
+    /// and every neighbour it reads as a source is read from `cells` (the
+    /// previous tick's snapshot), never from another chunk's in-progress work
+    /// this tick.
     ///
     /// One tick of local Dijkstra/eikonal relaxation: for each still-
     /// unburned fuel cell with at least one burning-or-burned neighbour `j`,
@@ -1569,7 +1568,229 @@ impl WildfireModel {
     /// `arrival_rule_is_isotropic_at_calm_wind` test below). The cell
     /// ignites the first tick its own number (`ctx.step + 1`, the tick this
     /// step produces) reaches its `arrival` value.
+    ///
+    /// # The fire-front mask
+    ///
+    /// A cell can change its type, or write its `arrival` entry, only if
+    ///
+    /// * it is Burning (it ages, may burn out, and may throw a spot fire), or
+    /// * it is not Burning and not Burned **and** at least one of its eight
+    ///   neighbours is Burning or Burned (a source for the travel-time
+    ///   calculation).
+    ///
+    /// Every other cell either has no source neighbour (`any` stays false and
+    /// nothing is written) or takes one of the early exits (Burned, or
+    /// `p_base <= 0`). Burned neighbours count as sources, not just Burning
+    /// ones: a cell next to burned ground can still be waiting for its
+    /// arrival time to come due, so it must be revisited every tick until it
+    /// ignites.
+    ///
+    /// So the loop builds two bitmaps (one bit per cell, for this chunk's
+    /// rows plus a one-row halo above and below): "source" (Burning or
+    /// Burned) and "Burned". The visit set is `dilate8(source) & !Burned`:
+    /// every cell that touches a source, minus Burned cells (which do
+    /// nothing). That is a thin band around the fire instead of every cell,
+    /// and it leaves out the growing burned interior, so it stays
+    /// perimeter-sized. Skipped cells would never have written anything, so
+    /// the results are bit-identical to visiting every cell; the test-only
+    /// `step_chunk_arrival_reference` keeps the original every-cell loop to
+    /// prove it.
+    ///
+    /// Spot-fire events come out in the same (row-major) order as before,
+    /// because the visit order is still row-major.
     fn step_chunk_arrival(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
+        let d = &self.derived;
+        let dir = self.dir_factors();
+        let mut events = Vec::new();
+        let width = ctx.width;
+        let height = ctx.height;
+        let cells = ctx.cells;
+        let start = ctx.start;
+        let len = next.len();
+        if len == 0 {
+            return events;
+        }
+        // Default: cells untouched by fire keep their type.
+        next.copy_from_slice(&cells[start..start + len]);
+        let tick_after = (ctx.step + 1) as f32;
+
+        // Bitmaps for the chunk's rows plus a one-row halo: `src` = Burning or
+        // Burned (a possible source), `burned` = Burned only.
+        let wpr = width.div_ceil(64); // words per row
+        let y_first = start / width;
+        let y_last = (start + len - 1) / width;
+        let y_lo = y_first.saturating_sub(1);
+        let y_hi = (y_last + 1).min(height - 1);
+        let nrows = y_hi - y_lo + 1;
+        let mut src = vec![0u64; nrows * wpr];
+        let mut burned = vec![0u64; nrows * wpr];
+        for r in 0..nrows {
+            let row = (y_lo + r) * width;
+            for x in 0..width {
+                let c = cells[row + x];
+                if c == d.burned {
+                    src[r * wpr + x / 64] |= 1 << (x % 64);
+                    burned[r * wpr + x / 64] |= 1 << (x % 64);
+                } else if c == d.burning {
+                    src[r * wpr + x / 64] |= 1 << (x % 64);
+                }
+            }
+        }
+        let zero = vec![0u64; wpr];
+
+        for y in y_first..=y_last {
+            let r = y - y_lo;
+            let cur_s = &src[r * wpr..(r + 1) * wpr];
+            let up: &[u64] = if y > 0 {
+                &src[(r - 1) * wpr..r * wpr]
+            } else {
+                &zero
+            };
+            let dn: &[u64] = if y + 1 < height {
+                &src[(r + 1) * wpr..(r + 2) * wpr]
+            } else {
+                &zero
+            };
+            let cur_burned = &burned[r * wpr..(r + 1) * wpr];
+            // The chunk may start or end mid-row; only visit its own cells.
+            let row_start = y * width;
+            let x_lo = start.saturating_sub(row_start);
+            let x_hi = (start + len - row_start).min(width);
+            for k in (x_lo / 64)..=((x_hi - 1) / 64) {
+                let shl = |row: &[u64]| (row[k] << 1) | if k > 0 { row[k - 1] >> 63 } else { 0 };
+                let shr =
+                    |row: &[u64]| (row[k] >> 1) | if k + 1 < wpr { row[k + 1] << 63 } else { 0 };
+                // Source-or-touching-a-source, minus Burned cells.
+                let mut m = (shl(up)
+                    | up[k]
+                    | shr(up)
+                    | shl(cur_s)
+                    | cur_s[k]
+                    | shr(cur_s)
+                    | shl(dn)
+                    | dn[k]
+                    | shr(dn))
+                    & !cur_burned[k];
+                // Clip to this chunk's cells within the row.
+                if k == x_lo / 64 {
+                    m &= !0u64 << (x_lo % 64);
+                }
+                if k == (x_hi - 1) / 64 {
+                    let t = x_hi - k * 64;
+                    if t < 64 {
+                        m &= (1u64 << t) - 1;
+                    }
+                }
+                while m != 0 {
+                    let x = k * 64 + m.trailing_zeros() as usize;
+                    m &= m - 1; // clear that bit
+                    let idx = y * width + x;
+                    let local = idx - start;
+                    self.arrival_visit(
+                        ctx,
+                        &dir,
+                        (idx, local, x, y),
+                        tick_after,
+                        &mut next[local],
+                        &mut events,
+                    );
+                }
+            }
+        }
+        events
+    }
+
+    /// One cell of the arrival rule: the per-cell body of the masked
+    /// stepper. `pos` is `(idx, local, x, y)`: the cell's flat index, its
+    /// index inside this chunk, and its column and row. `slot` is its entry in
+    /// the next-state buffer.
+    #[inline(always)]
+    fn arrival_visit(
+        &self,
+        ctx: &ChunkCtx<'_>,
+        dir: &[f32; 8],
+        pos: (usize, usize, usize, usize),
+        tick_after: f32,
+        slot: &mut CellType,
+        events: &mut Vec<ModelEvent>,
+    ) {
+        let (idx, local, x, y) = pos;
+        let d = &self.derived;
+        let (width, height, cells) = (ctx.width, ctx.height, ctx.cells);
+        let cur = cells[idx];
+        if cur == d.burning {
+            *slot = if ctx.ages[local] + 1 >= self.params.burn_duration {
+                d.burned
+            } else {
+                d.burning
+            };
+            if let Some(target) = self.spot_target(ctx, idx, x, y) {
+                events.push(ModelEvent {
+                    target,
+                    new_type: d.burning,
+                });
+            }
+            return;
+        }
+        if cur == d.burned {
+            return; // absorbing; arrival time is fixed history.
+        }
+        let p_base = d.p_base[idx];
+        if p_base <= 0.0 {
+            return; // inactive or inert type: absorbing.
+        }
+
+        let dir_cell: &[f32; 8] = if d.wind_factors.is_empty() {
+            dir
+        } else {
+            d.wind_factors[idx * 8..idx * 8 + 8].try_into().unwrap()
+        };
+        let slope = &d.slope[idx * 8..idx * 8 + 8];
+
+        let mut best = f32::from_bits(d.arrival[idx].load(Ordering::Relaxed));
+        let mut any = false;
+        let mut jitter = None; // computed lazily: only needed if a source exists.
+        for j in 0..8 {
+            let (dx, dy) = d.offsets[j];
+            let (nx, ny) = (x as i64 + dx as i64, y as i64 + dy as i64);
+            if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                continue; // out of bounds: never a source.
+            }
+            let nidx = ny as usize * width + nx as usize;
+            let neighbor = cells[nidx];
+            if neighbor != d.burning && neighbor != d.burned {
+                continue;
+            }
+            any = true;
+            let rate = p_base * dir_cell[j] * slope[j];
+            if rate <= 0.0 {
+                continue; // no speed in this direction: no finite cost.
+            }
+            let jit = *jitter.get_or_insert_with(|| self.arrival_jitter(idx));
+            // No extra distance term here: `dir_cell[j]` (via
+            // `factors_for_vector`) already divides by `norm_j`, so
+            // `1 / rate` alone is the correct travel time. See the
+            // fix-round-4 note on this function's doc comment above.
+            let cost = (jit / rate).max(1.0);
+            let neighbor_arrival = f32::from_bits(d.arrival[nidx].load(Ordering::Relaxed));
+            let candidate = neighbor_arrival + cost;
+            if candidate < best {
+                best = candidate;
+            }
+        }
+        if !any {
+            return;
+        }
+        d.arrival[idx].store(best.to_bits(), Ordering::Relaxed);
+        if tick_after >= best {
+            *slot = d.burning;
+        }
+    }
+
+    /// The original every-cell arrival stepper, kept only so tests can prove
+    /// the masked [`Self::step_chunk_arrival`] gives identical results.
+    #[cfg(test)]
+    fn step_chunk_arrival_reference(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
         let dir = self.dir_factors();
         let mut events = Vec::new();
@@ -3681,6 +3902,185 @@ mod tests {
                 );
             }
             assert_eq!(one, *golden, "variant {variant}: differs from the pinned hashes");
+        }
+    }
+
+    // -------- Fire-front mask versus the every-cell reference (DS-005) --------
+
+    /// Builds one random arrival scenario: cell types, params and env.
+    /// `wind`: 0 = uniform wind, 1 = per-cell wind field, 2 = calm.
+    fn mask_scenario(
+        w: usize,
+        h: usize,
+        wind: u8,
+        spotting: bool,
+        burn_duration: u32,
+        seed: u64,
+    ) -> (Vec<CellType>, WildfireParams, WildfireEnv) {
+        let n = w * h;
+        let mut cells = vec![CellType::new("Forest"); n];
+        for (i, c) in cells.iter_mut().enumerate() {
+            // Mosaic: shrub, unburnable "Rock" (a type the model has no fuel
+            // class for), and inactive cells.
+            match cell_rand(seed, 0, i as u64, 3) {
+                v if v < 0.2 => *c = CellType::new("Shrub"),
+                v if v < 0.27 => *c = CellType::new("Rock"),
+                v if v < 0.33 => *c = CellType::inactive(),
+                _ => {}
+            }
+        }
+        // Ignitions at the four corners plus a couple of random cells, so the
+        // grid edges and corners are exercised.
+        let mut spots = vec![0, w - 1, n - w, n - 1];
+        for k in 0..2u64 {
+            spots.push((cell_rand(seed, 1, k, 4) * n as f32) as usize % n);
+        }
+        for i in spots {
+            cells[i] = CellType::new("Burning");
+        }
+        let mut p = base_params();
+        p.seed = seed;
+        p.spread = "arrival".into();
+        p.fuels.push(FuelClass { name: "Shrub".into(), veg_factor: 0.6 });
+        p.p0 = 0.7;
+        p.burn_duration = burn_duration;
+        p.wind_speed = if wind == 2 { 0.0 } else { 6.0 };
+        if spotting {
+            p.spotting = Some(SpottingParams {
+                p_spot: 0.1,
+                median_distance: 4.0,
+                sigma: 0.4,
+                angle_jitter_deg: 25.0,
+            });
+        }
+        let mut env = WildfireEnv::default();
+        // Random elevation gives every cell a slope in every direction.
+        env.elevation = (0..n).map(|i| 40.0 * cell_rand(seed, 2, i as u64, 5)).collect();
+        if wind == 1 {
+            env.wind_u = (0..n).map(|i| 12.0 * cell_rand(seed, 3, i as u64, 6) - 4.0).collect();
+            env.wind_v = (0..n).map(|i| 12.0 * cell_rand(seed, 4, i as u64, 7) - 6.0).collect();
+        }
+        (cells, p, env)
+    }
+
+    /// Runs `steps` steps by hand, chunk by chunk, with the masked stepper on
+    /// one model and the every-cell reference on a second model built from the
+    /// same inputs. After EVERY step it asserts that the next cell types, the
+    /// spot events (same order) and the whole arrival array (bit patterns)
+    /// are identical. Returns how many cells ended up burned.
+    fn assert_mask_matches_reference(
+        w: usize,
+        h: usize,
+        wind: u8,
+        spotting: bool,
+        burn_duration: u32,
+        seed: u64,
+        chunk_len: usize,
+        steps: u64,
+    ) -> usize {
+        let n = w * h;
+        let (mut cells, p, env) = mask_scenario(w, h, wind, spotting, burn_duration, seed);
+        let masked = attach_on(WildfireModel::new(p.clone(), env.clone()), w, h, &cells);
+        let reference = attach_on(WildfireModel::new(p, env), w, h, &cells);
+        let burning = masked.derived.burning;
+        let mut ages = vec![0u32; n];
+        for step in 0..steps {
+            let mut next_m = vec![CellType::inactive(); n];
+            let mut next_r = vec![CellType::inactive(); n];
+            let (mut ev_m, mut ev_r) = (Vec::new(), Vec::new());
+            let mut start = 0;
+            while start < n {
+                let end = (start + chunk_len).min(n);
+                let cx = ChunkCtx {
+                    cells: &cells,
+                    ages: &ages[start..end],
+                    start,
+                    width: w,
+                    height: h,
+                    step,
+                    inactive: CellType::inactive(),
+                };
+                ev_m.extend(masked.step_chunk(&cx, &mut next_m[start..end]));
+                ev_r.extend(reference.step_chunk_arrival_reference(&cx, &mut next_r[start..end]));
+                start = end;
+            }
+            let ctxt = format!("{w}x{h} wind {wind} spot {spotting} bd {burn_duration} seed {seed} chunk {chunk_len} step {step}");
+            assert_eq!(next_m, next_r, "cell types differ: {ctxt}");
+            assert_eq!(ev_m, ev_r, "spot events differ: {ctxt}");
+            for i in 0..n {
+                assert_eq!(
+                    arrival_of(&masked, i).to_bits(),
+                    arrival_of(&reference, i).to_bits(),
+                    "arrival of cell {i} differs: {ctxt}"
+                );
+            }
+            // Advance like the engine: apply sorted spot events, then ages.
+            ev_m.sort_unstable_by_key(|e| (e.target, e.new_type));
+            for ev in &ev_m {
+                if ev.target < n
+                    && next_m[ev.target] != ev.new_type
+                    && masked.event_applies(next_m[ev.target], ev)
+                {
+                    next_m[ev.target] = ev.new_type;
+                }
+            }
+            for i in 0..n {
+                ages[i] = if next_m[i] == cells[i] { ages[i] + 1 } else { 0 };
+            }
+            cells = next_m;
+        }
+        let _ = burning;
+        cells.iter().filter(|&&c| c == masked.derived.burned).count()
+    }
+
+    #[test]
+    fn arrival_mask_matches_every_cell_reference() {
+        // Widths 1, 63, 64, 65 and 130 straddle the 64-bit word boundaries.
+        let sizes: [(usize, usize); 8] = [(1, 9), (9, 1), (1, 1), (63, 7), (64, 7), (65, 7), (130, 5), (31, 31)];
+        let mut burned_total = 0;
+        for &(w, h) in &sizes {
+            let n = w * h;
+            // One chunk, quarter-grid chunks, and an odd chunk size that
+            // starts and ends chunks in the middle of rows.
+            for chunk_len in [n, n.div_ceil(4), 37.min(n)] {
+                for wind in 0..3u8 {
+                    for spotting in [false, true] {
+                        for burn_duration in [1u32, 3] {
+                            let seed = 1000 + (w * 31 + h) as u64 + u64::from(wind);
+                            burned_total += assert_mask_matches_reference(
+                                w, h, wind, spotting, burn_duration, seed, chunk_len, 25,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(burned_total > 0, "the scenarios must actually burn something");
+    }
+
+    /// Through the real engine: the masked rule must give identical cell types
+    /// and arrival arrays at 1, 4 and 8 threads, even when tiny grids are
+    /// forced to split into many chunks (min-work override of 1).
+    #[test]
+    fn arrival_mask_is_thread_count_independent_with_forced_chunking() {
+        let _guard = crate::threads::lock_override_for_test();
+        for (w, h, wind, spotting) in [(65usize, 40usize, 1u8, true), (130, 12, 0, false)] {
+            let mut results = Vec::new();
+            for threads in [1usize, 4, 8] {
+                let (cells, p, env) = mask_scenario(w, h, wind, spotting, 3, 77);
+                let mut g = crate::Grid2D::new(w, h, 0, cells, crate::Rule2D { subrules: vec![] });
+                g.attach_model(Box::new(WildfireModel::new(p, env))).unwrap();
+                crate::threads::set_thread_override(threads);
+                crate::threads::set_min_work_per_chunk_override(1);
+                for _ in 0..30 {
+                    g.step();
+                }
+                crate::threads::clear_min_work_per_chunk_override();
+                crate::threads::clear_thread_override();
+                let types: Vec<CellType> = (0..w * h).map(|i| g.cell_type(i)).collect();
+                results.push((types, arrival_hash(wildfire(&mut g))));
+            }
+            assert!(results[0] == results[1] && results[0] == results[2]);
         }
     }
 }

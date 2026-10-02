@@ -774,6 +774,17 @@ make bench-ab A=<git ref> FILTER='<libtest name filter>' [ROUNDS=8] [RUNS=10]
 make bench-ab A=HEAD FILTER='stress_2d_three_state_cycle stress_2d_life_like'
 ```
 
+**`FILTER` matches libtest *test-function* names, not bench names.** The bench
+`2d_wildfire_arrival_256_t1` is recorded by the test function
+`stress_2d_wildfire_arrival_t1`, so `FILTER=wildfire_256` finds nothing
+("no benches in common") while `FILTER=stress_2d_wildfire_arrival` finds all
+six arrival benches. When in doubt, run
+`cargo test --release --test long_suite -- --ignored --list` and copy a piece
+of a `stress_...` name. A filter is a substring match, so
+`stress_2d_wildfire_t` matches the plain wildfire benches but not the
+`_spotting_` or `_arrival_` ones. The script accepts several `--filter` flags
+if you call it directly instead of through `make`.
+
 What it does:
 
 1. Builds the `long_suite` test binary for git ref **A** (in a temporary
@@ -941,6 +952,7 @@ benchmark set itself.
 
 | Commit | Date | Entries | Suite total (ms) | Reason |
 |---|---|---|---|---|
+| *(this change)* | 2026-10-02 | 82 | 2 336.68 | DS-005 phase 2: arrival jitter kept out of line plus arrival fire-front mask; the six arrival entries refreshed (763.68 → 44.21 ms in total, about 17× faster); the other 76 entries are untouched and still sum to **2 292.46**. Same entry count as the row below, so the totals are comparable (the drop is the arrival speed-up) |
 | *(this change)* | 2026-10-02 | 82 | 3 056.14 | DS-005 phase 1: arrival benches *(set)* (`2d_wildfire_arrival_256` and `2d_wildfire_arrival_spotting_256`, each at t1/t4/t8, 30 steps; the 76 pre-existing entries are untouched and still sum to **2 292.46**; the six new entries add 763.68) |
 | *(this change)* | 2026-10-01 | 76 | 2 292.46 | DS-004 harness hardening: 30 new entries *(set)* (6 randomness entries that had snapshots but no baseline, plus `1d_rule30_65536`/`262144`, the `history_limit` sweep, `2d_cyclic12_128` and the four `2d_straddle_*` sizes); baseline entries now also carry `min`/`median`/`outliers`/`load1`. Engine unchanged: the 46 pre-existing entries sum to **944.65** (+4.2 % vs 906.93 on means, but their sum of mins is 901.54, −0.6 %: the mean-based difference is mostly outlier noise, which is what the new protocol exists to expose) |
 | *(this change)* | 2026-08-14 | 46 | 906.93 | §8 round 4: wildfire fire-front mask (E8, −49/−53 %) |
@@ -1462,6 +1474,121 @@ it changes how many chart samples a burst appends, not how fast the burst
 runs — so it is covered by the Run-to number above and by the `cella`
 binary's existing unit tests on `step_once` / `run_to_batch` / `tick_play`
 (see `src/gui/sim.rs`), which assert sample counts directly.
+
+### E11 — wildfire arrival spread: jitter hoisting fix + fire-front mask ✅ KEPT
+
+Ticket DS-005. The wildfire model with `spread: "arrival"` cost 80 to 111 ns
+per cell-step, against about 4.5 ns for the default Bernoulli spread. It now
+costs about 5 ns. Two changes did it, and the order mattered.
+
+**1. Profile first.** `perf record` on a 512x512, 150-step, one-thread arrival
+run (unchanged code) showed:
+
+| Share | Where |
+|---|---|
+| 37 % | `step_chunk` itself (the loop; most of it was the jitter maths) |
+| 56 % | libm: `cos` 17.5, `ln` 18.4, `exp` 19.9 |
+| 5 % | engine bookkeeping (`step_chunk_external`) |
+
+That was a surprise. The jitter (a log-normal random number per cell, made
+with a logarithm, a square root, a cosine and an exponential) is only supposed
+to be computed for cells that touch fire. A counter showed it really was
+requested for only about 36 000 cells over 150 steps. Yet `gdb` saw the
+`log` function called thousands of times in step 0, even with the jitter
+switched off (`arrival_jitter: 0`).
+
+The cause: `ln`, `cos` and `exp` have no side effects, so LLVM (the compiler
+back end) is allowed to run them early "just in case". With
+`arrival_jitter` inlined, it moved the whole calculation out of the
+"has a fire neighbour" branch and ran it for every fuel cell on every step.
+Marking `WildfireModel::arrival_jitter` `#[inline(never)]` keeps it behind the
+branch. Results are identical (the function is pure). Measured with
+`make bench-ab` against the commit before (8 rounds, medians, load 2.2 to 2.7):
+
+| Bench | A median (ms) | B median (ms) | Change | Verdict |
+|---|---|---|---|---|
+| `2d_wildfire_arrival_256_t1` | 199.5 | 35.0 | −82.5 % (5.7×) | significant |
+| `2d_wildfire_arrival_256_t4` | 82.9 | 14.9 | −82.1 % | significant |
+| `2d_wildfire_arrival_256_t8` | 84.9 | 14.9 | −82.5 % | significant |
+| `2d_wildfire_arrival_spotting_256_t1` | 198.4 | 35.2 | −82.3 % | significant |
+| `2d_wildfire_arrival_spotting_256_t4` | 84.3 | 15.2 | −82.0 % | significant |
+| `2d_wildfire_arrival_spotting_256_t8` | 84.5 | 15.3 | −81.9 % | significant |
+
+(By minimum run the speed-ups were 3.9× to 4.9×; the lowest, 3.9×, is one
+lucky baseline run. This change was the first positive control for the
+`bench-ab` gate: a real, large change was reported as significant on all six.)
+On the 512x512 run the cost fell from about 100 to about 18 ns per cell-step,
+and libm dropped to about 5 % of the samples. Computing the jitter "inside the
+neighbour loop on first need" was not tried as an alternative: the code
+already did that, and the hoisting still happened.
+
+**2. The fire-front mask.** After step 1 the neighbour scan over every cell
+was about 70 % of the time and the engine's own bookkeeping about 19 %. The
+Bernoulli rule already skips cells far from fire (E8). The arrival rule now
+does the same. A cell can change its type, or write its arrival time, only if
+
+- it is Burning, or
+- it is not Burning and not Burned **and** at least one of its eight
+  neighbours is Burning or Burned.
+
+Burned cells count as sources, not just Burning ones. A cell next to burned
+ground may still be waiting for its arrival time to come due, so it has to be
+revisited every tick until it ignites. Every other cell hits `any = false`
+or an early exit and writes nothing, so skipping it changes nothing.
+
+`step_chunk_arrival` builds two bitmaps for its rows plus a one-row halo
+("Burning or Burned" and "Burned"), ORs the eight one-cell shifts of the first,
+removes the Burned bits, and walks only the set bits. Taking the Burned cells
+out keeps the visited set the size of the fire's perimeter instead of its
+growing area. The per-cell maths moved, unchanged, into `arrival_visit`. The
+copy of the old types as the default next state and the (row-major) order of
+spot events are unchanged. A source's arrival time is only ever read, never
+written, in the step that reads it, so the chunk split still cannot change the
+answer. The Bernoulli code was not touched.
+
+Measured against the jitter-fix commit (8 rounds, load 7.5 at the start, so
+noisier):
+
+| Bench | A median (ms) | B median (ms) | Change | Verdict |
+|---|---|---|---|---|
+| `2d_wildfire_arrival_256_t1` | 35.1 | 9.5 | −73.0 % (3.7×) | significant |
+| `2d_wildfire_arrival_256_t4` | 15.0 | 6.3 | −58.1 % | significant |
+| `2d_wildfire_arrival_256_t8` | 15.0 | 6.3 | −58.3 % | significant |
+| `2d_wildfire_arrival_spotting_256_t1` | 35.1 | 9.6 | −72.6 % | significant |
+| `2d_wildfire_arrival_spotting_256_t4` | 15.4 | 6.6 | −56.9 % | significant |
+| `2d_wildfire_arrival_spotting_256_t8` | 15.2 | 6.5 | −57.5 % | significant |
+
+Control: the six Bernoulli wildfire benches (`stress_2d_wildfire_t` and
+`stress_2d_wildfire_spotting_t`) showed no significant change (all p > 0.02).
+Whole-run cost, one thread, 150 steps: 512x512 went from about 100 ns to
+about 5.1 ns per cell-step (about 20×), with Bernoulli at 4.7 ns on the same
+machine. The 128, 256 and 1024 grids measured 6.0, 5.6 and 5.2 ns. The
+remaining cost is the same linear passes Bernoulli has (copy, bitmap build,
+engine bookkeeping), so arrival is now only about 10 to 20 % dearer than
+Bernoulli. Threads help less than for the old code (t4 is about 1.5× faster
+than t1) because the remaining work is those memory-bound passes.
+
+**Exactness.** The mask is exact by construction (the argument above) and
+checked three ways:
+
+- The long-suite FNV snapshots for the arrival benches and for every older
+  scenario pass unchanged at 1, 4 and 8 threads.
+- `arrival_array_golden_hashes` pins a hash of the model's hidden `arrival`
+  array (the FNV snapshots only hash cell types and ages) at 60 steps for
+  three scenarios, recorded before any speed-up. It is unchanged.
+- `arrival_mask_matches_every_cell_reference` keeps the old every-cell loop
+  as a test-only function (`step_chunk_arrival_reference`) and runs it next to
+  the masked stepper on random scenarios. After every step it requires equal
+  cell types, equal spot events in the same order, and equal arrival arrays
+  (bit patterns). It covers sizes 1x1, 1x9, 9x1, 63x7, 64x7, 65x7, 130x5 and
+  31x31 (widths either side of the 64-cell bitmap word), chunk splits that
+  start and end mid-row, no wind, uniform wind and a per-cell wind field,
+  random elevation (so slope), spotting on and off, burn durations 1 and 3,
+  and a random mosaic of fuel, unburnable and inactive cells with ignitions at
+  all four corners. (I checked the test can fail: leaving Burned cells out of
+  the source bitmap makes it fail at step 1.) A second test runs real grids
+  at 1, 4 and 8 threads with a minimum-work override of 1, which forces many
+  chunks, and requires identical results.
 
 ### Net effect (four kept rounds)
 

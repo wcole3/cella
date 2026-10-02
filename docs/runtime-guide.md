@@ -74,7 +74,7 @@ the absolute times as specific to that machine.
 | Threads (scalar rule, grid of 256x256 or more) | **2 to 5 times faster** with 4 to 16 threads, not 16 times | Only a big enough grid is split; waking threads costs time. |
 | Threads (grid below about 130x130, or any fast-path 2D rule) | **No change** | Small work is not split; the fast path ignores threads. |
 | Wildfire model (Bernoulli spread) | About **4.5 ns per cell-step** whether the fire is tiny or large | A fixed pass over the whole grid dominates; the fire front adds only a little. |
-| Wildfire with `spread: "arrival"` | **About 20 times slower** than the Bernoulli rule | It examines every unburned cell every step, with no fire-front shortcut. |
+| Wildfire with `spread: "arrival"` | **About 1.1 to 1.3 times** the Bernoulli rule (about 5 to 6 ns per cell-step) | Since DS-005 it uses the same fire-front shortcut as Bernoulli. Before that it was about 20 times slower (80 to 93 ns). |
 
 ---
 
@@ -100,7 +100,7 @@ too](#what-is-on-the-grid-matters-too).
 | 1D Rule 30, fast path | 4.4 to 7 |
 | 1D scalar rule, 3 types | about 11 |
 | Wildfire, Bernoulli spread | about 4.5 to 5 |
-| Wildfire, arrival spread | 80 to 93 |
+| Wildfire, arrival spread | about 5 to 6 |
 
 Then add the setting multipliers from the sections below (history, many
 types, randomness) and divide by the thread speedup if the grid is large.
@@ -616,21 +616,25 @@ Whole 150-step runs, one thread, ns per cell-step:
 
 | Grid | Bernoulli | + spotting | + history 7 | Arrival spread |
 | --- | --- | --- | --- | --- |
-| 128 x 128 | 4.22 | 4.54 | 5.00 | 79.6 |
-| 256 x 256 | 4.75 | 4.84 | 5.51 | 88.9 |
-| 512 x 512 | 4.72 | 4.90 | 5.88 | 92.8 |
-| 1024 x 1024 | 4.96 | 5.28 | 6.62 | 90.6 |
+| 128 x 128 | 4.22 | 4.54 | 5.00 | 6.0 |
+| 256 x 256 | 4.75 | 4.84 | 5.51 | 5.6 |
+| 512 x 512 | 4.72 | 4.90 | 5.88 | 5.1 |
+| 1024 x 1024 | 4.96 | 5.28 | 6.62 | 5.2 |
 
 - **Spotting** (firebrands that start fires far away) adds 2 to 7 %.
 - **History 7** adds 18 to 33 %.
-- **`spread: "arrival"` is about 20 times slower than the default
-  Bernoulli rule** (80 to 93 ns against 4.2 to 5 ns per cell-step). The
-  arrival rule keeps a travel-time for every unburned cell and re-examines all
-  eight neighbors of every unburned cell each step; the fire-front shortcut
-  was written only for the Bernoulli rule (reading
-  `WildfireModel::step_chunk_arrival`). That is a large and easy-to-miss
-  cost. In the ensemble benchmarks below the gap is smaller (about 4 to 5
-  times) because other costs are shared.
+- **`spread: "arrival"` costs about 5 to 6 ns per cell-step, close to the
+  default Bernoulli rule** (4.2 to 5 ns). It used to be about 20 times slower
+  (80 to 93 ns), for two reasons that were fixed under DS-005 (see
+  [performance.md](performance.md) section 8, E11): the compiler was running
+  the per-cell random "jitter" maths (a logarithm, a cosine and an
+  exponential) for every cell instead of only cells next to fire, and the
+  rule re-examined all eight neighbors of every cell each step instead of
+  using the fire-front shortcut. The arrival column in the table above was
+  re-measured after both fixes (one thread, 150 steps, same landscape as the
+  Bernoulli column). Arrival is still a little dearer than Bernoulli because
+  a cell next to the fire does more work (it looks at every burning or burned
+  neighbor).
 
 Threads on a Bernoulli wildfire (ns per cell-step):
 
@@ -668,8 +672,10 @@ below with 16 threads:
 | Ferguson_2018, Bernoulli (1.5 M) | 25.8 | 17.1 | 1.5x |
 | Ferguson_2018, arrival | 100.1 | 76.3 | 1.3x |
 
-(The Bernoulli versus arrival ratio here, 2.3x to 4.9x, is smaller than the
-20x above because the member-stepping, scoring and setup are shared.)
+(These ensemble timings were measured before the DS-005 fixes and were not
+re-measured. Arrival stepping is now far cheaper, so expect the arrival rows
+to drop towards the Bernoulli rows; the ratio of 2.3x to 4.9x shown here is
+the old, slow arrival rule.)
 
 **Rule: for a single ensemble run on a 16-core machine, set
 `CELLA_MEMBER_PAR` to your thread count to step members side by side.** The
