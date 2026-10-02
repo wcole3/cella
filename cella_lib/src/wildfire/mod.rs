@@ -319,13 +319,15 @@ struct WildfireDerived {
     /// Per-cell arrival time, in ticks, for the arrival rule (`params.spread
     /// == "arrival"`), length `w·h`. Rebuilt at every `attach` (a fresh run,
     /// a `reset_cells`, or a config load): `0.0` for a cell that starts
-    /// burning or already burned, `f32::INFINITY` for every other fuel cell
-    /// (no path to it exists yet). Unused (and left however `attach` set it)
-    /// under the Bernoulli rule.
+    /// already burned, `f32::INFINITY` for every other cell, including
+    /// Burning ones (they are stamped with the tick they are first stepped
+    /// at; see "Self-healing arrival" on `step_chunk_arrival`). `on_paint`
+    /// resets a painted cell to `+inf`. Not read under the Bernoulli rule.
     ///
-    /// Once a cell ignites, its own entry is never written again — it stays
-    /// the historical fact "this cell caught at tick N" for its neighbours
-    /// to read as a source. Only a still-unburned fuel cell's own entry is
+    /// Once a cell ignites, its own entry is not changed again, apart from
+    /// the one self-healing stamp described above: it stays the historical
+    /// fact "this cell caught at tick N" for its neighbours to read as a
+    /// source. Only a still-unburned fuel cell's own entry is
     /// ever relaxed downward, by `WildfireModel::step_chunk_arrival`, one
     /// tick at a time. This is a local, per-tick version of the shortest-path
     /// idea behind Dijkstra's algorithm and the eikonal equation (the
@@ -783,10 +785,10 @@ impl WildfireModel {
     /// per-cell wind field is set) feeds the precomputed `wind_factors`
     /// table. Everything else is read live by [`Self::dir_factors`],
     /// [`Self::next_type`], or [`Self::spot_target`], so a change takes
-    /// effect on the next step with no rebuild. (Caveat: while a per-cell wind
-    /// field is set, `c1` and `c2` are baked into the precomputed
-    /// `wind_factors` table, which only `attach` and `set_wind_field`
-    /// rebuild.)
+    /// effect on the next step with no rebuild. (While a per-cell wind field
+    /// is set, `c1` and `c2` are baked into the precomputed `wind_factors`
+    /// table, so [`Self::set_param`] rebuilds that table itself when either
+    /// changes; the engine need not re-attach.)
     ///
     /// Bounds are what the engine checks a new value against before this model
     /// sees it, which is why [`Self::set_param`] does no range checking. They
@@ -1193,20 +1195,19 @@ impl ExternalModel for WildfireModel {
 
         let mut p_base = vec![0.0f32; n];
         let mut fuel_slot = vec![u16::MAX; n];
-        // Arrival rule: 0 ticks for a cell that starts out already burning or
-        // burned (a known source); +inf for everything else (no path to it
-        // yet). Built here regardless of `params.spread` so a live switch to
+        // Arrival rule: 0 ticks for a cell that starts out already burned (a
+        // known source); +inf for everything else, including Burning cells:
+        // `attach` does not know what tick the grid is at (a fresh run is at
+        // 0, a resumed snapshot is not), so a Burning cell is stamped with
+        // the tick it is first stepped at (self-healing arrival, see
+        // `step_chunk_arrival`). Built here regardless of `params.spread` so a live switch to
         // "arrival" mid-run (no reattach needed for that key) finds a
         // correctly-shaped buffer already in place.
         let mut arrival = vec![0.0f32; n];
         for (idx, &t) in view.cells.iter().enumerate() {
             p_base[idx] = self.p_base_for(t, idx);
             fuel_slot[idx] = self.fuel_slot_for(t);
-            arrival[idx] = if t == burning || t == burned {
-                0.0
-            } else {
-                f32::INFINITY
-            };
+            arrival[idx] = if t == burned { 0.0 } else { f32::INFINITY };
         }
         self.derived.p_base = p_base;
         self.derived.fuel_slot = fuel_slot;
@@ -1307,6 +1308,11 @@ impl ExternalModel for WildfireModel {
         if idx < self.derived.p_base.len() {
             self.derived.p_base[idx] = self.p_base_for(new_type, idx);
             self.derived.fuel_slot[idx] = self.fuel_slot_for(new_type);
+            // The painted cell's old arrival time is history that no longer
+            // applies. +inf = "unknown": a painted Burning cell is stamped
+            // with the tick it is first stepped at, and painted fuel waits
+            // for a real travel time (self-healing arrival).
+            self.derived.arrival[idx] = AtomicU32::new(f32::INFINITY.to_bits());
         }
     }
 
@@ -1370,8 +1376,15 @@ impl ExternalModel for WildfireModel {
         match (key, &value) {
             ("wind_speed", ParamValue::Float(v)) => p.wind_speed = *v,
             ("wind_from_deg", ParamValue::Float(v)) => p.wind_from_deg = *v,
-            ("c1", ParamValue::Float(v)) => p.c1 = *v,
-            ("c2", ParamValue::Float(v)) => p.c2 = *v,
+            ("c1", ParamValue::Float(v)) => {
+                p.c1 = *v;
+                // The per-cell wind factor table bakes c1 in.
+                self.rebuild_wind_factors();
+            }
+            ("c2", ParamValue::Float(v)) => {
+                p.c2 = *v;
+                self.rebuild_wind_factors(); // ...and c2.
+            }
             ("p0", ParamValue::Float(v)) => p.p0 = *v,
             ("spread", ParamValue::Choice(v)) => p.spread = v.clone(),
             ("wind_law", ParamValue::Choice(v)) => p.wind_law = v.clone(),
@@ -1630,6 +1643,46 @@ impl WildfireModel {
     ///
     /// Spot-fire events come out in the same (row-major) order as before,
     /// because the visit order is still row-major.
+    ///
+    /// # Self-healing arrival (DS-006)
+    ///
+    /// The `arrival` array is only written by this stepper, but cells also
+    /// change type from outside it: a user paints one, a spot fire lands on
+    /// one, the Bernoulli rule lit one before a live switch to `"arrival"`,
+    /// or a snapshot was resumed. None of those know an arrival time. If the
+    /// array just said `+inf` for such a Burning cell it would never spread
+    /// fire; if it said `0` the neighbours' `0 + cost` would already be in
+    /// the past and the fire would race outward one ring per tick.
+    ///
+    /// So the rule is: **a Burning cell's arrival time is never later than
+    /// the tick it is being stepped at.**
+    ///
+    /// * **Writing.** When the stepper visits a Burning cell (the fire-front
+    ///   mask always includes every Burning cell, whatever its fuel type),
+    ///   and its stored arrival is later than this tick's number `s`
+    ///   (`+inf`, or a stale larger number), it stores `s` in its own entry.
+    ///   A cell that ignited the normal way already holds a value `<= s`,
+    ///   so it is left alone.
+    /// * **Reading.** When a cell uses a Burning neighbour as a source it
+    ///   reads `min(stored, s)`, not `stored`.
+    ///
+    /// Why this is still deterministic across thread counts: during tick `s`
+    /// the only value ever written into a Burning cell's entry is `s`. A
+    /// reader in another chunk may run before or after that write, but both
+    /// orders give it `min(stored, s)` = `s` (when the write is needed),
+    /// or the same unchanged `stored` (when it is not). So no result depends
+    /// on which chunk ran first. Burned cells' entries are never written, so
+    /// they are read as stored.
+    ///
+    /// What it gives: a fire painted at tick `K` is stamped `K` and spreads
+    /// at the normal speed; a spotted cell is stamped the tick it appears; a
+    /// Bernoulli-lit Burning cell is stamped on the first arrival step.
+    /// **Limitation:** a Burning cell restored from a snapshot (or lit
+    /// before a switch to `"arrival"`) is stamped with the *resume* tick,
+    /// not its true, earlier ignition time, so after a resume the front
+    /// lags the uninterrupted run by about one cell. Burned cells restored
+    /// from a snapshot, and `on_paint`ed Burned cells, have no recorded time
+    /// (`0` and `+inf` respectively).
     fn step_chunk_arrival(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
         let dir = self.dir_factors();
@@ -1732,6 +1785,27 @@ impl WildfireModel {
         events
     }
 
+    /// The "self-healing" write (DS-006): a Burning cell whose stored
+    /// arrival is later than `now` (this tick's number) writes `now` into its
+    /// own entry. See "Self-healing arrival" on `step_chunk_arrival`.
+    #[inline(always)]
+    fn stamp_burning_arrival(&self, idx: usize, now: f32) {
+        let slot = &self.derived.arrival[idx];
+        if f32::from_bits(slot.load(Ordering::Relaxed)) > now {
+            slot.store(now.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// The "self-healing" read (DS-006): the arrival time a neighbour
+    /// offers as a source. A Burning source is read as `min(stored, now)`;
+    /// a Burned source is read as stored. Whether or not the source's own
+    /// chunk has already stamped `now` this tick, the answer is the same.
+    #[inline(always)]
+    fn source_arrival(stored_bits: u32, burning: bool, now: f32) -> f32 {
+        let stored = f32::from_bits(stored_bits);
+        if burning { stored.min(now) } else { stored }
+    }
+
     /// One cell of the arrival rule: the per-cell body of the masked
     /// stepper. `pos` is `(idx, local, x, y)`: the cell's flat index, its
     /// index inside this chunk, and its column and row. `slot` is its entry in
@@ -1750,7 +1824,10 @@ impl WildfireModel {
         let d = &self.derived;
         let (width, height, cells) = (ctx.width, ctx.height, ctx.cells);
         let cur = cells[idx];
+        // This tick's own number: the tick the cells in `cells` are at.
+        let now = tick_after - 1.0;
         if cur == d.burning {
+            self.stamp_burning_arrival(idx, now);
             *slot = if ctx.ages[local] + 1 >= self.params.burn_duration {
                 d.burned
             } else {
@@ -1804,7 +1881,8 @@ impl WildfireModel {
             // `1 / rate` alone is the correct travel time. See the
             // fix-round-4 note on `step_chunk_arrival`'s doc comment.
             let cost = (jit / rate).max(1.0);
-            let neighbor_arrival = f32::from_bits(d.arrival[nidx].load(Ordering::Relaxed));
+            let neighbor_arrival =
+                Self::source_arrival(d.arrival[nidx].load(Ordering::Relaxed), neighbor == d.burning, now);
             let candidate = neighbor_arrival + cost;
             if candidate < best {
                 best = candidate;
@@ -1820,7 +1898,10 @@ impl WildfireModel {
     }
 
     /// The original every-cell arrival stepper, kept only so tests can prove
-    /// the masked `step_chunk_arrival` gives identical results.
+    /// the masked `step_chunk_arrival` gives identical results. It applies
+    /// the same self-healing rule (DS-006) through the same two helpers,
+    /// `stamp_burning_arrival` (on every Burning cell) and `source_arrival`
+    /// (when reading a source), so only the visiting loop differs.
     #[cfg(test)]
     fn step_chunk_arrival_reference(&self, ctx: &ChunkCtx<'_>, next: &mut [CellType]) -> Vec<ModelEvent> {
         let d = &self.derived;
@@ -1846,6 +1927,7 @@ impl WildfireModel {
             let y = idx / width;
 
             if cur == d.burning {
+                self.stamp_burning_arrival(idx, tick_after - 1.0);
                 *slot = if ctx.ages[local] + 1 >= self.params.burn_duration {
                     d.burned
                 } else {
@@ -1899,7 +1981,11 @@ impl WildfireModel {
                 // `1 / rate` alone is the correct travel time. See the
                 // fix-round-4 note on `step_chunk_arrival`'s doc comment.
                 let cost = (jit / rate).max(1.0);
-                let neighbor_arrival = f32::from_bits(d.arrival[nidx].load(Ordering::Relaxed));
+                let neighbor_arrival = Self::source_arrival(
+                    d.arrival[nidx].load(Ordering::Relaxed),
+                    neighbor == d.burning,
+                    tick_after - 1.0,
+                );
                 let candidate = neighbor_arrival + cost;
                 if candidate < best {
                     best = candidate;
@@ -3042,22 +3128,31 @@ mod tests {
     }
 
     #[test]
-    fn arrival_time_is_zero_for_sources_and_infinite_elsewhere_at_attach() {
+    fn arrival_time_is_zero_for_burned_and_infinite_elsewhere_until_first_step() {
+        // Burned cells are known sources (0). A Burning cell is +inf at
+        // attach and is stamped with the tick it is first stepped at.
         let b = CellType::new("Burning");
         let mut cells = forest_grid(3, 3);
         cells[4] = b;
+        cells[0] = CellType::new("BurnedOut");
         let mut p = base_params();
         p.spread = "arrival".into();
+        p.p0 = 0.0; // no spread: only the stamp changes the array
         let m = attach_on(WildfireModel::new(p, WildfireEnv::default()), 3, 3, &cells);
         assert_eq!(m.derived.arrival.len(), 9);
-        assert_eq!(arrival_of(&m, 4), 0.0, "the initial burning cell is arrival 0");
-        for idx in [0usize, 1, 2, 3, 5, 6, 7, 8] {
+        assert_eq!(arrival_of(&m, 0), 0.0, "an initial burned cell is arrival 0");
+        assert_eq!(arrival_of(&m, 4), f32::INFINITY, "Burning is unstamped at attach");
+        for idx in [1usize, 2, 3, 5, 6, 7, 8] {
             assert_eq!(
                 arrival_of(&m, idx),
                 f32::INFINITY,
                 "cell {idx}: no path to it yet"
             );
         }
+        let ages = vec![0u32; 9];
+        let mut next = vec![CellType::inactive(); 9];
+        m.step_chunk(&ctx(&cells, &ages, 3, 3, 5), &mut next);
+        assert_eq!(arrival_of(&m, 4), 5.0, "stamped with the tick it was first stepped at");
     }
 
     #[test]
@@ -3087,7 +3182,11 @@ mod tests {
             inactive: CellType::inactive(),
         };
         m.attach(&view).expect("reattach");
-        assert_eq!(arrival_of(&m, 4), 0.0, "attach rebuilds the source");
+        assert_eq!(
+            arrival_of(&m, 4),
+            f32::INFINITY,
+            "attach rebuilds the Burning source as unstamped"
+        );
         assert_eq!(
             arrival_of(&m, 1),
             f32::INFINITY,
@@ -3915,7 +4014,7 @@ mod tests {
     /// check passes, suspect libm first, then re-record on a trusted build.
     const ARRIVAL_GOLDEN: [(u64, u64); 3] = [
         (0xa9418d679fa8d43c, 0x838ced1f54791462),
-        (0x5f71cb24cdb448ca, 0x2fc265523972e385),
+        (0x9edef1d96a0c4f9f, 0x2945bbad996835a7),
         (0x994d73419eb5cd63, 0xc2a6d3d294d85cb7),
     ];
 
@@ -4113,6 +4212,224 @@ mod tests {
                 results.push((types, arrival_hash(wildfire(&mut g))));
             }
             assert!(results[0] == results[1] && results[0] == results[2]);
+        }
+    }
+    // ---- DS-006: the arrival-time array used to go stale when cells
+    // changed outside the arrival stepper (paint, spotting, resume, a live
+    // switch from Bernoulli). These tests pin the self-healing rule.
+    //
+    // All use a one-row grid (`w` x 1), a single fuel, calm wind, no jitter
+    // and `burn_duration = u32::MAX` (fires never burn out), so the travel
+    // time is easy to predict: `p0 = 0.25` gives a rate of 0.25 per tick and
+    // so a cost of 4 ticks per cell. A fire that exists at tick `t0` reaches
+    // the cell `d` cells away at tick `t0 + 4 * d`, never sooner.
+
+    /// A `w` x 1 arrival-rule grid. `lit` is the list of `(column, type
+    /// name)` cells that start as something other than `Forest`.
+    fn ds006_row(w: usize, lit: &[(usize, &str)], spotting: Option<SpottingParams>) -> crate::Grid2D {
+        let mut cells = vec![CellType::new("Forest"); w];
+        for &(x, name) in lit {
+            cells[x] = CellType::new(name);
+        }
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.p0 = 0.25;
+        p.arrival_jitter = 0.0;
+        p.burn_duration = u32::MAX;
+        p.wind_speed = 0.0;
+        p.spotting = spotting;
+        let mut g = crate::Grid2D::new(w, 1, 0, cells, crate::Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(WildfireModel::new(p, WildfireEnv::default())))
+            .unwrap();
+        g
+    }
+
+    /// Columns currently Burning, ascending.
+    fn ds006_burning(g: &crate::Grid2D) -> Vec<usize> {
+        let b = CellType::new("Burning");
+        (0..g.cells().len()).filter(|&i| g.cell_type(i) == b).collect()
+    }
+
+    #[test]
+    fn ds006_fire_painted_mid_run_spreads_at_travel_time_speed() {
+        let mut g = ds006_row(41, &[], None);
+        for _ in 0..30 {
+            g.step(); // nothing burns; the grid is at step 30
+        }
+        g.transition_state_and_buffer(20, &CellType::new("Burning"));
+        for j in 1..=12usize {
+            g.step();
+            // Cells 20 -+ d are lit exactly when 4 * d <= j ticks have passed
+            // since the paint. Too few = the fire never spreads (arrival
+            // stayed +inf); too many = it raced ahead (arrival 0).
+            let reach = j / 4; // cells lit on each side of column 20
+            let want: Vec<usize> = (20 - reach..=20 + reach).collect();
+            assert_eq!(ds006_burning(&g), want, "{j} ticks after the paint");
+        }
+    }
+
+    #[test]
+    fn ds006_fuel_painted_over_burned_cell_waits_for_travel_time() {
+        // Column 5 burns; column 7 starts Burned, then is painted back to
+        // Forest at step 0. Column 6 lights at tick 4, so column 7 may not
+        // light before tick 8. A stale arrival of 0 lights it at tick 5.
+        let mut g = ds006_row(15, &[(5, "Burning"), (7, "BurnedOut")], None);
+        g.transition_state_and_buffer(7, &CellType::new("Forest"));
+        for j in 1..=8usize {
+            g.step();
+            let seven_lit = ds006_burning(&g).contains(&7);
+            assert_eq!(seven_lit, j >= 8, "column 7 lit state after {j} ticks");
+        }
+    }
+
+    /// The burning columns after every step, plus the final arrival array.
+    fn ds006_run(g: &mut crate::Grid2D, steps: usize) -> (Vec<Vec<usize>>, Vec<f32>) {
+        let mut per_step = Vec::new();
+        for _ in 0..steps {
+            g.step();
+            per_step.push(ds006_burning(g));
+        }
+        let n = g.cells().len();
+        let arrival = (0..n).map(|i| arrival_of(model_of(g), i)).collect();
+        (per_step, arrival)
+    }
+
+    /// Rightmost burning column per step, for comparing fire fronts.
+    fn ds006_fronts(burning_per_step: &[Vec<usize>]) -> Vec<usize> {
+        burning_per_step.iter().map(|b| *b.last().unwrap()).collect()
+    }
+
+    #[test]
+    fn ds006_resumed_snapshot_does_not_burst_or_stall() {
+        // The weaker resume check: a fire resumed from a snapshot must never
+        // get AHEAD of the uninterrupted fire (the bug: sources restart at
+        // arrival 0, so the front races outward), and must stay within one
+        // cell of it (the fix may lose the sub-tick history of cells that
+        // were already burning, but not more).
+        let mut whole = ds006_row(41, &[(0, "Burning")], None);
+        let (whole_burning, _) = ds006_run(&mut whole, 24);
+        let mut first = ds006_row(41, &[(0, "Burning")], None);
+        ds006_run(&mut first, 10);
+        let state = crate::state::GridState::from_grid2d(&first);
+        let mut resumed = crate::Grid2D::from_state(&state).expect("resume");
+        let (tail_burning, _) = ds006_run(&mut resumed, 14);
+        let want = ds006_fronts(&whole_burning[10..]);
+        let got = ds006_fronts(&tail_burning);
+        for (k, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(
+                *g <= *w && *g + 1 >= *w,
+                "step {}: resumed front {g}, uninterrupted front {w}",
+                11 + k
+            );
+        }
+    }
+
+    // Pins the documented resume limitation (see "Self-healing arrival" on
+    // `step_chunk_arrival`): arrival times are not saved in a snapshot, so
+    // every Burning cell restarts at the resume step. Its neighbours then
+    // light later than in an uninterrupted run, by at most about one cell.
+    #[test]
+    fn ds006_resume_restamps_burning_cells_at_the_resume_step_and_front_lags_one_cell() {
+        let mut whole = ds006_row(41, &[(0, "Burning")], None);
+        ds006_run(&mut whole, 11);
+        let mut first = ds006_row(41, &[(0, "Burning")], None);
+        ds006_run(&mut first, 10);
+        let state = crate::state::GridState::from_grid2d(&first);
+        let mut resumed = crate::Grid2D::from_state(&state).expect("resume");
+        ds006_run(&mut resumed, 1);
+        // Uninterrupted: column 0 caught at tick 0, column 2 at tick 8.
+        assert_eq!(arrival_of(model_of(&mut whole), 0), 0.0);
+        assert_eq!(arrival_of(model_of(&mut whole), 2), 8.0);
+        // Resumed at step 10: the Burning columns were all stamped 10.
+        assert_eq!(arrival_of(model_of(&mut resumed), 0), 10.0);
+        assert_eq!(arrival_of(model_of(&mut resumed), 2), 10.0);
+    }
+
+    #[test]
+    fn ds006_switching_bernoulli_to_arrival_keeps_the_fire_moving() {
+        // p0 = 1 makes both rules advance one cell per tick, so the fire
+        // front is easy to predict across the switch.
+        let mut g = ds006_row(41, &[(0, "Burning")], None);
+        g.set_model_param("p0", ParamValue::Float(1.0)).unwrap();
+        g.set_model_param("spread", ParamValue::Choice("bernoulli".into()))
+            .unwrap();
+        for _ in 0..6 {
+            g.step();
+        }
+        let front_before = *ds006_burning(&g).last().unwrap();
+        g.set_model_param("spread", ParamValue::Choice("arrival".into()))
+            .unwrap();
+        for _ in 0..6 {
+            g.step();
+        }
+        let front_after = *ds006_burning(&g).last().unwrap();
+        assert!(
+            front_after >= front_before + 5,
+            "front stalled across the switch: {front_before} -> {front_after}"
+        );
+    }
+
+    #[test]
+    fn ds006_spotted_ignition_spreads_under_the_arrival_rule() {
+        // Fire at column 0 throws a firebrand 20 cells east every tick.
+        // The spotted fire at column 20 (lit at tick 1) must spread to
+        // column 19 by tick 5. Only that spread can light column 19: the
+        // main fire only reaches column 1, whose own firebrand lands on 21.
+        let spot = SpottingParams {
+            p_spot: 1.0,
+            median_distance: 20.0,
+            sigma: 0.0,
+            angle_jitter_deg: 0.0,
+        };
+        let mut g = ds006_row(41, &[(0, "Burning")], Some(spot));
+        for _ in 0..8 {
+            g.step();
+        }
+        let lit = ds006_burning(&g);
+        assert!(lit.contains(&20), "the spot itself lit: {lit:?}");
+        assert!(
+            lit.contains(&19),
+            "the spotted fire spread to its western neighbour: {lit:?}"
+        );
+    }
+
+    /// A 15x15 arrival grid with a per-cell wind field and one burning cell.
+    fn c1c2_grid(c1: f64, c2: f64) -> crate::Grid2D {
+        let (w, h) = (15usize, 15usize);
+        let mut cells = forest_grid(w, h);
+        cells[7 * w + 7] = CellType::new("Burning");
+        let mut p = base_params();
+        p.spread = "arrival".into();
+        p.arrival_jitter = 0.0;
+        p.p0 = 0.5;
+        p.burn_duration = 3;
+        p.c1 = c1;
+        p.c2 = c2;
+        let mut g = crate::Grid2D::new(w, h, 0, cells, crate::Rule2D { subrules: vec![] });
+        g.attach_model(Box::new(WildfireModel::new(p, WildfireEnv::default())))
+            .unwrap();
+        let u = vec![6.0f32; w * h];
+        let v = vec![-2.0f32; w * h];
+        model_of(&mut g).set_wind_field(&u, &v).unwrap();
+        g
+    }
+
+    #[test]
+    fn editing_c1_or_c2_with_a_wind_field_matches_a_fresh_attach() {
+        // The per-cell wind factor table bakes in c1 and c2. A live edit
+        // must rebuild it, so the run matches one attached with the new
+        // value from the start.
+        for (key, new_c1, new_c2) in [("c1", 0.09, 0.131), ("c2", 0.045, 0.3)] {
+            let mut edited = c1c2_grid(0.045, 0.131);
+            edited
+                .set_model_param(key, ParamValue::Float(if key == "c1" { new_c1 } else { new_c2 }))
+                .unwrap();
+            let mut fresh = c1c2_grid(new_c1, new_c2);
+            for _ in 0..8 {
+                edited.step();
+                fresh.step();
+            }
+            assert_eq!(edited.cells(), fresh.cells(), "{key}: edited vs fresh attach");
         }
     }
 }

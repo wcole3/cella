@@ -1590,6 +1590,32 @@ checked three ways:
   at 1, 4 and 8 threads with a minimum-work override of 1, which forces many
   chunks, and requires identical results.
 
+**Addendum (DS-006): the arrival array is now self-healing.** The `arrival`
+array used to go stale whenever a cell changed type outside the arrival
+stepper: a painted fire never spread (arrival stayed "never"), a fire painted
+or resumed at tick `K` raced outward one ring per tick (arrival was 0), cells
+lit by the Bernoulli rule before a live switch to `"arrival"` stalled, and a
+spot fire never spread under the arrival rule. Now a Burning cell stamps its
+own arrival entry with the current tick if the stored value is later, and a
+neighbour reads a Burning source as `min(stored, current tick)`; `on_paint`
+resets a painted cell to "never". A fresh run with no paints, spots or
+resumes stores exactly the same numbers as before, so the performance numbers
+above and the `2d_wildfire_arrival_256` snapshot are unchanged. Behaviour
+that did change: spot fires under `"arrival"` now spread, so the
+`2d_wildfire_arrival_spotting_256` snapshot moved (`dcca58905aaa7315` to
+`09b1e6a2b187cde0`) and `arrival_array_golden_hashes` variant 1 (spotting)
+was re-recorded; variants 0 and 2 are unchanged. Known limit: arrival times
+are not saved in a snapshot, so Burning cells restart at the resume tick and
+the front lags an uninterrupted run by about one cell.
+
+Cost of the extra check (`make bench-ab A=ce7ff78 FILTER=stress_2d_wildfire_arrival`,
+8 rounds x 10 runs, load about 3; times in ms per 30-step run): at one thread
+`2d_wildfire_arrival_256` went from 9.73 to 10.14 median (+4.2 %, significant)
+and `2d_wildfire_arrival_spotting_256` from 9.83 to 10.30 (+4.8 %, significant;
+its behaviour also changed, since spot fires now spread). The 4- and 8-thread
+rows were not significant (noise). So the check costs roughly 4 to 5 % on this
+short, fire-dominated run.
+
 ### Net effect (four kept rounds)
 
 Comparable-40-entry suite total (sum of avgs):

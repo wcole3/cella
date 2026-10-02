@@ -436,7 +436,11 @@ snapshot into an in-memory `GridState` and hand it to
 `explore::Sim::from_state` uses, so the history rebuild, count recompute, and
 model `attach` all happen in one place. A model's own derived state (the
 wildfire model's `arrival` table, for one) is never saved; `attach` rebuilds
-it every time, whether this is the first load or a resume.
+it every time, whether this is the first load or a resume. For the arrival
+spread rule this has one visible effect: every cell that is Burning at the
+resume step restarts with arrival time equal to that step, not its true
+earlier ignition time, so a resumed fire lags an uninterrupted one by about
+one cell.
 
 `GridState` is in-memory only. If you need a grid's raw per-cell state with no
 scenario context, `grid.to_cell_states()` gives a `Vec<CellState>`, but

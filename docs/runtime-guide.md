@@ -635,6 +635,10 @@ Whole 150-step runs, one thread, ns per cell-step:
   Bernoulli column). Arrival is still a little dearer than Bernoulli because
   a cell next to the fire does more work (it looks at every burning or burned
   neighbor).
+  (Resuming a saved run under `spread: "arrival"` restarts every burning
+  cell's arrival time at the resume step, so the resumed fire lags an
+  uninterrupted one by about one cell; see [lib.md](lib.md), "Saving and
+  resuming a run".)
 
 Threads on a Bernoulli wildfire (ns per cell-step):
 
