@@ -24,9 +24,14 @@
 //! [`MIN_WORK_PER_CHUNK`] for this process, and `CELLA_MEMBER_PAR=<n>` caps how
 //! many ensemble members [`crate::explore::Ensemble::step`] steps concurrently
 //! instead of letting its own grid-size heuristic decide.
+//!
+//! Precedence, highest first: an explicit call in code
+//! ([`set_min_work_per_chunk_override`], [`set_member_par_override`]), then the
+//! environment variable, then the built-in default. The code call wins even if
+//! it happens before the environment variable would first have been read.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static THREADS: OnceLock<usize> = OnceLock::new();
@@ -147,28 +152,42 @@ static MIN_WORK_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 /// exhaustively — otherwise the work heuristic keeps them serial and the parallel
 /// code paths go untested. (`0` is raised to 1.) Tests must hold
 /// `lock_override_for_test` while doing so.
+///
+/// An explicit call here always beats the `CELLA_MIN_WORK` environment
+/// variable, whether it runs before or after the first [`chunks_for_work`].
 pub fn set_min_work_per_chunk_override(work: usize) {
+    // Let a pending `CELLA_MIN_WORK` land first, so the explicit value below
+    // is stored after it and wins.
+    apply_min_work_env_once();
     MIN_WORK_OVERRIDE.store(work.max(1), Ordering::Relaxed);
 }
 
 /// Clear the work-per-chunk override, so [`MIN_WORK_PER_CHUNK`] applies again.
-/// This also discards any value that `CELLA_MIN_WORK` had put there.
+/// This also discards any value that `CELLA_MIN_WORK` had put there (and the
+/// variable is not read again afterwards).
 pub fn clear_min_work_per_chunk_override() {
+    apply_min_work_env_once();
     MIN_WORK_OVERRIDE.store(0, Ordering::Relaxed);
 }
 
-/// Applies the `CELLA_MIN_WORK` environment variable to [`MIN_WORK_OVERRIDE`]
-/// exactly once per process, the first time [`chunks_for_work`] runs.
+/// Set once `CELLA_MIN_WORK` has been read into [`MIN_WORK_OVERRIDE`].
 ///
-/// This is a thin bootstrap over [`set_min_work_per_chunk_override`], not a
-/// second knob: a one-off benchmark process sets the env var before it does
-/// any work and never changes it, so "read once" is enough and keeps the hot
-/// path (`chunks_for_work` runs on every step) down to one more check after
-/// the first call. Tests that need to vary the threshold within one process
-/// call `set_min_work_per_chunk_override`/`clear_min_work_per_chunk_override`
-/// directly; once `chunks_for_work` has run, those calls replace whatever the
-/// environment said.
-static MIN_WORK_ENV_APPLIED: OnceLock<()> = OnceLock::new();
+/// The variable is applied at most once per process, the first time
+/// [`chunks_for_work`], [`set_min_work_per_chunk_override`] or
+/// [`clear_min_work_per_chunk_override`] runs, whichever comes first. Because
+/// the two setters apply it *before* they store their own value, an explicit
+/// call in code always beats the environment variable, in any order.
+///
+/// This is a thin bootstrap over the override, not a second knob: a one-off
+/// benchmark process sets the env var before it does any work and never
+/// changes it, so "read once" is enough and keeps the hot path
+/// (`chunks_for_work` runs on every step) down to one atomic load after the
+/// first call. A plain flag plus [`MIN_WORK_ENV_LOCK`] is used instead of a
+/// `OnceLock` so a test can reset it.
+static MIN_WORK_ENV_APPLIED: AtomicBool = AtomicBool::new(false);
+
+/// Makes sure two threads do not both run the first-time env read.
+static MIN_WORK_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Parses the raw value of one of these env knobs: `Some(n)` for a positive
 /// `usize`, `None` for anything unusable (absent, not a number, or zero).
@@ -193,7 +212,16 @@ fn apply_env_override(var: &str, target: &AtomicUsize) {
 }
 
 fn apply_min_work_env_once() {
-    MIN_WORK_ENV_APPLIED.get_or_init(|| apply_env_override("CELLA_MIN_WORK", &MIN_WORK_OVERRIDE));
+    if MIN_WORK_ENV_APPLIED.load(Ordering::Acquire) {
+        return;
+    }
+    let _guard = MIN_WORK_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !MIN_WORK_ENV_APPLIED.load(Ordering::Relaxed) {
+        apply_env_override("CELLA_MIN_WORK", &MIN_WORK_OVERRIDE);
+        MIN_WORK_ENV_APPLIED.store(true, Ordering::Release);
+    }
 }
 
 /// How many chunks a step estimated at `total_work` neighbor visits should be
@@ -226,17 +254,21 @@ static MEMBER_PAR_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
 /// concurrently (`0` is raised to 1). Used by tests/benchmarks; mirrors
 /// [`set_thread_override`], and tests must hold `lock_override_for_test` too.
 pub fn set_member_par_override(n: usize) {
+    // Same rule as the min-work override: apply `CELLA_MEMBER_PAR` first so
+    // this explicit value wins.
+    apply_member_par_env_once();
     MEMBER_PAR_OVERRIDE.store(n.max(1), Ordering::Relaxed);
 }
 
 /// Clear the member-parallelism override so the engine's own heuristic
 /// decides again.
 pub fn clear_member_par_override() {
+    apply_member_par_env_once();
     MEMBER_PAR_OVERRIDE.store(0, Ordering::Relaxed);
 }
 
 /// Applies `CELLA_MEMBER_PAR` to [`MEMBER_PAR_OVERRIDE`] once per process,
-/// the first time [`member_par_override`] runs. Same bootstrap-only
+/// the first time [`member_par_override`] (or a setter) runs. Same bootstrap-only
 /// reasoning as [`apply_min_work_env_once`].
 static MEMBER_PAR_ENV_APPLIED: OnceLock<()> = OnceLock::new();
 
@@ -298,9 +330,9 @@ pub(crate) fn pool(n: usize) -> &'static rayon::ThreadPool {
 /// `cargo test` runs tests on many threads in one process, but
 /// [`set_thread_override`] and friends change a single global. If two tests
 /// set it at once, one can clear it while the other is mid-run, and a "4
-/// thread" run silently becomes a default-thread run. An in-crate test that
-/// sets an override outside this module should hold this guard for its whole
-/// body (take it via `lock_override_for_test`).
+/// thread" run silently becomes a default-thread run. Every in-crate test that
+/// sets an override (in this module or any other) holds this guard for its
+/// whole body; take it via `lock_override_for_test`.
 #[cfg(test)]
 static OVERRIDE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -319,9 +351,9 @@ mod tests {
     use std::io::Write;
     use std::sync::{Mutex, OnceLock};
 
-    /// Serializes the tests in this module (they change the working directory
-    /// and the overrides). It is a different lock from
-    /// `lock_override_for_test`, which guards overrides across modules.
+    /// Serializes the tests in this module that change the working directory
+    /// or read config files. Tests that set the thread / work overrides use
+    /// `lock_override_for_test` instead, which also guards other modules.
     fn test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -392,7 +424,7 @@ mod tests {
 
     #[test]
     fn override_chunks_and_pool_paths_are_covered() {
-        let _guard = test_lock().lock().unwrap();
+        let _guard = lock_override_for_test();
 
         let baseline = thread_count();
         assert!(baseline >= 1);
@@ -484,5 +516,34 @@ mod tests {
         std::env::set_current_dir(old2).unwrap();
         let _ = std::fs::remove_file(props);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn code_override_beats_min_work_env_var() {
+        let _guard = lock_override_for_test();
+        let old_env = std::env::var("CELLA_MIN_WORK").ok();
+        let old_threads = THREAD_OVERRIDE.load(Ordering::Relaxed);
+        // Pretend the env var has not been read yet, as in a fresh process.
+        MIN_WORK_ENV_APPLIED.store(false, Ordering::Release);
+
+        // The env var says 1_000_000 per chunk; code says 10. With 4 threads and
+        // 40 units of work, only the code value gives 4 chunks (40 / 1_000_000
+        // would be 0, clamped to 1).
+        unsafe { std::env::set_var("CELLA_MIN_WORK", "1000000") };
+        set_min_work_per_chunk_override(10);
+        set_thread_override(4);
+        let chunks = chunks_for_work(40);
+
+        // Restore the process-global state before asserting.
+        clear_min_work_per_chunk_override();
+        THREAD_OVERRIDE.store(old_threads, Ordering::Relaxed);
+        // SAFETY: tests that touch overrides/env hold `lock_override_for_test`.
+        unsafe {
+            old_env.map_or_else(
+                || std::env::remove_var("CELLA_MIN_WORK"),
+                |v| std::env::set_var("CELLA_MIN_WORK", v),
+            )
+        };
+        assert_eq!(chunks, 4);
     }
 }
