@@ -90,7 +90,7 @@ impl fmt::Display for CellType {
 
 impl fmt::Debug for CellType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CellType({:?}", self.as_str())
+        write!(f, "CellType({:?})", self.as_str())
     }
 }
 
@@ -136,6 +136,11 @@ mod tests {
         let dbg = format!("{:?}", ct);
         assert!(dbg.contains("CellType"));
         assert!(dbg.contains("DebugType"));
+    }
+
+    #[test]
+    fn debug_output_is_a_closed_tuple_struct() {
+        assert_eq!(format!("{:?}", CellType::new("x")), "CellType(\"x\")");
     }
 
     #[test]

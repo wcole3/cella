@@ -41,9 +41,15 @@ use crate::types::CellType;
 /// Intersection over union (IoU, also called the Jaccard index) of two masks:
 /// `|A∩B| / |A∪B|`, the cells on in both over the cells on in either. For
 /// `[1,1,0,0]` against `[1,0,1,0]` that is 1 / 3. Returns 1.0 when both masks
-/// are empty (nothing to disagree about). If the slices differ in length, only
-/// the shared prefix is compared.
+/// are empty (nothing to disagree about).
+///
+/// # Panics
+///
+/// If `a` and `b` have different lengths. Two masks of different lengths come
+/// from different grids, so comparing them is a caller bug, and a quiet wrong
+/// score would be worse than a loud failure.
 pub fn iou(a: &[bool], b: &[bool]) -> f64 {
+    assert_eq!(a.len(), b.len(), "iou: masks must have the same length");
     let (mut inter, mut union) = (0u64, 0u64);
     for (&x, &y) in a.iter().zip(b) {
         inter += (x && y) as u64;
@@ -58,9 +64,13 @@ pub fn iou(a: &[bool], b: &[bool]) -> f64 {
 
 /// Sørensen–Dice overlap of two masks: `2|A∩B| / (|A| + |B|)` (1.0 when both
 /// are empty). It is never lower than IoU on the same pair, so it is kinder
-/// to small shifts. For `[1,1,0,0]` against `[1,0,1,0]` that is 2 / 4. If the
-/// slices differ in length, only the shared prefix is compared.
+/// to small shifts. For `[1,1,0,0]` against `[1,0,1,0]` that is 2 / 4.
+///
+/// # Panics
+///
+/// If `a` and `b` have different lengths (see [`iou`]).
 pub fn sorensen(a: &[bool], b: &[bool]) -> f64 {
+    assert_eq!(a.len(), b.len(), "sorensen: masks must have the same length");
     let (mut inter, mut total) = (0u64, 0u64);
     for (&x, &y) in a.iter().zip(b) {
         inter += (x && y) as u64;
@@ -75,10 +85,13 @@ pub fn sorensen(a: &[bool], b: &[bool]) -> f64 {
 
 /// Fraction of positions where two masks agree, on or off (1.0 when `a` is
 /// empty). Unlike IoU it also rewards matching "off" cells, so on a mostly
-/// empty grid it is high even for a poor match. `a` and `b` should have the
-/// same length: the count of matches covers the shared prefix but is divided
-/// by `a.len()`.
+/// empty grid it is high even for a poor match.
+///
+/// # Panics
+///
+/// If `a` and `b` have different lengths (see [`iou`]).
 pub fn agreement(a: &[bool], b: &[bool]) -> f64 {
+    assert_eq!(a.len(), b.len(), "agreement: masks must have the same length");
     if a.is_empty() {
         return 1.0;
     }
@@ -88,9 +101,17 @@ pub fn agreement(a: &[bool], b: &[bool]) -> f64 {
 
 /// Brier score of a probability map against what happened: the mean squared
 /// gap between each probability and 0/1 (`obs` true counts as 1). Lower is
-/// better; 0 is perfect. Returns 0.0 for an empty map. The sum covers the
-/// shared prefix but is divided by `prob.len()`, so keep the lengths equal.
+/// better; 0 is perfect. Returns 0.0 for an empty map.
+///
+/// # Panics
+///
+/// If `prob` and `obs` have different lengths (see [`iou`]).
 pub fn brier(prob: &[f32], obs: &[bool]) -> f64 {
+    assert_eq!(
+        prob.len(),
+        obs.len(),
+        "brier: prob and obs must have the same length"
+    );
     if prob.is_empty() {
         return 0.0;
     }
@@ -1340,5 +1361,29 @@ mod tests {
         assert_eq!(empty.largest, 0);
         assert_eq!(empty.largest_fraction, 1.0);
         assert_eq!(empty.largest_elongation, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "same length")]
+    fn iou_rejects_unequal_lengths() {
+        iou(&[true, true], &[true]);
+    }
+
+    #[test]
+    #[should_panic(expected = "same length")]
+    fn sorensen_rejects_unequal_lengths() {
+        sorensen(&[true], &[true, true]);
+    }
+
+    #[test]
+    #[should_panic(expected = "same length")]
+    fn agreement_rejects_unequal_lengths() {
+        agreement(&[true, true], &[true]);
+    }
+
+    #[test]
+    #[should_panic(expected = "same length")]
+    fn brier_rejects_unequal_lengths() {
+        brier(&[1.0, 0.0], &[true]);
     }
 }
