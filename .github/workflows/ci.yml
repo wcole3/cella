@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per branch/PR at a time; a newer push cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # The repo has TWO separate cargo build roots (not a workspace), each
+      # with its own target/ directory, so the cache must cover both.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+      # eframe (the GUI) needs these system libraries to compile on Linux.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      # `make clippy` runs both build roots. We deliberately do not run
+      # `make fmt-check`: the repo is not rustfmt-clean.
+      - run: make clippy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      # Runs only the non-ignored tests; slow benchmarks are #[ignore]d.
+      - run: make test
+      # make test only covers cella_lib; this runs the GUI crate's own tests
+      # (headless, no display needed).
+      - run: cargo test --package cella_gui --bin cella
+
+  # Compile-only check so Windows/macOS breakage shows up before release day.
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+      - run: cargo check --package cella_gui --bin cella

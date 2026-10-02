@@ -1,0 +1,209 @@
+name: Release
+
+# Runs when a version tag such as v1.0.0 is pushed.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Gate: refuse to release unless the tag matches both crate versions and the
+  # tree is green (lint + tests).
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # Two cargo build roots, two target/ dirs: cache both.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      - name: Check tag matches Cargo.toml versions
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          fail=0
+          for dir in . cella_lib; do
+            # --no-deps limits output to the package(s) in this build root.
+            actual="$(cd "$dir" && cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+            echo "$dir: Cargo.toml version = $actual, tag version = $tag_version"
+            if [ "$actual" != "$tag_version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $actual in $dir/Cargo.toml"
+              fail=1
+            fi
+          done
+          exit "$fail"
+      - run: make clippy
+      - run: make test
+      # make test only covers cella_lib; this runs the GUI crate's own tests.
+      - run: cargo test --package cella_gui --bin cella
+
+  build:
+    needs: verify
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # ubuntu-22.04 on purpose: it has an older glibc than ubuntu-latest,
+          # and a binary only runs on systems with glibc at least as new as
+          # the one it was built against. Older build image = more distros.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+          key: ${{ matrix.target }}
+      - name: Install system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      - name: Build
+        run: cargo build --release --locked --package cella_gui --bin cella --target ${{ matrix.target }}
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          name="cella-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          exe="cella"
+          if [ "$RUNNER_OS" = "Windows" ]; then exe="cella.exe"; fi
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/$exe" "$name/"
+          cp -r configs "$name/configs"
+          cp cella.properties README.md LICENSE "$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "$name.zip" "$name"
+            echo "archive=$name.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            echo "archive=$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cella-${{ matrix.target }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to create the GitHub release
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: cella-*
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum cella-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # With --generate-notes, gh PREPENDS --notes to the auto-generated notes,
+      # so the body is: install note, then the generated changelog.
+      # No checkout here, so --repo is required for gh.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes='Download the archive for your platform, extract it, and run `cella --gui`.
+
+          These binaries are unsigned. On macOS, run `xattr -d com.apple.quarantine cella` or right-click the file and choose Open. On Windows SmartScreen, click More info, then Run anyway.
+
+          Verify downloads against `SHA256SUMS.txt`.'
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            --notes "$notes" \
+            dist/cella-*.tar.gz dist/cella-*.zip dist/SHA256SUMS.txt
+
+  # Publishes to crates.io via trusted publishing (no long-lived token).
+  # Setup required: on crates.io, for EACH crate (cella_lib and cella_gui),
+  # add a trusted publisher with repo wcole3/cella, workflow release.yml,
+  # environment crates-io. Trusted publishing only works after the crate's
+  # first manual publish. The crates-io environment should require a reviewer.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      id-token: write # lets the auth action request an OIDC token
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            cella_lib -> target
+      # `cargo publish` verifies by building cella_gui, which needs these.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libgl1-mesa-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      # Each publish is skipped if crates.io already has that version, so the
+      # job can be safely re-run after a partial failure. crates.io rejects
+      # requests without a User-Agent. cella_lib goes first because cella_gui
+      # depends on it; cargo publish waits until the new version is in the
+      # index, so it is visible by the time the next step runs.
+      - name: Publish cella_lib
+        working-directory: cella_lib
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if curl -sf -A "wcole3/cella release workflow" "https://crates.io/api/v1/crates/cella_lib/$version" > /dev/null; then
+            echo "cella_lib $version already on crates.io, skipping"
+          else
+            cargo publish
+          fi
+
+      - name: Publish cella_gui
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if curl -sf -A "wcole3/cella release workflow" "https://crates.io/api/v1/crates/cella_gui/$version" > /dev/null; then
+            echo "cella_gui $version already on crates.io, skipping"
+          else
+            cargo publish --package cella_gui
+          fi
