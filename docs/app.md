@@ -525,7 +525,9 @@ menu (`cargo run --release`) needs no graphics at all.
 
 The engine reads `threads=N` from a `cella.properties` file in the current
 directory or a parent (set `threads=1` to disable parallel stepping). See
-[lib.md](lib.md#thread-configuration).
+[lib.md](lib.md#thread-configuration). For how long a run will take and
+which settings speed it up or slow it down, see
+[runtime-guide.md](runtime-guide.md).
 
 ---
 

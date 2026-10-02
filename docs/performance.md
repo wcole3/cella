@@ -911,7 +911,10 @@ What they show:
 - **`history_limit`:** 0 → 1 costs about **+19 %** (35.1 → 41.6 ms), 1 → 7
   about **+1 %**. So the history *ring buffer* machinery (any non-zero limit) is
   what costs, not the depth. The §3.8 divide removal made depth almost free; the
-  fixed cost of having a history at all is the remaining target.
+  fixed cost of having a history at all is the remaining target. Caveat
+  (2026-10-02, runtime-guide.md History section): depth stays nearly free only
+  while the history buffers (cells × limit × 4 bytes) fit in cache; at
+  1024×1024 on the packed path, limit 1→7 cost +17 % and 1→16 +62 %.
 - **The 400 000 threshold on this box.** For this rule, splitting does *not*
   pay at 2× and loses at 4×: 2 chunks are neutral (+2.9 % at t4, −1.5 % at t8,
   within noise), 4 chunks are **~15 % slower** than serial. The 12-type case
@@ -921,7 +924,12 @@ What they show:
   amortize the hand-off, or the estimate over-counts (the "stay" subrules
   usually stop early, which is exactly §3.14). This is a lead from one rule on
   one machine, not yet a tuning decision; confirm with `make bench-ab` and
-  `CELLA_MIN_WORK` before changing the constant.
+  `CELLA_MIN_WORK` before changing the constant. Counter-evidence for heavier
+  rules (2026-10-02, [runtime-guide.md](runtime-guide.md) Threads section): on
+  a 3-type cyclic rule at about 20 ns per cell, 4 threads were 1.5–2.3×
+  *faster* than 1 thread at 183×183 and 256×256, so the slowdown is specific
+  to cheap per-cell rules — exactly the `work_per_cell` over-estimate §3.14
+  describes.
 
 ### Baseline history (`tests/benchmarks_last.json`)
 

@@ -819,6 +819,9 @@ a possible future direction.
 
 ### Parallelism and threading
 
+For user-level rules of thumb on run time (which settings cost what, and when
+threads help), see [runtime-guide.md](runtime-guide.md).
+
 Both `Grid1D` and `Grid2D` stepping use multiple cores through `rayon`, a Rust
 library that runs work on a pool of worker threads.
 

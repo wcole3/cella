@@ -144,6 +144,7 @@ cycles, other neighborhoods, wildfire demos, and Explore setups.
 | [Primer: Monte Carlo](docs/primer-monte-carlo.md) | Plain-language: why run a simulation many times, probability maps, particle filters, seeds |
 | [Primer: Genetic Algorithms](docs/primer-genetic-algorithms.md) | Plain-language: populations, selection, mutation, novelty search, MAP-Elites |
 | [Validation README](validation/README.md) | Scoring the wildfire model against real fires; start with [ANALYSIS.md](validation/ANALYSIS.md) |
+| [Runtime guide](docs/runtime-guide.md) | Rules of thumb: how long will my run take, and which settings make it slower or faster |
 | [Performance review](docs/performance.md) | Developer notes: engine internals, optimizations, known issues |
 | [Roadmap](docs/roadmap.md) | Developer notes: GUI and plugin-UI work plan, with status per phase |
 
