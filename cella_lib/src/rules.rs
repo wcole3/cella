@@ -326,7 +326,7 @@ pub enum RuleError {
     InvalidRandomness,
     /// 2D `range` is below 1, or `limit` is inconsistent with `op`/`count`
     /// (`Eq` with a limit, or an empty between-range).
-    #[error("range must be >= 1")]
+    #[error("range must be >= 1, and limit must be consistent with the operator and count")]
     InvalidRange2D,
 }
 
@@ -1538,5 +1538,12 @@ mod tests {
             "the entry is dropped, not left at zero"
         );
         assert_eq!(c.iter().count(), 1, "only B remains");
+    }
+
+    #[test]
+    fn invalid_range_2d_message_mentions_both_range_and_limit() {
+        let text = RuleError::InvalidRange2D.to_string();
+        assert!(text.contains("range"), "{text}");
+        assert!(text.contains("limit"), "{text}");
     }
 }

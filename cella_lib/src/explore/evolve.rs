@@ -187,6 +187,10 @@ pub struct EvolveConfig {
     #[serde(default)]
     pub selection: Selection,
     /// Where each evaluation starts (default: the template's own cells).
+    /// Not allowed together with a `density_classification` objective, which
+    /// draws its own starts: any value other than the default `fixed` is
+    /// rejected there. (An explicit `"fixed"` cannot be told apart from
+    /// "left out", so it is accepted.)
     #[serde(default)]
     pub initial: InitialCondition,
     /// Optional model-specific behaviour (see [`MemberDriver`]).
@@ -486,6 +490,16 @@ impl Evolution {
         } else {
             None
         };
+        if matches!(
+            cfg.objective.as_ref().map(|o| &o.metric),
+            Some(Metric::DensityClassification { .. })
+        ) && cfg.initial != InitialCondition::Fixed
+        {
+            return Err(config_error(
+                "the density_classification objective draws its own starting rows, so \
+                 `initial` must be left out (or \"fixed\")",
+            ));
+        }
         if let InitialCondition::Random { types, weights } = &cfg.initial {
             if types.is_empty() {
                 return Err(config_error("initial.random needs at least one type"));
@@ -1468,6 +1482,30 @@ mod tests {
         assert_ne!(cells, evo.template.cells().to_vec());
         let again = evo.initial_cells(mix(cfg.seed ^ 0x1C)).unwrap();
         assert_eq!(cells, again, "the same generation draws the same start");
+    }
+
+    #[test]
+    fn density_classification_rejects_a_non_default_initial() {
+        let mut cfg = EvolveConfig {
+            population: 6,
+            steps: 10,
+            repeats: 2,
+            genes: vec![GeneSpec::new("rule.subrules[*].wolfram_code")],
+            objective: Some(Objective::maximise(Metric::DensityClassification {
+                types: ["X".into(), "Inactive".into()],
+            })),
+            ..EvolveConfig::default()
+        };
+        // The default `initial` (fixed) is fine.
+        assert!(Evolution::new(row(21), &cfg).is_ok());
+        cfg.initial = InitialCondition::Random {
+            types: vec!["X".into(), "Inactive".into()],
+            weights: vec![],
+        };
+        let err = Evolution::new(row(21), &cfg).err().expect("must be rejected");
+        let text = err.to_string();
+        assert!(text.contains("density_classification"), "{text}");
+        assert!(text.contains("initial"), "{text}");
     }
 
     #[test]

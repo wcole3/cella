@@ -211,8 +211,10 @@ The metrics, and when to reach for each:
   you know the curve, not just the end state.
 - **`density_classification`** — the classic 1D task: start from a random
   row at a random density, and score 1 if the row ends all-majority. It
-  draws its own initial rows (a new one per generation and repeat) and
-  ignores the block's `initial`. *Use it when* you want to evolve a rule
+  draws its own initial rows (a new one per generation and repeat), so the
+  block's `initial` must be left out: any value other than the default
+  `"fixed"` is rejected with an error (`"fixed"` itself cannot be told apart
+  from "left out", so it is accepted and has no effect). *Use it when* you want to evolve a rule
   that *computes* something.
 - **`bbox_fraction`**, **`elongation`**, **`centroid_speed`**, **`growth`**,
   **`period`** — shape measures described in §6. They also work as objectives
@@ -395,7 +397,9 @@ Readouts:
 - **`obj_max`, `obj_mean`** — the best and average elite fitness.
 - **`out_of_range`** — candidates whose descriptor fell outside an axis
   range and were clamped to the edge cell. Many of these mean a `range` is
-  wrong.
+  wrong. A value exactly equal to an axis's upper bound goes in the last bin
+  and is *not* counted; older versions did count it, so `out_of_range` in old
+  result files can be higher than the same run reports now.
 
 **Walk-through: the Wolfram-class map.** Run
 

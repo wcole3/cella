@@ -316,8 +316,9 @@ pub struct ArchiveStats {
     pub obj_mean: f64,
     /// Candidates whose descriptor fell outside an axis range (or was NaN)
     /// and were clamped to the edge cell. Many of these mean the range is
-    /// wrong. A value exactly equal to an axis's upper bound also counts, even
-    /// though it is placed in the last bin anyway.
+    /// wrong. A value exactly equal to an axis's upper bound is in range and
+    /// does not count. (Result files from older versions counted it, so their
+    /// `out_of_range` can be higher for the same run.)
     pub out_of_range: u64,
 }
 
@@ -365,15 +366,20 @@ impl Archive {
     /// whether it had to be clamped onto the grid's edge. Each axis is cut
     /// into equal bins over its range: with range `[0, 1]` and 4 bins, 0.26 is
     /// bin 1. Out-of-range and NaN values are clamped to the nearest edge bin
-    /// (NaN goes to bin 0) and reported as `true`; a value exactly at the top
-    /// of the range is also reported as clamped, since it would be bin `n`.
+    /// (NaN goes to bin 0) and reported as `true`. A value exactly equal to the
+    /// top of the range belongs to the last bin and is reported as `false`
+    /// (it is in range; the maths would otherwise call it bin `n`). Older
+    /// versions reported that case as clamped, so `out_of_range` counts in old
+    /// result files can be higher than the same run gives now.
     pub fn cell_index(&self, descriptor: &[f64]) -> (usize, bool) {
         let mut index = 0usize;
         let mut clamped = false;
         for ((v, r), b) in descriptor.iter().zip(&self.ranges).zip(&self.dims) {
             let t = (v - r[0]) / (r[1] - r[0]);
             let mut bin = (t * f64::from(*b)).floor();
-            if !(0.0..f64::from(*b)).contains(&bin) {
+            if *v == r[1] {
+                bin = f64::from(*b - 1);
+            } else if !(0.0..f64::from(*b)).contains(&bin) {
                 clamped = true;
                 bin = bin.clamp(0.0, f64::from(*b - 1));
             }
@@ -693,8 +699,13 @@ mod tests {
         assert_eq!(a.cell_index(&[0.26, 1.0]), (3, false));
         assert_eq!(
             a.cell_index(&[1.0, 2.0]),
+            (3 * 2 + 1, false),
+            "a value exactly at the top edge is in the last bin, not out of range"
+        );
+        assert_eq!(
+            a.cell_index(&[1.0001, 2.0]),
             (3 * 2 + 1, true),
-            "the top edge is clamped into the last bin"
+            "just above the top edge is out of range"
         );
         assert_eq!(a.cell_index(&[-1.0, 5.0]), (1, true));
         assert_eq!(a.cell_index(&[f64::NAN, 0.0]), (0, true));

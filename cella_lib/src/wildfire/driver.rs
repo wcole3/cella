@@ -117,8 +117,11 @@ pub struct WildfireDriver {
     /// **Must be a finite number > 0.** The floor keeps `ln growth` finite for
     /// a member that did not grow. A floor of 0 gives `ln 0 = -inf`, which with a
     /// negative `contain_b` makes the logit `+inf`: the member is contained with
-    /// probability 1, silently. `wildfire_smc` rejects such values when it parses
-    /// `SMC_CONTAIN_GROWTH_FLOOR`; this struct does not check it.
+    /// probability 1, silently. The library rejects a bad value in two places:
+    /// loading a config fails with a serde error, and a driver built in code
+    /// (the field is `pub`) makes `period_end` return `ModelError::InvalidParam`.
+    /// `wildfire_smc` also checks `SMC_CONTAIN_GROWTH_FLOOR` itself, for an
+    /// earlier and friendlier message.
     ///
     /// `skip_serializing_if`: a driver at the default floor serialises with this
     /// key absent, exactly like a config written before the field existed, so an
@@ -126,9 +129,33 @@ pub struct WildfireDriver {
     /// written, and `#[serde(default = ...)]` reads either shape back in.
     #[serde(
         default = "default_contain_growth_floor",
+        deserialize_with = "deserialize_contain_growth_floor",
         skip_serializing_if = "is_default_contain_growth_floor"
     )]
     pub contain_growth_floor: f64,
+}
+
+/// True when `floor` is usable: finite and greater than 0.
+fn valid_contain_growth_floor(floor: f64) -> bool {
+    floor.is_finite() && floor > 0.0
+}
+
+/// The message used by both validation points.
+fn bad_floor_message(floor: f64) -> String {
+    format!("contain_growth_floor must be a finite number > 0, got {floor}")
+}
+
+/// Serde hook: read the number, then refuse an unusable one.
+fn deserialize_contain_growth_floor<'de, D>(d: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let floor = f64::deserialize(d)?;
+    if valid_contain_growth_floor(floor) {
+        Ok(floor)
+    } else {
+        Err(serde::de::Error::custom(bad_floor_message(floor)))
+    }
 }
 
 fn is_default_contain_growth_floor(floor: &f64) -> bool {
@@ -275,6 +302,11 @@ impl MemberDriver for WildfireDriver {
         state: &mut MemberState,
         rng: &mut Rng,
     ) -> Result<(), ModelError> {
+        if !valid_contain_growth_floor(self.contain_growth_floor) {
+            return Err(ModelError::InvalidParam(bad_floor_message(
+                self.contain_growth_floor,
+            )));
+        }
         let (Some(a), Some(b)) = (
             space.float(genome, GENE_CONTAIN_A),
             space.float(genome, GENE_CONTAIN_B),
@@ -1079,6 +1111,34 @@ mod tests {
             let p = model_params(&mut m.sim);
             assert_eq!(p.wind_speed, 4.0, "falls back to the last known speed");
             assert_eq!(p.wind_from_deg, 180.0);
+        }
+    }
+
+    /// A bad `contain_growth_floor` (0, negative, NaN, infinite) must be
+    /// rejected by the library, both when a config is loaded and, for a driver
+    /// built in code, when the first period boundary runs.
+    #[test]
+    fn invalid_contain_growth_floor_is_rejected() {
+        for bad in ["0", "0.0", "-0.001"] {
+            let json = format!(r#"{{"contain_growth_floor": {bad}}}"#);
+            assert!(
+                serde_json::from_str::<WildfireDriver>(&json).is_err(),
+                "{bad} should be rejected on load"
+            );
+        }
+        let ok: WildfireDriver = serde_json::from_str(r#"{"contain_growth_floor": 0.001}"#).unwrap();
+        assert_eq!(ok.contain_growth_floor, 0.001);
+
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let driver = WildfireDriver {
+                steps_per_day: 6,
+                weather: vec![],
+                contain_growth_floor: bad,
+            };
+            let cfg = fire_config(4, driver);
+            let mut e = Ensemble::new(template(8, 8), &cfg).unwrap();
+            e.set_forcing(forcing(0.0, 0.0, 270.0)).unwrap();
+            assert!(e.step_n(6).is_err(), "{bad} should be rejected at a period end");
         }
     }
 }
