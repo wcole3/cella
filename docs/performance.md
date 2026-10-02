@@ -12,16 +12,21 @@ struct-of-arrays (SoA) / double-buffer refactor (July 2026) and **updated after
 acting on it**. It covers the current architecture and its optimizations, the
 correctness issues found, what was implemented and measured, and what remains.
 
-**Status: the §2 correctness fixes and the §3.1–§3.6, §3.10, and §3.11
-performance items have been implemented and measured.** Sections marked *(done)*
-describe shipped code; sections marked *(open)* are still recommendations. §7
-records the performance decisions baked into the wildfire/external-model work.
-Line references are omitted in favour of naming functions, since line numbers
-drift.
+**Status: the §2 correctness fixes and the §3.1–§3.3, §3.6–§3.11 performance
+items have been implemented and measured, and most of §3.12 too.** §3.4 was
+deliberately not done and §3.5 was folded into §3.12. Still open: §3.13, §3.14,
+the last §3.12 item, and the benchmark/criterion work in §4. Sections marked
+*(done)* describe shipped code; sections marked *(open)* are still
+recommendations. §7 records the performance decisions baked into the
+wildfire/external-model work. Line references are omitted in favour of naming
+functions, since line numbers drift.
 
-Headline: the benchmark suite total went from **1329 ms to 840 ms (−37 %)** on the
-reference machine, with cell-for-cell identical output (the FNV snapshot tests in
-`tests/snapshots/` pass unchanged throughout).
+Headline: the first pass (§3.1–§3.6) took the benchmark suite total from
+**1329 ms to 840 ms (−37 %)** on the reference machine. The later rounds in §8
+(including the bit-packed fast paths of §3.7) brought the comparable 40-entry
+total down to **580.67 ms**. Output stayed cell-for-cell identical throughout:
+the FNV snapshot tests in `tests/snapshots/` (stored hashes of the final grid)
+pass unchanged.
 
 ---
 
@@ -226,7 +231,7 @@ Representative per-case results (ms, lower is better):
 | `1d_large_rule30_2049_t1` | 23.5 | 28.5 | **+21 %** |
 | `1d_three_state_cycle_t1` | 6.2 | 7.6 | **+23 %** |
 
-The two 1D regressions are a known open item — see §3.9.
+The two 1D regressions were fixed later: see §3.9, §8 E1, and §8 E6.
 
 ### 3.1 Branchless interior stepping *(done)*
 
@@ -257,7 +262,8 @@ ablation — forcing every 1D cell down the bounds-checked edge path regresses
 `1d_large_rule30_2049` from 25.8 ms to 28.6 ms and `1d_n3_custom` from 0.91 ms to
 1.52 ms.
 
-Still open: no explicit SIMD. See §3.7.
+This path does not use explicit SIMD. The bit-packed fast paths in §3.7 cover
+the rule shapes where packing pays off.
 
 ### 3.2 Parallelism: persistent pool, work-proportional split, `hl == 0` *(done)*
 
@@ -318,7 +324,51 @@ correctly. If this is revisited, measure the fork/join latency on the target
 platform *first* and re-tune `MIN_WORK_PER_CHUNK` rather than assuming these
 numbers transfer.
 
-### 3.3 RNG acquisition hoisted out of the per-cell loop *(done)*
+**Re-investigated 2026-10-01 (ticket DS-001): closed as not worth it.** This
+re-check asked three questions. Did the WSL2 numbers still hold? Could a crate
+give low latency without `unsafe` in our own code? What would we actually gain?
+"Fork/join latency" means the time to hand work to the worker threads and wait
+for them all to finish, with almost no work in each chunk.
+
+| approach (persistent pool, trivial chunks) | 2 workers | 4 workers | 8 workers |
+|---|---|---|---|
+| rayon `install` + `par_iter_mut` (current code) | 41 µs | 166 µs | 452 µs |
+| forte 1.0.0-beta.1 (best crate with a safe API) | 17.5 µs | 41 µs | 51 µs |
+| paralight 0.0.12 | 76 µs | 101 µs | 171 µs |
+| hand-written spin-then-park pool (needs `unsafe`) | 0.31 µs | 0.85 µs | 1.07 µs |
+
+(Medians. Most batches ran with a 1-minute load average above 4, so treat
+these as approximate.)
+
+- **The old numbers still hold.** Moving to WSL kernel 6.18 did not help.
+  Waking one sleeping worker costs roughly 30–40 µs here.
+- **No safe-API crate is good enough.** forte is the fastest, but it is a beta
+  that needs Rust 1.96. In a real `Grid2D::step` it was *slower* than serial up
+  to 128×128, and only 1.1–1.4× faster at 256×256. That is about what rayon
+  already gets. chili runs serially when work is split into flat chunks, and
+  orx-parallel and paralight were too slow.
+- **The `unsafe` spin pool pays off, but it is fragile.** It was 2.5–4× faster
+  on about six benches (the 256×256 grids, `2d_three_state_cycle`, and wildfire
+  up to 256×256), and its output was bit-identical. But on a busy machine
+  (load 7.6) it got **20–30× slower than serial**. That happens because
+  spinning workers fight over the CPUs. The validation runners run several
+  16-thread processes at once, which is exactly that situation.
+
+Reopen only if (a) `unsafe` is allowed inside a separate, Miri-tested helper
+crate, *and* (b) a measurement on a native (non-WSL) target still shows a large
+gap. (Miri is Rust's tool for checking `unsafe` code for undefined behaviour.)
+The scratch code and full tables came from the DS-001 spike and were not
+committed.
+
+### 3.3 RNG acquisition hoisted out of the per-cell loop *(done, later superseded)*
+
+*Update (2026-09-04, commit `2f04706`):* the `SmallRng` described below no
+longer exists. Subrule randomness now uses the same stateless hash as the
+wildfire model, `rng::cell_rand(seed, step, cell, STREAM_RULE + subrule)`
+(see §7). "Stateless" means there is no RNG object to create or pass around:
+each random number is computed from those four inputs. The same commit added
+two randomness benches, `1d_randomness_512` and `2d_randomness_128`, with
+snapshots. The text below is the original record.
 
 `rand::thread_rng()` was fetched inside `next_type` per firing cell — a TLS lookup
 plus `Rc` refcount traffic on every call. Now one `SmallRng` is created per
@@ -363,10 +413,33 @@ The override path took a `Mutex` lock on **every** `thread_count()` call, and
 `step()` calls it every step. The override is now an `AtomicUsize` (0 = no
 override). One lock per step was minor but pure waste.
 
-### 3.7 Bit-packing and SIMD *(open — largest remaining win)*
+### 3.7 Bit-packing and SIMD *(done — both stages shipped, §8 E6/E7)*
 
-For the dominant two-type workloads (Life-like rules), the 4-bytes-per-cell
-layout still leaves a lot on the table:
+**What shipped.** Both stages exist in the code now. Each one is a separate
+stepper. A rule uses it only when its shape fits, and a step falls back to the
+normal (scalar) path when the grid content doesn't fit:
+
+- **Stage 1, 1D:** `Grid1D::step_packed` (§8 E6) handles pure two-state
+  Wolfram n=1 rules (rules like rule 30). It packs the row into `u64` words,
+  one bit per cell, so one word holds 64 cells. `1d_large_rule30_2049` got
+  43 % faster.
+- **Stage 2, 2D:** `Grid2D::step_packed` (§8 E7) handles two-state radius-1
+  threshold rules (Life-like rules). It uses bit-planes: one bit per cell,
+  64 cells per word. Neighbor counts are summed with SWAR adders ("SIMD within
+  a register": ordinary integer operations that work on all 64 cells in a word
+  at once). Life-like benches got 58–59 % faster.
+- **Tried and rejected:** a general version for more cell types and larger
+  radii (§8 E9) ran *slower* than the scalar path on every bench where it
+  applied.
+- **Not used:** `std::simd`. It is still nightly-only, so the stable-Rust
+  routes are SWAR (as above) and compiler auto-vectorization (§3.13).
+
+What is left in the eligible benches is mostly bookkeeping: the per-cell sweep
+that updates ages, history, and counts, plus converting bits back to cells
+every step. The original recommendation is kept below for context.
+
+**Original recommendation.** For the dominant two-type workloads (Life-like
+rules), the 4-bytes-per-cell layout still leaves a lot on the table:
 
 - Pack "is `criteria_type`" as 1 bit per cell per relevant type; neighbor counts
   become shifts + adds (SWAR) or `popcount` over adjacent words. This routinely
@@ -396,7 +469,12 @@ deterministic (the same detection Hashlife would need, §6).
   unsupported-`n` case is handled in one place (`applies_*` reports no match)
   rather than being a silent `continue` in the middle of the dispatch.
 
-### 3.9 Open regression: 1D `n = 1` rules *(largely resolved — see the addendum and §8 E1)*
+### 3.9 1D `n = 1` regression *(resolved — §8 E1 and §8 E6)*
+
+*Resolution:* E1 fixed `1d_three_state_cycle` and `1d_rule30_center`. E6's
+packed path then took `1d_large_rule30_2049` to 14.66 ms, well under the
+22.7 ms it measured before the regression. The analysis below is kept as the
+record.
 
 Three 1D benchmarks are slower than before this work, and the pattern is precise:
 `n = 1` rules regressed 13–23 %, while `n = 2` and `n = 3` rules improved.
@@ -499,7 +577,12 @@ across the threshold benches, see §8); the output-write item remains open:
   test: inspect release asm first; hoist length asserts or move to zipped
   iterators only if LLVM has not already elided them.
 
-### 3.13 Interior bounds-check elision — the §3.7 gateway *(open)*
+### 3.13 Interior bounds-check elision *(open — parked)*
+
+*Note:* this was first written as the step needed before §3.7. §3.7 shipped
+without it, using separate bit-packed steppers, so this item now only matters
+for large-radius scalar workloads. §8 "Not attempted" explains why it is
+parked. References to §3.7 below are from the original text.
 
 The "branchless" interior path still bounds-checks every neighbor read:
 `cells[idx.wrapping_add_signed(off)]` is slice indexing with a runtime offset,
@@ -686,8 +769,9 @@ Current coverage:
 
 Hashlife (Gosper, 1984) is the algorithm behind tools like Golly that simulate
 Life patterns trillions of generations ahead. It is included here as a possible
-long-term direction — not a near-term recommendation; §3.7 is far cheaper and
-benefits every workload.
+long-term direction, not a near-term recommendation. (When this was written,
+§3.7 was the cheaper next step. It has since shipped for the two-state rule
+shapes; §8 E9 showed that bit-packing does *not* pay off for every workload.)
 
 ### How it works
 
@@ -757,13 +841,10 @@ loop stays vectorizable in principle), it makes stochastic output **invariant
 to chunk split and thread count**, which is what lets the FNV snapshot tests
 pin the two wildfire benchmark scenarios: `stress_2d_wildfire{,_spotting}`
 assert the *same* snapshot at `_t1`, `_t4`, and `_t8`. The subrule engine's
-`randomness` feature still draws from a per-chunk `SmallRng::from_entropy()`
-(grid2d/grid1d `step_chunk`) and is therefore neither reproducible nor
-split-independent — migrating it to the hash draw is an open item, and a
-behavior change that needs its own decision (existing stochastic runs would
-change output; snapshots do not currently cover them, so the blast radius is
-configs in the wild, not the test suite). The criterion RNG micro-bench (§4)
-will quantify the cost side.
+`randomness` feature now uses the same hash too: commit `2f04706` (2026-09-04)
+moved it off the per-chunk `SmallRng::from_entropy()`. That made seeded
+stochastic rule runs reproducible and the same at every thread count. The hash
+now lives in `rng.rs`, and `wildfire::cell_rand` re-exports it.
 
 **Events through the existing map/reduce.** Long-range writes (fire spotting)
 never touch other chunks during the parallel pass: each chunk returns
@@ -1136,15 +1217,15 @@ Also done since the original review:
 Next, in order:
 
 9. Move timing benchmarks to `criterion` (§4, migration plan there). This is
-   now the blocker on further micro-optimization, not a nicety — the current
-   ±5–8 % noise band is wider than the remaining effects, including the 1D
-   regression in §3.9.
-10. Close bench gaps 5.4, 5.5, 5.8 as part of the criterion port — in
-    particular a randomness benchmark, without which §3.3 cannot be measured,
-    a 1D case large enough to exercise the parallel path, and the
-    threshold-straddling sizes §3.14 needs.
+   now the blocker on further micro-optimization, not a nicety: the current
+   ±5–8 % noise band is wider than the effects still left to chase. (The 1D
+   regression in §3.9 that was cited here has since been resolved.)
+10. Close bench gaps 5.4, 5.5, 5.8 (§5 "Gaps still open"): in particular a
+    1D case large enough to exercise the parallel path, and the
+    threshold-straddling sizes §3.14 needs. (The randomness benchmarks already
+    exist; see gap 5.)
 11. ✅ §3.9 via the `Rule1DPlan` downcast — done, §8 E1 (−8 to −13 % on n≤2
-    1D cases; `1d_large_rule30_2049` still wants §3.7).
+    1D cases); `1d_large_rule30_2049` was then fixed by §3.7 stage 1 (§8 E6).
 12. ✅ §3.12 plan flatten, condition ranges, lazy counter — done, §8 E2
     (−7 to −12 % across threshold benches; subsumes §3.5). The output-write
     bounds item stays open. §8 E3c added the `Gt 0` scan skip on top.
@@ -1157,11 +1238,11 @@ Next, in order:
     ever matters). §3.13's contiguous-run idea stays parked for large-radius
     scalar workloads. (`std::simd` is still nightly-only; SWAR and
     autovectorization are the stable routes.)
-14. Migrate the subrule `randomness` draw to the stateless hash RNG (§7) —
-    a deliberate behavior change to schedule, not sneak in.
-15. Revisit a spin-then-park worker pool (§3.2) only after measuring fork/join
-    latency on the target platform; it would need `unsafe`, and the payoff
-    depends entirely on that number.
+14. ✅ Subrule `randomness` draw moved to the stateless hash RNG (§7). Done in
+    `2f04706` (2026-09-04), with randomness benches and snapshots.
+15. ❌ Spin-then-park worker pool (§3.2): re-investigated 2026-10-01 and
+    closed. No safe-API crate is fast enough, and the `unsafe` version
+    collapses on a busy machine. The conditions for reopening are in §3.2.
 16. Hashlife (§6) as a long-term project.
 
 ---
